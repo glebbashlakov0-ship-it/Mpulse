@@ -1,5 +1,9 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { extname, join, normalize } from "node:path";
 import { AuthError, buildAuthService, getSessionTokenFromRequest } from "./auth.js";
 import { buildAdminService, MemoryAdminRepository, PostgresAdminRepository, AdminError } from "./admin.js";
 import {
@@ -58,6 +62,8 @@ import { registerTradingRoutes } from "./routes/tradingRoutes.js";
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerWatchlistRoutes } from "./routes/watchlistRoutes.js";
 import { MemoryWatchlistRepository, PostgresWatchlistRepository } from "./watchlistRepository.js";
+
+let appPromise: Promise<Fastify.FastifyInstance> | null = null;
 
 export function buildApp(config: AppConfig = getConfig()) {
   assertNoProductionMemoryFallback(config);
@@ -251,6 +257,160 @@ function assertNoProductionMemoryFallback(config: AppConfig) {
     );
   }
 }
+
+function getReadyApp() {
+  if (!appPromise) {
+    appPromise = Promise.resolve()
+      .then(() => {
+        const app = buildApp(getConfig());
+        return app.ready().then(() => app);
+      })
+      .catch((error) => {
+        appPromise = null;
+        throw error;
+      });
+  }
+
+  return appPromise;
+}
+
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
+  try {
+    if (shouldServeSpa(req)) {
+      if (await serveStaticAsset(req, res)) {
+        return;
+      }
+    }
+
+    const app = await getReadyApp();
+    await forwardToFastify(app, req, res);
+  } catch (error) {
+    console.error("Serverless startup failed", error);
+    sendStartupDiagnostic(res, error);
+  }
+}
+
+function shouldServeSpa(req: IncomingMessage) {
+  const path = new URL(req.url ?? "/", "http://localhost").pathname;
+  return !path.startsWith("/api") && path !== "/health";
+}
+
+async function serveStaticAsset(req: IncomingMessage, res: ServerResponse) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return false;
+  }
+
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const pathname = decodeURIComponent(url.pathname);
+
+  if (pathname === "/favicon.ico" || pathname === "/favicon.png") {
+    res.statusCode = 204;
+    res.end();
+    return true;
+  }
+
+  const staticRoot = join(process.cwd(), "dist-web");
+  const requestedPath = pathname === "/" ? "/index.html" : pathname;
+  const normalizedPath = normalize(requestedPath).replace(/^(\.\.(\/|\\|$))+/, "");
+  const candidate = join(staticRoot, normalizedPath);
+  const assetPath = await fileExists(candidate) ? candidate : join(staticRoot, "index.html");
+
+  if (!(await fileExists(assetPath))) {
+    return false;
+  }
+
+  res.statusCode = 200;
+  res.setHeader("content-type", contentTypeFor(assetPath));
+
+  if (req.method === "HEAD") {
+    res.end();
+    return true;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(assetPath)
+      .once("error", reject)
+      .once("end", resolve)
+      .pipe(res);
+  });
+
+  return true;
+}
+
+async function fileExists(path: string) {
+  try {
+    const stats = await stat(path);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function contentTypeFor(path: string) {
+  const extension = extname(path);
+  const contentTypes: Record<string, string> = {
+    ".css": "text/css; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain; charset=utf-8",
+    ".webp": "image/webp",
+  };
+
+  return contentTypes[extension] ?? "application/octet-stream";
+}
+
+function forwardToFastify(
+  app: Fastify.FastifyInstance,
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
+  return new Promise<void>((resolve, reject) => {
+    res.once("finish", resolve);
+    res.once("close", resolve);
+    res.once("error", reject);
+    app.server.emit("request", req, res);
+  });
+}
+
+function sendStartupDiagnostic(res: ServerResponse, error: unknown) {
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
+
+  const missing = requiredProductionEnv.filter((name) => !process.env[name]?.trim());
+
+  res.statusCode = 500;
+  res.setHeader("content-type", "application/json; charset=utf-8");
+  res.end(
+    JSON.stringify({
+      data: null,
+      error: {
+        code: "STARTUP_CONFIGURATION_ERROR",
+        message: "API startup failed. Check the Vercel environment variables.",
+        details: {
+          configError: error instanceof Error ? error.message : "Unknown startup error.",
+          requiredProductionEnv,
+          missing,
+        },
+      },
+    }),
+  );
+}
+
+const requiredProductionEnv = [
+  "APP_MODE",
+  "NODE_ENV",
+  "DATABASE_URL",
+  "DATABASE_SSL",
+  "SESSION_SECRET",
+  "SESSION_COOKIE_SECURE",
+  "CORS_ALLOWED_ORIGINS",
+  "WALLET_DEPOSIT_WEBHOOK_SECRET",
+  "APP_BASE_URL",
+];
 
 const isEntrypoint = process.argv[1]
   ? pathToFileURL(process.argv[1]).href === import.meta.url

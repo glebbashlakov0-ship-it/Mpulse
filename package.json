@@ -1,0 +1,46 @@
+{
+  "name": "arabic-prediction-market-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "dev:api": "tsx watch src/server.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "db:migrate": "tsx src/migrate.ts",
+    "build": "tsc -p tsconfig.json",
+    "build:web": "vite build --config web/vite.config.ts",
+    "start": "node dist/server.js",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:web": "tsx --test \"web/src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run typecheck:web && npm run test && npm run test:web && npm run build:web"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.6.2",
+    "i18next": "^26.0.8",
+    "lucide-react": "^0.553.0",
+    "pg": "^8.20.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-hot-toast": "^2.6.0",
+    "react-i18next": "^17.0.6",
+    "react-router-dom": "^7.15.0",
+    "resend": "^6.12.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "tailwindcss": "^4.2.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
+  }
+}

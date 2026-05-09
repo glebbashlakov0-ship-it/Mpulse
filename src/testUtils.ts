@@ -1,0 +1,72 @@
+import type { AppConfig } from "./config.js";
+import type { PolymarketMarket } from "./types.js";
+
+export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
+  return {
+    host: "127.0.0.1",
+    port: 0,
+    appMode: "local",
+    polymarketGammaUrl: "https://gamma-api.polymarket.test",
+    polymarketRequestTimeoutMs: 1000,
+    defaultMarketLimit: 20,
+    maxMarketLimit: 120,
+    upstreamMarketLimit: 50,
+    relatedMarketLimit: 4,
+    cacheEnabled: false,
+    nodeEnv: "test",
+    sessionSecret: "test-session-secret-with-enough-entropy",
+    sessionCookieName: "mp_session",
+    sessionCookieSecure: false,
+    sessionTtlMs: 1000 * 60 * 60,
+    corsAllowedOrigins: [],
+    authRateLimitWindowMs: 60_000,
+    authRateLimitMax: 20,
+    adminEmails: [],
+    walletDepositWebhookSecret: "test-local-webhook-secret",
+    walletDepositMinConfirmations: 2,
+    resendApiKey: "local",
+    emailFromAddress: "Test <test@test.com>",
+    appBaseUrl: "http://localhost:5173",
+    databaseUrl: null,
+    databaseSsl: false,
+    cacheTtlMs: {
+      activeMarkets: 1000,
+      closedMarkets: 1000,
+      marketDetail: 1000,
+      categories: 1000,
+      relatedMarkets: 1000,
+      searchResults: 1000,
+    },
+    blockedMarketTerms: ["war", "gaza", "hamas"],
+    ...overrides,
+  };
+}
+
+export function marketFixture(overrides: Partial<PolymarketMarket> = {}): PolymarketMarket {
+  return {
+    id: "market-1",
+    slug: "bitcoin-above-100k",
+    question: "Will Bitcoin be above $100k by June?",
+    description: "A crypto market.",
+    category: "Crypto",
+    image: undefined,
+    icon: undefined,
+    startDate: "2026-01-01T00:00:00.000Z",
+    endDate: "2026-06-01T00:00:00.000Z",
+    active: true,
+    closed: false,
+    archived: false,
+    restricted: false,
+    volumeNum: 125000,
+    liquidityNum: 45000,
+    outcomes: JSON.stringify(["Yes", "No"]),
+    outcomePrices: JSON.stringify(["0.61", "0.39"]),
+    clobTokenIds: JSON.stringify(["yes-token", "no-token"]),
+    enableOrderBook: true,
+    acceptingOrders: true,
+    bestBid: 0.6,
+    bestAsk: 0.62,
+    lastTradePrice: 0.61,
+    ...overrides,
+  };
+}

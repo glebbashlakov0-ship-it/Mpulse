@@ -252,12 +252,12 @@ function assertNoProductionMemoryFallback(config: AppConfig) {
   }
 }
 
-const config = getConfig();
 const isEntrypoint = process.argv[1]
   ? pathToFileURL(process.argv[1]).href === import.meta.url
   : false;
 
 if (isEntrypoint) {
+  const config = getConfig();
   const app = buildApp(config);
 
   try {

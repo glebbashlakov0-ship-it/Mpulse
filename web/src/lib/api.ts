@@ -202,19 +202,15 @@ export async function placeTradeApi({
 }
 
 export async function loadCurrentUser() {
-  const response = await fetchWithTimeout("/api/auth/me", {
+  const response = await fetchWithTimeout("/api/auth/session", {
     credentials: "same-origin",
   });
-
-  if (response.status === 401) {
-    return null;
-  }
 
   if (!response.ok) {
     throw new Error(await readApiError(response, "Could not load current user"));
   }
 
-  const payload = (await response.json()) as ApiResponse<{ user: AuthUser }>;
+  const payload = (await response.json()) as ApiResponse<{ user: AuthUser | null }>;
   return payload.data.user;
 }
 

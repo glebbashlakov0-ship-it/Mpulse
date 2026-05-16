@@ -307,7 +307,7 @@ describe("auth api helpers", () => {
       async (calls) => {
         const user = await loadCurrentUser();
 
-        assert.equal(calls[0]?.input, "/api/auth/me");
+        assert.equal(calls[0]?.input, "/api/auth/session");
         assert.equal(calls[0]?.init?.credentials, "same-origin");
         assert.equal(user?.email, "trader@example.com");
       },

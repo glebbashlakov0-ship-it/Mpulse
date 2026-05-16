@@ -374,6 +374,18 @@ export function registerAuthRoutes(
     };
   });
 
+  app.get("/api/auth/session", async (request) => {
+    const context = await auth.authenticateToken(
+      getSessionTokenFromRequest(request, config.sessionCookieName),
+    );
+
+    return {
+      data: {
+        user: context?.user ?? null,
+      },
+    };
+  });
+
   app.get(
     "/api/auth/sessions",
     {

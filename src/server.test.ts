@@ -1061,6 +1061,23 @@ test("GET /api/auth/me rejects requests without a session", async () => {
   }
 });
 
+test("GET /api/auth/session returns null user without a session", async () => {
+  const app = buildApp(testConfig());
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/auth/session",
+    });
+    const body = JSON.parse(response.body) as { data: { user: null } };
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(body.data.user, null);
+  } finally {
+    await app.close();
+  }
+});
+
 test("GET /api/auth/me returns the current user with a session", async () => {
   const app = buildApp(testConfig());
 

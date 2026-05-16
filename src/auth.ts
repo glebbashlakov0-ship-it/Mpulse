@@ -77,6 +77,7 @@ export type SessionRepository = {
   updateSessionLastSeen(sessionId: string, seenAt: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   deleteOtherSessions(userId: string, currentSessionId: string): Promise<void>;
+  deleteSessionsByUserId(userId: string): Promise<void>;
   deleteExpiredSessions(now: string): Promise<void>;
 };
 
@@ -186,6 +187,14 @@ export class MemoryAuthStore implements AuthStore {
   async deleteOtherSessions(userId: string, currentSessionId: string) {
     for (const session of this.sessions.values()) {
       if (session.userId === userId && session.id !== currentSessionId) {
+        await this.deleteSession(session.id);
+      }
+    }
+  }
+
+  async deleteSessionsByUserId(userId: string) {
+    for (const session of this.sessions.values()) {
+      if (session.userId === userId) {
         await this.deleteSession(session.id);
       }
     }
@@ -317,7 +326,21 @@ export function buildAuthService({
   }
 
   function getConfiguredRole(email: string): UserRole {
-    return config.adminEmails.includes(normalizeEmail(email)) ? "super_admin" : "user";
+    const normalized = normalizeEmail(email);
+    if (config.superAdminEmails.includes(normalized) || config.adminEmails.includes(normalized)) {
+      return "super_admin";
+    }
+    if (config.financeAdminEmails.includes(normalized)) {
+      return "finance_admin";
+    }
+    if (config.complianceAdminEmails.includes(normalized)) {
+      return "compliance_admin";
+    }
+    if (config.supportEmails.includes(normalized)) {
+      return "support";
+    }
+
+    return "user";
   }
 
   function applyConfiguredRole(user: AuthUser): AuthUser {
@@ -477,6 +500,7 @@ export function buildAuthService({
     deleteSession: (sessionId: string) => repos.sessions.deleteSession(sessionId),
     deleteOtherSessions: (userId: string, currentSessionId: string) =>
       repos.sessions.deleteOtherSessions(userId, currentSessionId),
+    deleteSessionsByUserId: (userId: string) => repos.sessions.deleteSessionsByUserId(userId),
   };
 }
 

@@ -11,7 +11,7 @@ export function MarketImage({
   return (
     <img
       alt=""
-      className={`h-12 w-12 shrink-0 rounded-lg object-cover ${className}`}
+      className={`h-12 w-12 shrink-0 rounded-2xl object-cover ${className}`}
       loading="lazy"
       src={market.displayImage ?? getFallbackImage(market)}
       onError={(event) => {
@@ -40,7 +40,7 @@ export function OutcomeAvatar({
   return (
     <img
       alt=""
-      className="h-12 w-12 shrink-0 rounded-lg object-cover"
+      className="h-12 w-12 shrink-0 rounded-2xl object-cover"
       loading="lazy"
       src={getOutcomeImage(market, outcome, index)}
       onError={(event) => {
@@ -70,7 +70,7 @@ export function RelatedMarketImage({
   return (
     <img
       alt=""
-      className={`h-12 w-12 shrink-0 rounded-lg object-cover ${className}`}
+      className={`h-12 w-12 shrink-0 rounded-2xl object-cover ${className}`}
       loading="lazy"
       src={getRelatedMarketDisplayImage(relatedMarket)}
       onError={(event) => {

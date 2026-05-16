@@ -13,6 +13,7 @@ import type { AppConfig } from "../config.js";
 import { RATE_LIMIT_MESSAGE, buildAuthRateLimitKeys, type AuthRateLimiter } from "../rateLimit.js";
 import type { VerificationService } from "../authVerification.js";
 import type { TwoFactorService } from "../authTwoFactor.js";
+import { createCsrfToken, setCsrfCookie } from "../csrf.js";
 
 export function registerAuthRoutes(
   app: FastifyInstance,
@@ -23,7 +24,7 @@ export function registerAuthRoutes(
   verification: VerificationService,
   twoFactor: TwoFactorService,
 ) {
-  function checkAuthRateLimit({
+  async function checkAuthRateLimit({
     request,
     reply,
     endpoint,
@@ -34,13 +35,25 @@ export function registerAuthRoutes(
     endpoint: string;
     email?: string | null;
   }) {
-    const result = authRateLimiter.check(
-      buildAuthRateLimitKeys({
-        request,
-        endpoint,
-        email,
-      }),
-    );
+    let result;
+    try {
+      result = await authRateLimiter.check(
+        buildAuthRateLimitKeys({
+          request,
+          endpoint,
+          email,
+        }),
+      );
+    } catch {
+      reply.status(503).send({
+        data: null,
+        error: {
+          code: "RATE_LIMIT_UNAVAILABLE",
+          message: "Rate limit service is unavailable.",
+        },
+      });
+      return false;
+    }
 
     if (!result.ok) {
       reply.status(429).send({
@@ -51,8 +64,22 @@ export function registerAuthRoutes(
           retryAfterMs: result.retryAfterMs,
         },
       });
+      return false;
     }
+
+    return true;
   }
+
+  app.get("/api/auth/csrf", async (_request, reply) => {
+    const token = createCsrfToken(config);
+    setCsrfCookie(reply, config, token);
+
+    return {
+      data: {
+        csrfToken: token,
+      },
+    };
+  });
 
   app.post<{
     Body: {
@@ -64,7 +91,7 @@ export function registerAuthRoutes(
     "/api/auth/register",
     {
       preHandler: async (request, reply) => {
-        checkAuthRateLimit({
+        await checkAuthRateLimit({
           request,
           reply,
           endpoint: "POST /api/auth/register",
@@ -174,7 +201,7 @@ export function registerAuthRoutes(
     "/api/auth/request-password-reset",
     {
       preHandler: async (request, reply) => {
-        checkAuthRateLimit({
+        await checkAuthRateLimit({
           request,
           reply,
           endpoint: "POST /api/auth/request-password-reset",
@@ -221,7 +248,7 @@ export function registerAuthRoutes(
     "/api/auth/reset-password",
     {
       preHandler: async (request, reply) => {
-        checkAuthRateLimit({
+        await checkAuthRateLimit({
           request,
           reply,
           endpoint: "POST /api/auth/reset-password",
@@ -275,7 +302,7 @@ export function registerAuthRoutes(
     "/api/auth/login",
     {
       preHandler: async (request, reply) => {
-        checkAuthRateLimit({
+        await checkAuthRateLimit({
           request,
           reply,
           endpoint: "POST /api/auth/login",
@@ -388,17 +415,23 @@ export function registerAuthRoutes(
         throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
       }
 
-      if (request.params.id === context.session.id) {
+      const sessions = await auth.listSessions(context.user.id);
+      const targetSession = sessions.find((session) => session.id === request.params.id);
+      if (!targetSession) {
+        throw new AuthError("SESSION_NOT_FOUND", "Session was not found.", 404);
+      }
+
+      if (targetSession.id === context.session.id) {
         clearSessionCookie(reply, config);
       }
 
-      await auth.deleteSession(request.params.id);
       await audit.record({
         eventType: "auth.session_revoked",
         userId: context.user.id,
         sessionId: context.session.id,
-        metadata: { revokedSessionId: request.params.id },
+        metadata: { revokedSessionId: targetSession.id },
       });
+      await auth.deleteSession(targetSession.id);
 
       return {
         data: {
@@ -424,7 +457,36 @@ export function registerAuthRoutes(
         eventType: "auth.sessions_revoked",
         userId: context.user.id,
         sessionId: context.session.id,
+        metadata: { currentSessionId: context.session.id },
       });
+
+      return {
+        data: {
+          ok: true,
+        },
+      };
+    },
+  );
+
+  app.post(
+    "/api/auth/sessions/revoke-all",
+    {
+      preHandler: (request, reply) => requireAuth(request, reply, auth, config),
+    },
+    async (request, reply) => {
+      const context = getAuthContext(request);
+      if (!context) {
+        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
+      }
+
+      await audit.record({
+        eventType: "auth.sessions_revoked_all",
+        userId: context.user.id,
+        sessionId: context.session.id,
+        metadata: { currentSessionId: context.session.id },
+      });
+      await auth.deleteSessionsByUserId(context.user.id);
+      clearSessionCookie(reply, config);
 
       return {
         data: {
@@ -462,6 +524,12 @@ export function registerAuthRoutes(
         throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
       }
 
+      await audit.record({
+        eventType: "auth.two_factor_setup_started",
+        userId: context.user.id,
+        sessionId: context.session.id,
+      });
+
       return {
         data: await twoFactor.startSetup(context.user),
       };
@@ -481,12 +549,17 @@ export function registerAuthRoutes(
         throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
       }
 
-      return {
-        data: await twoFactor.confirm(
-          context.user.id,
-          typeof request.body?.code === "string" ? request.body.code : "",
-        ),
-      };
+      const data = await twoFactor.confirm(
+        context.user.id,
+        typeof request.body?.code === "string" ? request.body.code : "",
+      );
+      await audit.record({
+        eventType: "auth.two_factor_enabled",
+        userId: context.user.id,
+        sessionId: context.session.id,
+      });
+
+      return { data };
     },
   );
 
@@ -503,11 +576,45 @@ export function registerAuthRoutes(
         throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
       }
 
+      const data = await twoFactor.disable(
+        context.user.id,
+        typeof request.body?.code === "string" ? request.body.code : "",
+      );
+      await audit.record({
+        eventType: "auth.two_factor_disabled",
+        userId: context.user.id,
+        sessionId: context.session.id,
+      });
+
+      return { data };
+    },
+  );
+
+  app.post<{
+    Body: { code?: unknown };
+  }>(
+    "/api/auth/2fa/backup-codes/regenerate",
+    {
+      preHandler: (request, reply) => requireAuth(request, reply, auth, config),
+    },
+    async (request) => {
+      const context = getAuthContext(request);
+      if (!context) {
+        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
+      }
+
+      const result = await twoFactor.regenerateBackupCodes(
+        context.user.id,
+        typeof request.body?.code === "string" ? request.body.code : "",
+      );
+      await audit.record({
+        eventType: "auth.two_factor_backup_codes_regenerated",
+        userId: context.user.id,
+        sessionId: context.session.id,
+      });
+
       return {
-        data: await twoFactor.disable(
-          context.user.id,
-          typeof request.body?.code === "string" ? request.body.code : "",
-        ),
+        data: result,
       };
     },
   );
@@ -518,7 +625,7 @@ export function registerAuthRoutes(
     {
       preHandler: [
         async (request, reply) => {
-          checkAuthRateLimit({
+          await checkAuthRateLimit({
             request,
             reply,
             endpoint: "PATCH /api/users/me/settings",

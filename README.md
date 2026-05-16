@@ -1,4 +1,4 @@
-# Market Pulse
+# Pulse Market
 
 Backend and frontend local for a Polymarket-style prediction market product. The app currently uses
 public Polymarket market data and local-only trading.
@@ -16,12 +16,14 @@ public Polymarket market data and local-only trading.
 - Product frontend market discovery controls for backend-owned search, primary nav category/topic
   shortcuts, category/topic, sort, status, min/max volume, and closing date filters, synced to URL
   query params
-- Compact Polymarket-like Market Pulse cards with `displayImage`/image/icon/category fallback
+- Compact Polymarket-like Pulse Market cards with `displayImage`/image/icon/category fallback
   handling, deterministic fallback pools for repeated upstream images, multi-outcome odds, and
   tested card/detail outcome action labels
 - Market detail screen with prices, volume/liquidity, dates, rules, related markets with
-  related-owned image/icon/fallback visuals, local ticket, and chart-safe `history.price_history`
-  fallback when durable snapshots are empty
+  related-owned image/icon/fallback visuals, local ticket, and chart-safe `history.price_history`;
+  binary charts use backend-fetched Polymarket CLOB history first, local snapshots second, and
+  synthetic fallback only when both are unavailable; large CLOB histories are downsampled for
+  responsive SVG rendering
 - Local portfolio screen with cash, equity, positions value, local PnL, open positions, trade
   history, loading/error/empty states, and backend reset/trade refresh
 - Mobile-safe frontend pass across home, cards, market detail, portfolio, profile, and admin
@@ -29,8 +31,10 @@ public Polymarket market data and local-only trading.
 - trading Logic local with backend quote/order endpoints, buy/sell, partial position reduction,
   idempotency keys, backend-returned PnL summary, user-scoped trade history, and trading audit
   events
-- In-memory auth local with hashed passwords, HttpOnly cookie sessions, auth rate limits,
-  login/sign-up/logout UI, mobile auth menu, and profile settings
+- Auth local with hashed passwords, HttpOnly SameSite cookie sessions, CSRF tokens for browser
+  state-changing requests, email verification, password reset, 2FA setup QR/backup codes,
+  session/device management, auth rate limits, login/sign-up/logout UI, mobile auth menu, and
+  profile settings
 - Postgres/Supabase database core behind `DATABASE_URL`, with SQL migrations, a DB client,
   repository interfaces/adapters, and memory fallback when DB is disabled
 - Initial tables for users, sessions, settings, markets, outcomes, snapshots, categories,
@@ -55,9 +59,10 @@ public Polymarket market data and local-only trading.
   ledger after safety gates and idempotency; this is not wallet, not withdrawals, not private-key
   storage, and not blockchain polling.
 - Admin Core with backend-owned roles (`user`, `support`, `compliance_admin`,
-  `finance_admin`, `super_admin`), `/api/admin/*` guards, users/audit/withdrawal/market
-  moderation endpoints, and a basic `#admin` frontend page. It is local: no real
-  withdrawal approval, wallet, broadcast, ledger debit, settlement, or real-money action.
+  `finance_admin`, `super_admin`), role-specific env allowlists, least-privilege
+  `/api/admin/*` guards, users/audit/withdrawal/market moderation endpoints, and a basic
+  `#admin` frontend page. It is local: no real withdrawal approval, wallet, broadcast, ledger
+  debit, settlement, or real-money action.
 - Production readiness core: `GET /api/health`, `GET /api/ready`, strict env validation,
   explicit `APP_MODE=local`, production secure-cookie/CORS/DB/webhook guardrails, and a
   CI workflow for backend typecheck, web typecheck, backend tests, frontend tests, and web build
@@ -72,7 +77,11 @@ public Polymarket market data and local-only trading.
 - `GET /api/markets`
 - `GET /api/markets/:id` returns the normalized market detail shape, including
   `prices`, `dates`, `volume_detail`, normalized outcomes, `related_markets`, and
-  `history.snapshots` / `history.price_history`
+  `history.snapshots` / `history.price_history`. For binary markets the backend builds
+  `history.price_history` from Polymarket CLOB Yes/No token history when available, then falls
+  back to local snapshots, then to synthetic fallback.
+- `POST /api/markets/:id/snapshots/collect` collects the current Polymarket prices into
+  `market_snapshots` for real chart history
 - `GET /api/categories`
 - `GET /api/tags` returns the normalized category list for backwards compatibility
 - `GET /api/search?q=bitcoin` returns normalized markets, not raw upstream results
@@ -94,6 +103,24 @@ public Polymarket market data and local-only trading.
 - `POST /api/wallets/withdrawal-requests`
 - `GET /api/wallets/withdrawal-requests`
 - `POST /api/wallets/webhooks/deposits`
+- `GET /api/auth/csrf`
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `GET /api/auth/sessions`
+- `DELETE /api/auth/sessions/:id`
+- `POST /api/auth/sessions/revoke-others`
+- `POST /api/auth/sessions/revoke-all`
+- `POST /api/auth/verify-email`
+- `POST /api/auth/resend-verification`
+- `POST /api/auth/request-password-reset`
+- `POST /api/auth/reset-password`
+- `GET /api/auth/2fa`
+- `POST /api/auth/2fa/setup`
+- `POST /api/auth/2fa/confirm`
+- `POST /api/auth/2fa/disable`
+- `POST /api/auth/2fa/backup-codes/regenerate`
 - `GET /api/admin/users`
 - `GET /api/admin/audit-logs`
 - `GET /api/admin/wallet-withdrawals`
@@ -103,10 +130,6 @@ public Polymarket market data and local-only trading.
 - `GET /api/portfolio`
 - `POST /api/trading/trades`
 - `POST /api/portfolio/reset`
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `GET /api/auth/me`
 - `PATCH /api/users/me/settings`
 
 The app can run without a database for dev/test. When `DATABASE_URL` is absent, the API logs that
@@ -115,9 +138,10 @@ DB is disabled and falls back to memory repositories. Production startup fails f
 routes. When `DATABASE_URL` is set and migrations are applied, auth users/sessions/settings, audit
 logs, compliance profiles/consents, ledger entries, wallet rows, deposit intents, deposit events,
 withdrawal requests, wallet provider events, watchlist rows, trades, and positions use Postgres.
-Market data still comes from
-`https://gamma-api.polymarket.com`, is cached in backend memory, and is normalized into our own
-response shape.
+Market data still comes from `https://gamma-api.polymarket.com`; binary chart history can also
+come from backend-only `https://clob.polymarket.com/prices-history` calls using Gamma
+`clobTokenIds`. Responses are cached in backend memory where configured and normalized into our
+own response shape.
 
 All Polymarket traffic stays on the backend. Frontend market list/detail/search/category flows use
 our API response shapes only.
@@ -198,6 +222,12 @@ Market detail:
 ```bash
 curl 'http://localhost:4000/api/markets/540817'
 ```
+
+Market detail chart source order:
+
+1. Polymarket CLOB Yes/No token price history for binary markets.
+2. Local `market_snapshots` rows collected by the snapshot collector.
+3. Synthetic fallback from current prices only when both real sources are unavailable.
 
 trading quote/order:
 
@@ -341,6 +371,10 @@ curl -X POST 'http://localhost:4000/api/admin/markets/540817/unhide' \
 ```
 
 Admin endpoints require authenticated admin roles. Ordinary authenticated users receive 403.
+`ADMIN_EMAILS` is a legacy super-admin allowlist. Prefer `SUPER_ADMIN_EMAILS`,
+`SUPPORT_EMAILS`, `COMPLIANCE_ADMIN_EMAILS`, and `FINANCE_ADMIN_EMAILS` for role-specific local/dev
+assignment. Support can read users/audit, finance can review wallet withdrawals, compliance can
+hide/unhide markets, and super admin can use all admin actions.
 Withdrawal review is local and returns `realTransferBlocked: true` and
 `mode: "wallet_review_only"`; it never performs real approvals, real withdrawals,
 wallet, broadcast, settlement, or ledger debit.
@@ -353,6 +387,10 @@ curl -i -X POST 'http://localhost:4000/api/auth/register' \
   --data '{"email":"local@example.com","password":"password123","displayName":"Local Trader"}'
 ```
 
+Browser clients should call `GET /api/auth/csrf` first for state-changing requests. The web API
+helper does this automatically and sends `X-CSRF-Token`; the backend validates that header against
+the signed `mp_csrf` cookie when `CSRF_PROTECTION_ENABLED=true`.
+
 Auth/session env:
 
 ```txt
@@ -360,9 +398,19 @@ APP_MODE=local
 SESSION_SECRET=change-this-long-random-session-secret
 SESSION_COOKIE_SECURE=false
 CORS_ALLOWED_ORIGINS=http://localhost:5173
+POLYMARKET_GAMMA_URL=https://gamma-api.polymarket.com
+POLYMARKET_CLOB_URL=https://clob.polymarket.com
+CSRF_PROTECTION_ENABLED=true
+CSRF_COOKIE_NAME=mp_csrf
 AUTH_RATE_LIMIT_WINDOW_MS=60000
 AUTH_RATE_LIMIT_MAX=20
+AUTH_RATE_LIMIT_BACKEND=memory
+REDIS_URL=redis://default:password@localhost:6379
 ADMIN_EMAILS=admin@example.com
+SUPER_ADMIN_EMAILS=owner@example.com
+SUPPORT_EMAILS=support@example.com
+COMPLIANCE_ADMIN_EMAILS=compliance@example.com
+FINANCE_ADMIN_EMAILS=finance@example.com
 WALLET_DEPOSIT_WEBHOOK_SECRET=change-this-dev-only-local-webhook-secret
 WALLET_DEPOSIT_MIN_CONFIRMATIONS=20
 DATABASE_URL=postgres://user:password@localhost:5432/market_pulse
@@ -374,8 +422,11 @@ Local env is loaded automatically from `.env` through `dotenv`.
 
 Production guardrails are intentionally strict: `APP_MODE` must remain `local`,
 `SESSION_SECRET` and `WALLET_DEPOSIT_WEBHOOK_SECRET` must be non-placeholder values,
-`SESSION_COOKIE_SECURE=true`, `CORS_ALLOWED_ORIGINS` must be an explicit allowlist, and
-`DATABASE_URL` is required. This still does not make the app real-money ready.
+`SESSION_COOKIE_SECURE=true`, `CORS_ALLOWED_ORIGINS` must be an explicit allowlist,
+`DATABASE_URL` is required, and `AUTH_RATE_LIMIT_BACKEND=memory` is rejected in production. Use
+`AUTH_RATE_LIMIT_BACKEND=redis` with `REDIS_URL` for backend-enforced Redis limits, or
+`AUTH_RATE_LIMIT_BACKEND=external` only when an edge/proxy/managed limiter is enforced outside the
+process. This still does not make the app real-money ready.
 
 Database migrations:
 
@@ -443,13 +494,12 @@ TEST_DATABASE_URL=postgres://user:password@localhost:5432/market_pulse_test npm 
 3. Add transaction-level composition for trade ledger mutation plus position/trade persistence, so
    the whole local order commit is atomic across repositories.
 4. Add production migration workflow, backups, monitoring, and rollback strategy.
-5. Add a background worker for historical market snapshots, then use snapshots for charts, PnL
-   history, and trending logic.
+5. Expand the market snapshot collector into a production worker fleet and use snapshots for PnL
+   history and trending logic.
 6. Build Arabic RTL localization, translation storage, and admin moderation workflows.
 7. Add frontend component/E2E tests for market filters, detail, local trade, and portfolio flows.
-8. Finish production auth/admin: email verification, password recovery, 2FA, persistent
-   roles/permissions, auth-owned portfolio, Redis/edge/proxy rate limits, full audit coverage, and
-   device/session management.
+8. Provision production Redis or edge/proxy rate-limit infrastructure and set
+   `AUTH_RATE_LIMIT_BACKEND` accordingly.
 9. Add real-money quote/trade/settlement services, fees, slippage warnings, and production ledger
    entries after compliance/security review.
 10. Integrate real KYC/AML, sanctions, legal review, and admin/manual-review workflows before any

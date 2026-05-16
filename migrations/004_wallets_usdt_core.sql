@@ -20,6 +20,10 @@ alter table wallets
 
 alter table wallets
   drop constraint if exists wallets_status_check,
+  drop constraint if exists wallets_asset_check,
+  drop constraint if exists wallets_network_check,
+  drop constraint if exists wallets_provider_check,
+  drop constraint if exists wallets_tron_address_shape_check,
   add constraint wallets_asset_check check (asset in ('USDT')),
   add constraint wallets_network_check check (network in ('TRON')),
   add constraint wallets_provider_check check (provider in ('internal_wallet')),

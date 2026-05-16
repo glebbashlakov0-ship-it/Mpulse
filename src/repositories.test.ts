@@ -74,6 +74,13 @@ test("memory market repository upserts markets, outcomes, and snapshots", async 
       best_ask: null,
       last_trade_price: null,
     },
+    event_id: null,
+    event_slug: null,
+    event_title: null,
+    groupItemTitle: null,
+    groupItemThreshold: null,
+    canonical_market_id: "market-1",
+    canonical_event_slug: null,
     source: "polymarket",
   };
   const snapshot: MarketSnapshot = {

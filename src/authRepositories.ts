@@ -298,6 +298,10 @@ export class PostgresSessionRepository implements SessionRepository {
     );
   }
 
+  async deleteSessionsByUserId(userId: string) {
+    await this.db.query(`delete from user_sessions where user_id = $1`, [userId]);
+  }
+
   async deleteExpiredSessions(now: string) {
     await this.db.query(`delete from user_sessions where expires_at <= $1`, [now]);
   }

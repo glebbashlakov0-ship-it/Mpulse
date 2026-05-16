@@ -1,4 +1,4 @@
-import type { MarketFilters } from "./types";
+import type { MarketFilters, MarketTag } from "./types";
 
 export const DISCOVERY_PAGE_SIZE = 36;
 
@@ -16,7 +16,14 @@ export const defaultMarketFilters: MarketFilters = {
 
 export type PrimaryNavItem = {
   label: string;
-  filter: Pick<MarketFilters, "category" | "topic" | "sort">;
+  filter: Pick<MarketFilters, "category" | "topic" | "sort"> &
+    Partial<Pick<MarketFilters, "search">>;
+};
+
+export type TopicTab = {
+  label: string;
+  value: string;
+  filter: Partial<MarketFilters>;
 };
 
 export const primaryNav: PrimaryNavItem[] = [
@@ -27,7 +34,9 @@ export const primaryNav: PrimaryNavItem[] = [
   { label: "Sports", filter: { category: "sports", topic: "all", sort: "trending" } },
   { label: "Crypto", filter: { category: "crypto", topic: "all", sort: "trending" } },
   { label: "Esports", filter: { category: "", topic: "esports", sort: "trending" } },
+  { label: "Iran", filter: { category: "politics", topic: "all", sort: "trending", search: "Iran" } },
   { label: "Finance", filter: { category: "finance", topic: "all", sort: "trending" } },
+  { label: "Geopolitics", filter: { category: "geopolitics", topic: "all", sort: "trending" } },
   { label: "Tech", filter: { category: "tech", topic: "all", sort: "trending" } },
   { label: "Culture", filter: { category: "culture", topic: "all", sort: "trending" } },
   { label: "Economy", filter: { category: "economy", topic: "all", sort: "trending" } },
@@ -37,19 +46,69 @@ export const primaryNav: PrimaryNavItem[] = [
 ];
 
 export const topicTabs = [
-  { label: "All", value: "all" },
-  { label: "Trump", value: "trump" },
-  { label: "Iran", value: "iran" },
-  { label: "Indian Elections", value: "elections" },
-  { label: "GPT-5.5", value: "ai" },
-  { label: "Strait of Hormuz", value: "hormuz" },
-  { label: "Fed Chair", value: "fed" },
-  { label: "Oil", value: "oil" },
-  { label: "NBA", value: "sports" },
-  { label: "Iceman", value: "culture" },
-  { label: "Daily Temperature", value: "weather" },
-  { label: "Tweet Markets", value: "social" },
-] satisfies Array<{ label: string; value: string }>;
+  { label: "All", value: "all", filter: { category: "", topic: "all", search: "" } },
+  { label: "Trump", value: "trump", filter: { category: "politics", topic: "all", search: "Trump" } },
+  { label: "Iran", value: "iran", filter: { category: "politics", topic: "all", search: "Iran" } },
+  {
+    label: "Trump-Xi Summit",
+    value: "trump-xi-summit",
+    filter: { category: "politics", topic: "all", search: "Trump-Xi Summit" },
+  },
+  { label: "Starmer", value: "starmer", filter: { category: "politics", topic: "all", search: "Starmer" } },
+  { label: "Hantavirus", value: "hantavirus", filter: { category: "", topic: "all", search: "Hantavirus" } },
+  {
+    label: "Strait of Hormuz",
+    value: "hormuz",
+    filter: { category: "politics", topic: "all", search: "Strait of Hormuz" },
+  },
+  {
+    label: "2026 NBA Playoffs",
+    value: "2026-nba-playoffs",
+    filter: { category: "sports", topic: "all", search: "2026 NBA Playoffs" },
+  },
+  {
+    label: "2026 NHL Playoffs",
+    value: "2026-nhl-playoffs",
+    filter: { category: "sports", topic: "all", search: "2026 NHL Playoffs" },
+  },
+  { label: "Eurovision", value: "eurovision", filter: { category: "culture", topic: "all", search: "Eurovision" } },
+  { label: "GTA VI", value: "gta-vi", filter: { category: "culture", topic: "all", search: "GTA VI" } },
+  {
+    label: "Musk v Altman",
+    value: "musk-v-altman",
+    filter: { category: "tech", topic: "all", search: "Musk Altman" },
+  },
+  { label: "Oil", value: "oil", filter: { category: "finance", topic: "all", search: "Oil" } },
+  { label: "James Comey", value: "james-comey", filter: { category: "politics", topic: "all", search: "James Comey" } },
+  { label: "Cuomo", value: "cuomo", filter: { category: "politics", topic: "all", search: "Cuomo" } },
+  { label: "Romania", value: "romania", filter: { category: "politics", topic: "all", search: "Romania" } },
+  { label: "Fed Chair", value: "fed-chair", filter: { category: "finance", topic: "all", search: "Fed Chair" } },
+  { label: "NBA", value: "nba", filter: { category: "sports", topic: "all", search: "NBA" } },
+  { label: "Esports", value: "esports", filter: { category: "", topic: "esports", search: "" } },
+  { label: "Weather", value: "weather", filter: { category: "weather", topic: "all", search: "" } },
+  { label: "Elections", value: "elections", filter: { category: "", topic: "elections", search: "" } },
+  { label: "Tech", value: "tech", filter: { category: "tech", topic: "all", search: "" } },
+] satisfies TopicTab[];
+
+export function buildTopicTabsFromTags(tags: MarketTag[]): TopicTab[] {
+  const seen = new Set(["all"]);
+  const dynamicTabs = tags
+    .map((tag) => ({
+      label: tag.label,
+      value: tag.slug,
+      filter: { category: "", topic: tag.slug, search: "" },
+    }))
+    .filter((tab) => {
+      if (!tab.label.trim() || seen.has(tab.value)) {
+        return false;
+      }
+
+      seen.add(tab.value);
+      return true;
+    });
+
+  return [topicTabs[0], ...dynamicTabs].slice(0, 49);
+}
 
 export const sortOptions = [
   { label: "Trending", value: "trending" },
@@ -66,10 +125,6 @@ const statusValues = new Set(["all", "live", "upcoming", "closed", "expired"]);
 function getBackendCategory(topic: string) {
   if (["sports", "culture", "weather"].includes(topic)) {
     return topic;
-  }
-
-  if (topic === "ai") {
-    return "tech";
   }
 
   return null;

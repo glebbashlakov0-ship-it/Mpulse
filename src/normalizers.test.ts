@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeDateSummary,
+  normalizeGroupMarkets,
   normalizeMarket,
   normalizeMarketDetail,
   normalizePriceSummary,
 } from "./normalizers.js";
 import { marketFixture } from "./testUtils.js";
+import type { MarketSnapshot } from "./types.js";
 
 test("normalizes market fields with stable nulls, arrays, category, and fallback image", () => {
   const market = normalizeMarket(
@@ -67,5 +69,103 @@ test("detail includes related markets and synthetic price history by default", (
   assert.equal(detail.history.is_synthetic, true);
   assert.equal(detail.history.snapshots.length, 12);
   assert.equal(detail.history.price_history.length, 12);
+  assert.equal(detail.history.price_history[0]?.outcomes?.length, detail.outcomes.length);
   assert.equal(detail.volume_detail.volume, 125000);
+});
+
+test("normalizes grouped event context and child market labels", () => {
+  const event = {
+    id: "event-1",
+    slug: "democratic-presidential-nominee-2028",
+    title: "Democratic Presidential Nominee 2028",
+    markets: [],
+  };
+  const childMarket = marketFixture({
+    id: "roy-cooper",
+    question: "Will Roy Cooper win the 2028 Democratic presidential nomination?",
+    groupItemTitle: "Roy Cooper",
+    groupItemThreshold: "12",
+    events: [event],
+  });
+  const otherChildMarket = marketFixture({
+    id: "oprah",
+    groupItemTitle: "Oprah Winfrey",
+    groupItemThreshold: "35",
+    outcomePrices: JSON.stringify(["0.08", "0.92"]),
+    events: [event],
+  });
+  const detail = normalizeMarketDetail(
+    childMarket,
+    [],
+    [],
+    [],
+    [otherChildMarket, childMarket],
+  );
+
+  assert.equal(detail.event_id, "event-1");
+  assert.equal(detail.event_slug, "democratic-presidential-nominee-2028");
+  assert.equal(detail.groupItemTitle, "Roy Cooper");
+  assert.equal(detail.group_markets.length, 2);
+  assert.deepEqual(
+    detail.group_markets.map((market) => [market.id, market.label, market.yes_price]),
+    [
+      ["roy-cooper", "Roy Cooper", 0.61],
+      ["oprah", "Oprah Winfrey", 0.08],
+    ],
+  );
+  assert.deepEqual(normalizeGroupMarkets([childMarket])[0]?.clobTokenIds, [
+    "yes-token",
+    "no-token",
+  ]);
+});
+
+test("detail uses real snapshots before synthetic price history", () => {
+  const snapshots: MarketSnapshot[] = [
+    {
+      id: "snapshot-1",
+      market_id: "market-1",
+      captured_at: "2026-05-13T10:00:00.000Z",
+      prices: {
+        yes: 0.55,
+        no: 0.45,
+        best_bid: 0.54,
+        best_ask: 0.56,
+        last_trade: 0.55,
+        midpoint: 0.55,
+        spread: 0.02,
+      },
+      volume: 1000,
+      liquidity: 500,
+      source: "polymarket",
+    },
+    {
+      id: "snapshot-2",
+      market_id: "market-1",
+      captured_at: "2026-05-13T11:00:00.000Z",
+      prices: {
+        yes: 0.61,
+        no: 0.39,
+        best_bid: 0.6,
+        best_ask: 0.62,
+        last_trade: 0.61,
+        midpoint: 0.61,
+        spread: 0.02,
+      },
+      volume: 1200,
+      liquidity: 550,
+      source: "polymarket",
+    },
+  ];
+
+  const detail = normalizeMarketDetail(marketFixture(), [], snapshots);
+
+  assert.equal(detail.history.is_synthetic, false);
+  assert.equal(detail.history.snapshots.length, 2);
+  assert.deepEqual(
+    detail.history.price_history.map((point) => [point.timestamp, point.yes, point.synthetic]),
+    [
+      ["2026-05-13T10:00:00.000Z", 0.55, undefined],
+      ["2026-05-13T11:00:00.000Z", 0.61, undefined],
+    ],
+  );
 });

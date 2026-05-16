@@ -12,6 +12,9 @@ alter table ledger_entries
   alter column idempotency_key set not null;
 
 alter table ledger_entries
+  drop constraint if exists ledger_entries_entry_type_check;
+
+alter table ledger_entries
   add constraint ledger_entries_entry_type_check
     check (entry_type in (
       'credit',
@@ -25,6 +28,9 @@ alter table ledger_entries
 
 alter table ledger_entries
   validate constraint ledger_entries_entry_type_check;
+
+alter table ledger_entries
+  drop constraint if exists ledger_entries_amount_positive_check;
 
 alter table ledger_entries
   add constraint ledger_entries_amount_positive_check

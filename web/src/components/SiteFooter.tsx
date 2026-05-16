@@ -52,11 +52,14 @@ export function SiteFooter() {
     <footer className="border-t border-[#293440] bg-[#0f1318]">
       <div className="mx-auto max-w-[1500px] px-4 py-14 md:px-6 xl:px-8">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <span className="grid h-10 w-10 place-items-center rounded-lg border-2 border-[#edf1f5] text-xs font-bold">
-            MP
-          </span>
+          <img
+            className="h-12 w-12 object-contain"
+            src="/site-logo.png"
+            alt=""
+            aria-hidden="true"
+          />
           <div>
-            <strong className="text-2xl font-semibold text-[#edf1f5]">Market Pulse</strong>
+            <strong className="text-2xl font-semibold text-[#edf1f5]">Pulse Market</strong>
             <p className="mt-1 text-sm font-medium text-[#8f9aa8]">
               The professional prediction market interface™
             </p>
@@ -92,7 +95,7 @@ export function SiteFooter() {
             ))}
           </FooterColumn>
 
-          <FooterColumn title="Market Pulse">
+          <FooterColumn title="Pulse Market">
             {companyLinks.map((link) => (
               <a href="#company" key={link}>
                 {link}
@@ -121,7 +124,7 @@ export function SiteFooter() {
           </div>
 
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-semibold text-[#8f9aa8]" aria-label="Legal links">
-            <span className="text-[#edf1f5]">Market Pulse Inc. © 2026</span>
+            <span className="text-[#edf1f5]">Pulse Market Inc. © 2026</span>
             <a className="transition hover:text-[#edf1f5]" href="#privacy">Privacy</a>
             <a className="transition hover:text-[#edf1f5]" href="#terms">Terms of Use</a>
             <a className="transition hover:text-[#edf1f5]" href="#integrity">Market Integrity</a>
@@ -129,7 +132,7 @@ export function SiteFooter() {
             <a className="transition hover:text-[#edf1f5]" href="#docs">Docs</a>
           </nav>
 
-          <button className="flex items-center gap-2 justify-self-start rounded-lg px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#171d24] lg:justify-self-end">
+          <button className="flex items-center gap-2 justify-self-start rounded-2xl px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#171d24] lg:justify-self-end">
             <Globe2 size={18} />
             English
             <ChevronRight size={15} />

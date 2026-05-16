@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
+import QRCode from "qrcode";
 import type { AppConfig } from "./config.js";
 import type { Queryable } from "./db.js";
 import { toIsoString } from "./utils.js";
@@ -152,7 +153,7 @@ export function buildTwoFactorService(repository: TwoFactorRepository, config: A
 
   async function startSetup(user: { id: string; email: string }) {
     const secret = generateBase32Secret();
-    const backupCodes = Array.from({ length: 8 }, () => randomBackupCode());
+    const backupCodes = generateBackupCodes();
     const record = await repository.upsert({
       userId: user.id,
       secret,
@@ -162,12 +163,19 @@ export function buildTwoFactorService(repository: TwoFactorRepository, config: A
       lastUsedAt: null,
     });
 
+    const otpauthUrl = buildOtpAuthUrl({
+      issuer: "Pulse Market",
+      accountName: user.email,
+      secret: record.secret,
+    });
+
     return {
       secret,
-      otpauthUrl: buildOtpAuthUrl({
-        issuer: "Market Pulse",
-        accountName: user.email,
-        secret: record.secret,
+      otpauthUrl,
+      qrCodeDataUrl: await QRCode.toDataURL(otpauthUrl, {
+        errorCorrectionLevel: "M",
+        margin: 1,
+        width: 192,
       }),
       backupCodes,
     };
@@ -207,6 +215,31 @@ export function buildTwoFactorService(repository: TwoFactorRepository, config: A
     return getStatus(userId);
   }
 
+  async function regenerateBackupCodes(userId: string, code: string) {
+    const record = await repository.getByUserId(userId);
+    if (!record?.enabled) {
+      throw new AuthError("TWO_FACTOR_NOT_ENABLED", "Two-factor authentication is not enabled.", 400);
+    }
+
+    if (!(await verifyCode(userId, code))) {
+      throw new AuthError("INVALID_TWO_FACTOR_CODE", "Two-factor code is invalid.", 400);
+    }
+
+    const latest = await repository.getByUserId(userId);
+    const backupCodes = generateBackupCodes();
+    const now = new Date().toISOString();
+    await repository.upsert({
+      ...(latest ?? record),
+      backupCodes: backupCodes.map(hashBackupCode),
+      lastUsedAt: now,
+    });
+
+    return {
+      backupCodes,
+      status: await getStatus(userId),
+    };
+  }
+
   async function verifyCode(userId: string, code: string) {
     const record = await repository.getByUserId(userId);
     if (!record?.enabled) {
@@ -242,6 +275,7 @@ export function buildTwoFactorService(repository: TwoFactorRepository, config: A
     startSetup,
     confirm,
     disable,
+    regenerateBackupCodes,
     verifyCode,
   };
 }
@@ -322,6 +356,10 @@ function decodeBase32(value: string) {
 
 function randomBackupCode() {
   return `${randomBytes(3).toString("hex")}-${randomBytes(3).toString("hex")}`;
+}
+
+function generateBackupCodes() {
+  return Array.from({ length: 8 }, () => randomBackupCode());
 }
 
 function hashBackupCode(code: string) {

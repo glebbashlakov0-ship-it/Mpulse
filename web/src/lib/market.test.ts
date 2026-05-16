@@ -9,6 +9,7 @@ import {
   getRelatedMarketDisplayImage,
   withUniqueImages,
 } from "./market";
+import { getCardRows } from "../components/MarketCard";
 import type { Market, LocalPosition, RelatedMarket } from "./types";
 
 function market(overrides: Partial<Market>): Market {
@@ -43,13 +44,20 @@ function market(overrides: Partial<Market>): Market {
       best_ask: null,
       last_trade_price: null,
     },
+    event_id: null,
+    event_slug: null,
+    event_title: null,
+    groupItemTitle: null,
+    groupItemThreshold: null,
+    canonical_market_id: "m1",
+    canonical_event_slug: null,
     source: "polymarket",
     ...overrides,
   };
 }
 
 describe("market helpers", () => {
-  it("spreads duplicated upstream images across deterministic category fallbacks", () => {
+  it("keeps upstream images even when Polymarket reuses the same event media", () => {
     const sharedImage = "https://example.com/reused.png";
     const inputs = [
       market({ id: "crypto-a", slug: "btc-up", title: "BTC Up", image: sharedImage }),
@@ -59,23 +67,16 @@ describe("market helpers", () => {
     const [first, second, third] = withUniqueImages(inputs);
     const [repeatFirst] = withUniqueImages(inputs);
 
-    assert.notEqual(first.displayImage, sharedImage);
-    assert.notEqual(second.displayImage, sharedImage);
-    assert.notEqual(third.displayImage, sharedImage);
-    assert.notEqual(first.displayImage, second.displayImage);
-    assert.notEqual(second.displayImage, third.displayImage);
+    assert.equal(first.displayImage, sharedImage);
+    assert.equal(second.displayImage, sharedImage);
+    assert.equal(third.displayImage, sharedImage);
     assert.equal(first.displayImage, repeatFirst.displayImage);
-
-    for (const result of [first, second, third]) {
-      assert.match(result.displayImage ?? "", /^https:\/\/images\.unsplash\.com\//);
-    }
   });
 
   it("falls back by slug and title when a market id is not available", () => {
-    const sharedImage = "https://example.com/reused.png";
     const [first, second] = withUniqueImages([
-      market({ id: "", slug: "first-election", title: "First election", image: sharedImage }),
-      market({ id: "", slug: null, title: "Second election", image: sharedImage }),
+      market({ id: "", slug: "first-election", title: "First election", image: null }),
+      market({ id: "", slug: null, title: "Second election", image: null }),
     ]);
 
     assert.notEqual(first.displayImage, second.displayImage);
@@ -133,6 +134,75 @@ describe("market helpers", () => {
     assert.equal(getOutcomeActionLabel("No", true), "No");
     assert.equal(getOutcomeActionLabel("Candidate A", false), "Candidate A");
     assert.equal(getOutcomeActionLabel("", false), "Trade");
+  });
+
+  it("uses live high-probability grouped outcomes for card previews before resolved zero rows", () => {
+    const grouped = market({
+      id: "starmer-card",
+      title: "Starmer out by...?",
+      category: "politics",
+      topics: ["politics"],
+      group_markets: [
+        {
+          ...market({
+            id: "starmer-2025",
+            title: "Starmer out in 2025?",
+            groupItemTitle: "December 31, 2025",
+            active: true,
+            closed: true,
+            status: "closed",
+          }),
+          label: "December 31, 2025",
+          yes_price: 0,
+          no_price: 1,
+          clobTokenIds: [],
+        },
+        {
+          ...market({
+            id: "starmer-feb",
+            title: "Starmer out by February 28, 2026?",
+            groupItemTitle: "February 28",
+            active: true,
+            closed: true,
+            status: "closed",
+          }),
+          label: "February 28",
+          yes_price: 0,
+          no_price: 1,
+          clobTokenIds: [],
+        },
+        {
+          ...market({
+            id: "starmer-june",
+            title: "Starmer out by June 30, 2026?",
+            groupItemTitle: "June 30",
+          }),
+          label: "June 30",
+          yes_price: 0.26,
+          no_price: 0.74,
+          clobTokenIds: [],
+        },
+        {
+          ...market({
+            id: "starmer-dec",
+            title: "Starmer out by December 31, 2026?",
+            groupItemTitle: "December 31",
+          }),
+          label: "December 31",
+          yes_price: 0.73,
+          no_price: 0.27,
+          clobTokenIds: [],
+        },
+      ],
+    });
+
+    assert.deepEqual(
+      getCardRows(grouped).slice(0, 2).map((row) => [row.label, row.yesPrice]),
+      [
+        ["December 31", 0.73],
+        ["June 30", 0.26],
+      ],
+    );
   });
 
   it("calculates position value and pnl from market prices", () => {

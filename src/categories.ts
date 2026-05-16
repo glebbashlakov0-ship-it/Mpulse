@@ -22,6 +22,25 @@ const categoryDefinitions = [
     image: "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?auto=format&fit=crop&w=960&q=80",
   },
   {
+    slug: "esports",
+    label: "Esports",
+    title_ar: null,
+    keywords: [
+      "esports",
+      "e-sports",
+      "counter-strike",
+      "cs2",
+      "valorant",
+      "league of legends",
+      "dota",
+      "overwatch",
+      "rocket league",
+      "call of duty",
+    ],
+    aliases: [],
+    image: "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=960&q=80",
+  },
+  {
     slug: "crypto",
     label: "Crypto",
     title_ar: null,
@@ -42,7 +61,7 @@ const categoryDefinitions = [
     label: "Finance",
     title_ar: null,
     keywords: ["finance", "fed", "rate", "stocks", "stock", "inflation", "oil", "gold"],
-    aliases: ["financial", "markets"],
+    aliases: ["financial", "markets", "fed", "rates"],
     image: "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?auto=format&fit=crop&w=960&q=80",
   },
   {
@@ -131,14 +150,32 @@ export function getCategoryBySlug(slug: string | null | undefined) {
   );
 }
 
-export function inferCategory(market: Pick<PolymarketMarket, "category" | "question" | "description">) {
+function getEventText(market: Pick<PolymarketMarket, "events">) {
+  return (market.events ?? [])
+    .map((event) =>
+      [
+        event.category,
+        event.title,
+        event.description,
+        ...(event.tags ?? []).flatMap((tag) => [tag.slug, tag.label]),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    )
+    .join(" ");
+}
+
+export function inferCategory(
+  market: Pick<PolymarketMarket, "category" | "question" | "description" | "events">,
+) {
   const rawCategory = market.category?.trim();
   const directCategory = rawCategory ? getCategoryBySlug(rawCategory) : null;
   if (directCategory) {
     return directCategory;
   }
 
-  const text = `${rawCategory ?? ""} ${market.question ?? ""} ${market.description ?? ""}`.toLowerCase();
+  const text =
+    `${rawCategory ?? ""} ${market.question ?? ""} ${market.description ?? ""} ${getEventText(market)}`.toLowerCase();
   return (
     categoryDefinitions.find((category) =>
       category.keywords.some((keyword) => text.includes(keyword)),
@@ -147,11 +184,13 @@ export function inferCategory(market: Pick<PolymarketMarket, "category" | "quest
 }
 
 export function inferTopics(
-  market: Pick<PolymarketMarket, "category" | "question" | "description">,
+  market: Pick<PolymarketMarket, "category" | "question" | "description" | "events">,
 ): string[] {
-  const text = `${market.category ?? ""} ${market.question ?? ""} ${market.description ?? ""}`.toLowerCase();
+  const text =
+    `${market.category ?? ""} ${market.question ?? ""} ${market.description ?? ""} ${getEventText(market)}`.toLowerCase();
   const category = inferCategory(market);
   const topics = new Set<string>([category.slug]);
+  const aiText = ` ${text} `;
 
   for (const definition of categoryDefinitions) {
     if (definition.slug === "other") {
@@ -163,7 +202,20 @@ export function inferTopics(
     }
   }
 
-  return [...topics].slice(0, 5);
+  for (const event of market.events ?? []) {
+    for (const tag of event.tags ?? []) {
+      const topic = slugify(tag.slug ?? tag.label ?? "");
+      if (topic) {
+        topics.add(topic);
+      }
+    }
+  }
+
+  if (/\b(ai|openai|gpt|llm)\b/.test(aiText) || aiText.includes("artificial intelligence")) {
+    topics.add("ai");
+  }
+
+  return [...topics].slice(0, 12);
 }
 
 export function normalizeCategoryValue(value: string | null | undefined): string | null {

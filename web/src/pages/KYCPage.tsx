@@ -38,10 +38,10 @@ const countryOptions = [
   { value: "GB", label: "United Kingdom" },
 ];
 
-const cardClass = "rounded-[14px] border border-[#293440] bg-[#171d24] p-5 sm:p-6";
+const cardClass = "rounded-3xl border border-[#293440] bg-[#171d24] p-5 sm:p-6";
 const mutedText = "text-[#8f9aa8]";
 const inputClass =
-  "mt-2 w-full rounded-lg border border-[#293440] bg-[#0f1318] px-4 py-3 text-sm font-semibold text-[#edf1f5] outline-none transition focus:border-[#3b91f6] focus:ring-2 focus:ring-[#3b91f6]/20 disabled:opacity-50";
+  "mt-2 w-full rounded-2xl border border-[#293440] bg-[#0f1318] px-4 py-3 text-sm font-semibold text-[#edf1f5] outline-none transition focus:border-[#3b91f6] focus:ring-2 focus:ring-[#3b91f6]/20 disabled:opacity-50";
 
 export function KYCPage() {
   const { t } = useTranslation();
@@ -285,7 +285,7 @@ export function KYCPage() {
             </div>
 
             {successMessage ? (
-              <div className="mt-5 flex items-start gap-2 rounded-lg border border-green-500/25 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-200">
+              <div className="mt-5 flex items-start gap-2 rounded-2xl border border-green-500/25 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-200">
                 <CheckCircle2 className="mt-0.5 shrink-0" size={17} />
                 {successMessage}
               </div>
@@ -330,7 +330,7 @@ export function KYCPage() {
 
               <div className="md:col-span-2">
                 {formError ? (
-                  <p className="mb-3 rounded-lg border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
+                  <p className="mb-3 rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
                     {formError}
                   </p>
                 ) : null}
@@ -374,7 +374,7 @@ export function KYCPage() {
               />
             </div>
 
-            <label className="mt-5 flex items-start gap-3 rounded-lg border border-[#293440] bg-[#0f1318] p-4 text-sm font-medium leading-6 text-[#edf1f5]">
+            <label className="mt-5 flex items-start gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] p-4 text-sm font-medium leading-6 text-[#edf1f5]">
               <input
                 checked={legalChecked}
                 className="mt-1 h-4 w-4 accent-[#3b91f6]"
@@ -417,7 +417,7 @@ export function KYCPage() {
               <div className="mt-5 grid gap-2">
                 {blockerReasons.map((reason) => (
                   <div
-                    className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-100"
+                    className="rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-100"
                     key={reason}
                   >
                     {formatEligibilityReason(reason)}
@@ -425,7 +425,7 @@ export function KYCPage() {
                 ))}
               </div>
             ) : (
-              <div className="mt-5 rounded-lg border border-green-500/25 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-200">
+              <div className="mt-5 rounded-2xl border border-green-500/25 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-200">
                 {t("kyc.noBlockers")}
               </div>
             )}
@@ -441,7 +441,7 @@ export function KYCPage() {
 }
 
 const primaryButtonClass =
-  "inline-flex items-center justify-center rounded-lg bg-[#3b91f6] px-5 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-2xl bg-[#3b91f6] px-5 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:cursor-not-allowed disabled:opacity-50";
 
 function VerificationShell({ children }: { children: React.ReactNode }) {
   return (
@@ -493,7 +493,7 @@ function StatusPill({ label, tone }: { label: string; tone: "success" | "warning
 
 function StatusMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-[#293440] bg-[#0f1318] p-4">
+    <div className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8f9aa8]">{label}</p>
       <p className="mt-2 text-base font-semibold text-[#edf1f5]">{value}</p>
     </div>
@@ -514,7 +514,7 @@ function LegalRow({
   version: string | null | undefined;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#293440] bg-[#0f1318] px-4 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] px-4 py-3">
       <span className="text-sm font-semibold text-[#edf1f5]">{label}</span>
       <span
         className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${

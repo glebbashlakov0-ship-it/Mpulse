@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { primaryNav } from "./constants";
 import {
+  buildTopicTabsFromTags,
   buildMarketSearchParams,
   defaultMarketFilters,
   getDiscoveryUrl,
@@ -74,9 +75,39 @@ describe("market discovery filters", () => {
 
     assert.equal(params.get("limit"), "36");
     assert.equal(params.get("offset"), "72");
-    assert.equal(params.get("category"), "tech");
+    assert.equal(params.get("category"), null);
     assert.equal(params.get("topic"), "ai");
     assert.equal(params.get("search"), "gpt");
+  });
+
+  it("turns Polymarket tags into real topic filters instead of short text searches", () => {
+    const tabs = buildTopicTabsFromTags([
+      { id: "ai", slug: "ai", label: "AI" },
+      { id: "trump-xi-summit", slug: "trump-xi-summit", label: "Trump-Xi Summit" },
+    ]);
+
+    assert.deepEqual(tabs[1], {
+      label: "AI",
+      value: "ai",
+      filter: { category: "", topic: "ai", search: "" },
+    });
+    assert.equal(getDiscoveryUrl(mergeDiscoveryFilters(defaultMarketFilters, tabs[1].filter)), "/markets/topic/ai");
+  });
+
+  it("uses category params for broad chips so crypto and sports stay strict", () => {
+    const cryptoParams = buildMarketSearchParams(
+      { ...defaultMarketFilters, category: "crypto" },
+      { limit: 36 },
+    );
+    const sportsParams = buildMarketSearchParams(
+      { ...defaultMarketFilters, category: "sports" },
+      { limit: 36 },
+    );
+
+    assert.equal(cryptoParams.get("category"), "crypto");
+    assert.equal(cryptoParams.get("topic"), null);
+    assert.equal(sportsParams.get("category"), "sports");
+    assert.equal(sportsParams.get("topic"), null);
   });
 
   it("keeps all status in shareable URLs without sending a backend status filter", () => {

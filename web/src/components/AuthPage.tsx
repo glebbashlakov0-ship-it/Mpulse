@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, LogIn, UserPlus } from "lucide-re
 import { useNavigate } from "react-router-dom";
 import type { AuthUser } from "../lib/types";
 
-const panel = "rounded-[14px] border border-[#293440] bg-[#171d24]";
+const panel = "rounded-3xl border border-[#293440] bg-[#171d24]";
 
 export function AuthPage({
   mode,
@@ -71,7 +71,7 @@ export function AuthPage({
   return (
     <section className="mx-auto max-w-[920px] px-4 py-8 md:px-6 xl:px-8">
       <button
-        className="flex w-fit items-center gap-2 rounded-lg border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+        className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
         onClick={onBack}
         type="button"
       >
@@ -81,10 +81,10 @@ export function AuthPage({
 
       <div className={`${panel} mt-6 overflow-hidden`}>
         <div className="grid gap-6 p-5 md:grid-cols-[0.9fr_1.1fr] md:p-7">
-          <div className="flex flex-col justify-between rounded-lg border border-[#293440] bg-[#0f1318] p-5">
+          <div className="flex flex-col justify-between rounded-2xl border border-[#293440] bg-[#0f1318] p-5">
             <div>
               <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#3b91f6]">
-                Market Pulse
+                Pulse Market
               </span>
               <h1 className="mt-2 text-3xl font-semibold tracking-normal text-[#edf1f5]">
                 {isRegister ? "Create account" : "Log in"}
@@ -96,7 +96,7 @@ export function AuthPage({
 
             <div className="mt-6 grid grid-cols-2 gap-2">
               <button
-                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${
                   !isRegister
                     ? "bg-[#edf1f5] text-[#0f1318]"
                     : "bg-[#171d24] text-[#8f9aa8] hover:text-[#edf1f5]"
@@ -107,7 +107,7 @@ export function AuthPage({
                 Log In
               </button>
               <button
-                className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${
                   isRegister
                     ? "bg-[#edf1f5] text-[#0f1318]"
                     : "bg-[#171d24] text-[#8f9aa8] hover:text-[#edf1f5]"
@@ -159,7 +159,7 @@ export function AuthPage({
             {message ? <InlineMessage tone={message.tone} text={message.text} /> : null}
 
             <button
-              className="flex h-12 items-center justify-center gap-2 rounded-lg bg-[#3b91f6] px-4 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:opacity-60"
+              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#3b91f6] px-4 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:opacity-60"
               disabled={isSubmitting}
               type="submit"
             >
@@ -204,7 +204,7 @@ function TextField({
     <label className="grid gap-1">
       <span className="text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">{label}</span>
       <input
-        className="h-12 rounded-lg border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none placeholder:text-[#8f9aa8] transition focus:border-[#3b91f6]/70"
+        className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none placeholder:text-[#8f9aa8] transition focus:border-[#3b91f6]/70"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         type={type}
@@ -218,7 +218,7 @@ function TextField({
 function InlineMessage({ tone, text }: { tone: "success" | "error"; text: string }) {
   return (
     <div
-      className={`flex items-start gap-2 rounded-lg px-4 py-3 text-sm font-semibold ${
+      className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
         tone === "success" ? "bg-green-500/10 text-green-200" : "bg-red-500/10 text-red-200"
       }`}
     >

@@ -1,4 +1,5 @@
-import type { MarketSnapshot, NormalizedMarketDetail } from "./types.js";
+import { randomUUID } from "node:crypto";
+import type { MarketSnapshot, NormalizedMarket, NormalizedMarketDetail } from "./types.js";
 
 type SnapshotStore = {
   add(snapshot: MarketSnapshot): void;
@@ -35,14 +36,34 @@ export const marketSnapshotSchema = {
   indexes: ["market_snapshots_market_id_captured_at_idx"],
 };
 
-export function buildSnapshotFromMarket(market: NormalizedMarketDetail): MarketSnapshot {
-  const capturedAt = new Date().toISOString();
+export function buildSnapshotFromMarket(
+  market: NormalizedMarket | NormalizedMarketDetail,
+  capturedAt = new Date().toISOString(),
+): MarketSnapshot {
+  const prices =
+    "prices" in market
+      ? market.prices
+      : {
+          yes: market.outcomes[0]?.price ?? market.outcomes[0]?.probability ?? null,
+          no: market.outcomes[1]?.price ?? market.outcomes[1]?.probability ?? null,
+          best_bid: market.trading.best_bid,
+          best_ask: market.trading.best_ask,
+          last_trade: market.trading.last_trade_price,
+          midpoint:
+            market.trading.best_bid !== null && market.trading.best_ask !== null
+              ? (market.trading.best_bid + market.trading.best_ask) / 2
+              : null,
+          spread:
+            market.trading.best_bid !== null && market.trading.best_ask !== null
+              ? Math.max(0, market.trading.best_ask - market.trading.best_bid)
+              : null,
+        };
 
   return {
-    id: `${market.id}:${capturedAt}`,
+    id: `polymarket:${market.id}:${capturedAt}:${randomUUID()}`,
     market_id: market.id,
     captured_at: capturedAt,
-    prices: market.prices,
+    prices,
     volume: market.volume,
     liquidity: market.liquidity,
     source: market.source,

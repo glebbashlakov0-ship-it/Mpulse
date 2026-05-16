@@ -29,7 +29,7 @@ Optional production email settings:
 
 ```dotenv
 RESEND_API_KEY=replace-with-resend-api-key
-EMAIL_FROM_ADDRESS=Market Pulse <noreply@your-domain.com>
+EMAIL_FROM_ADDRESS=Pulse Market <noreply@your-domain.com>
 ```
 
 ## Routing

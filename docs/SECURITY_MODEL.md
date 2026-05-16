@@ -4,6 +4,8 @@
 
 The frontend is not trusted. It can be changed by users, inspected, replayed, or called directly.
 Any value coming from the browser is treated as a request, not as truth.
+Market chart history is also fetched server-side: the frontend must read normalized
+`/api/markets/:id` responses, not call Polymarket Gamma or CLOB directly.
 
 ## What Belongs On The Backend
 
@@ -11,6 +13,7 @@ Any value coming from the browser is treated as a request, not as truth.
 - position updates;
 - trade execution;
 - price validation;
+- public market data and chart-history normalization;
 - order limits;
 - wallet state;
 - deposit and withdrawal state;
@@ -129,7 +132,9 @@ trading remains local infrastructure:
   authenticated admin roles through backend `requireAdmin` / `requireAdminRole(...)`; ordinary
   authenticated users receive 403. Roles are backend/DB-owned (`user`, `support`,
   `compliance_admin`, `finance_admin`, `super_admin`) and cannot be assigned by frontend register
-  or settings payloads;
+  or settings payloads. Local/dev role allowlists are split by `SUPER_ADMIN_EMAILS`,
+  `SUPPORT_EMAILS`, `COMPLIANCE_ADMIN_EMAILS`, and `FINANCE_ADMIN_EMAILS`; legacy
+  `ADMIN_EMAILS` maps to `super_admin`;
 - admin withdrawal review is local. Rejecting a withdrawal changes only the core
   withdrawal status and records audit; responses include `realTransferBlocked: true` and
   `mode: "wallet_review_only"`. It does not perform real approval, wallet,
@@ -147,9 +152,23 @@ trading remains local infrastructure:
 - there are no withdrawals, private keys, wallet, TRON network calls, settlement, or outbound
   transfer flows.
 
-The auth local uses hashed passwords, HttpOnly SameSite cookie sessions, and an in-memory rate limit
-for register/login/settings endpoints. Session tokens must not be stored in localStorage or exposed
-to frontend JavaScript.
+The auth local uses hashed passwords, HttpOnly SameSite cookie sessions, CSRF protection for
+state-changing browser requests, and rate limits for register/login/settings endpoints. Session
+tokens must not be stored in localStorage or exposed to frontend JavaScript.
+
+Account-security endpoints currently include email verification, password reset, session/device
+listing, individual session revoke, logout-all-other-sessions, logout-all-devices, and
+2FA setup/confirm/disable.
+2FA setup returns an authenticator QR data URL, the raw otpauth URL, and one-time backup codes.
+Backup codes can be regenerated only after a valid TOTP or existing backup code is provided.
+Important events are recorded through the audit service, including login, logout, password reset,
+email verification, session revocation, logout-all-devices, 2FA setup/enabled/disabled,
+backup-code regeneration, settings changes, and admin actions.
+
+CSRF uses a signed double-submit token. `GET /api/auth/csrf` sets the readable CSRF cookie and
+returns the token; frontend unsafe requests send `X-CSRF-Token`. The backend rejects invalid or
+missing CSRF tokens with `CSRF_TOKEN_INVALID` when `CSRF_PROTECTION_ENABLED=true`. Tests disable
+CSRF by default through test config unless a test opts in.
 
 The production readiness core adds explicit config guardrails without enabling real money:
 `APP_MODE` must remain `local`; production startup rejects placeholder session/webhook
@@ -160,8 +179,10 @@ is a non-secret liveness check. `GET /api/ready` checks
 database availability, the backend market data layer, and critical config flags without returning
 secret values. A failing readiness check must be treated as not deployable/servable.
 
-The in-memory auth rate limit is local-only. Production must replace it with a Redis-backed,
-edge-level, or reverse-proxy rate limit that works across API processes and deployments.
+The in-memory auth rate limit is local-only. Production config rejects
+`AUTH_RATE_LIMIT_BACKEND=memory`; use `AUTH_RATE_LIMIT_BACKEND=redis` with `REDIS_URL` for
+backend-enforced Redis limits, or `AUTH_RATE_LIMIT_BACKEND=external` only when edge/reverse-proxy
+rate limits are enforced outside this process.
 
 The initial database migration includes `ledger_entries`, `wallets`, `trades`, and `positions` so
 future work has a safer shape. `002_ledger_core.sql` tightens `ledger_entries` with normal
@@ -207,8 +228,9 @@ these exist:
 - audit logs;
 - compliance profile/consent persistence with real KYC/AML/sanctions provider decisions;
 - persistent users and sessions;
-- email verification, password recovery, 2FA, roles, and permissions;
-- device/session management;
+- production email delivery hardening, password recovery operations, 2FA recovery policy, roles,
+  and permissions review;
+- device/session management review;
 - admin separation;
 - secret management;
 - monitoring and alerting;

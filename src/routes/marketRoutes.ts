@@ -21,12 +21,30 @@ export function registerMarketRoutes(app: FastifyInstance, marketData: MarketDat
     };
   });
 
+  app.get<{ Params: { marketId: string } }>("/api/market-groups/by-market/:marketId", async (request) => {
+    const result = await marketData.getMarketGroupByMarketId(request.params.marketId);
+
+    return {
+      data: result.data,
+      meta: result.meta,
+    };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/markets/:id/snapshots/collect", async (request) => {
+    const result = await marketData.collectMarketSnapshot(request.params.id);
+
+    return {
+      data: result.data,
+      meta: result.meta,
+    };
+  });
+
   app.get("/api/categories", async () => ({
     data: await marketData.listCategories(),
   }));
 
   app.get("/api/tags", async () => ({
-    data: await marketData.listCategories(),
+    data: await marketData.listTags(),
   }));
 
   app.get("/api/search", async (request) => {

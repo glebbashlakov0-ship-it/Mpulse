@@ -1,4 +1,4 @@
-# Market Pulse Project Memory
+# Pulse Market Project Memory
 
 This file is a short handoff note for developers and AI assistants. The broader product plan lives
 in [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), security rules live in
@@ -7,7 +7,7 @@ in [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md), security rules live in
 
 ## Product
 
-Market Pulse is an Arabic-first prediction market interface inspired by Polymarket. The app serves
+Pulse Market is an Arabic-first prediction market interface inspired by Polymarket. The app serves
 normalized public market data, account flows, portfolio screens, trading APIs, wallet records,
 ledger balances, compliance checks, and admin review tools.
 
@@ -18,10 +18,13 @@ approval. User-facing copy should stay clear and product-oriented.
 
 - Backend: Node.js, TypeScript, Fastify.
 - Frontend: React, Vite, TypeScript, Tailwind CSS.
-- Market data source: Polymarket Gamma API.
+- Market data source: Polymarket Gamma API plus backend-only Polymarket CLOB price history.
 - Database: Postgres/Supabase through `DATABASE_URL`; memory repositories are used when the DB is
   disabled.
 - Cache: backend in-memory cache today; Redis is the likely next production cache.
+- Auth rate limiting: memory in dev/test, `AUTH_RATE_LIMIT_BACKEND=redis` with `REDIS_URL` for
+  backend Redis enforcement, or `AUTH_RATE_LIMIT_BACKEND=external` for production edge/proxy
+  enforcement.
 - Payment rail currently modeled in the product: USDT on TRON/TRC-20.
 
 ## Current Features
@@ -32,10 +35,13 @@ approval. User-facing copy should stay clear and product-oriented.
 - Category/topic catalog through `GET /api/categories`.
 - Stable market images using upstream media first and deterministic curated category fallbacks.
 - Market detail pages with outcomes, prices, volume/liquidity, dates, rules, related markets, and
-  chart data.
+  chart data. Binary market charts use Polymarket CLOB price history first, local snapshots as
+  fallback, and synthetic fallback only when both real sources are unavailable. Frontend chart
+  rendering downsamples large CLOB histories so real charts stay responsive on mobile/desktop.
 - Frontend discovery filters are synced with URL query params.
 - Account auth with email/password, HttpOnly SameSite sessions, profile settings, email
-  verification, password reset, two-factor setup/status, and rate limiting.
+  verification, password reset, two-factor setup/status/QR/backup codes, session/device
+  management, CSRF protection for browser state-changing requests, and rate limiting.
 - Portfolio and trading APIs with quotes, orders, positions, trades, idempotency, and audit events.
 - Production Data Layer guardrails: production startup fails fast without `DATABASE_URL`, and DB
   mode requires auth for stateful portfolio/trading routes instead of falling back to guest memory
@@ -108,18 +114,21 @@ Auth and account security:
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
+- `GET /api/auth/csrf`
 - `GET /api/auth/me`
 - `GET /api/auth/sessions`
 - `DELETE /api/auth/sessions/:id`
 - `POST /api/auth/sessions/revoke-others`
+- `POST /api/auth/sessions/revoke-all`
 - `POST /api/auth/verify-email`
 - `POST /api/auth/resend-verification`
 - `POST /api/auth/request-password-reset`
 - `POST /api/auth/reset-password`
-- `GET /api/auth/two-factor/status`
-- `POST /api/auth/two-factor/setup`
-- `POST /api/auth/two-factor/confirm`
-- `POST /api/auth/two-factor/disable`
+- `GET /api/auth/2fa`
+- `POST /api/auth/2fa/setup`
+- `POST /api/auth/2fa/confirm`
+- `POST /api/auth/2fa/disable`
+- `POST /api/auth/2fa/backup-codes/regenerate`
 
 Admin:
 
@@ -145,9 +154,21 @@ Important environment variables:
 - `SESSION_COOKIE_SECURE`
 - `SESSION_TTL_MS`
 - `CORS_ALLOWED_ORIGINS`
+- `POLYMARKET_GAMMA_URL`
+- `POLYMARKET_CLOB_URL`
+- `CSRF_PROTECTION_ENABLED`
+- `CSRF_COOKIE_NAME`
+- `AUTH_RATE_LIMIT_WINDOW_MS`
+- `AUTH_RATE_LIMIT_MAX`
+- `AUTH_RATE_LIMIT_BACKEND`
+- `REDIS_URL`
 - `WALLET_DEPOSIT_WEBHOOK_SECRET`
 - `WALLET_DEPOSIT_MIN_CONFIRMATIONS`
 - `ADMIN_EMAILS`
+- `SUPPORT_EMAILS`
+- `COMPLIANCE_ADMIN_EMAILS`
+- `FINANCE_ADMIN_EMAILS`
+- `SUPER_ADMIN_EMAILS`
 
 ## Database
 
@@ -185,3 +206,6 @@ Run migrations with `npm run db:migrate` when `DATABASE_URL` is set.
 - Preserve idempotency keys for trading orders, ledger credits, deposit ingestion, and withdrawal
   requests.
 - Keep secrets out of git and never surface them through health/readiness responses.
+- Keep this file, `TECHNICAL_SPEC.md`, `README.md`, `docs/RUNBOOK.md`, and
+  `docs/SECURITY_MODEL.md` updated after each task so the next AI session can see what is real,
+  what is foundation-only, and what remains.

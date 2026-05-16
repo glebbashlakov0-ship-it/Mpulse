@@ -111,13 +111,13 @@ export function AdminPage({
   if (!isAdmin) {
     return (
       <AdminShell title="Access denied">
-        <div className="rounded-lg border border-[#293440] bg-[#171d24] p-6">
+        <div className="rounded-2xl border border-[#293440] bg-[#171d24] p-6">
           <p className="text-sm font-medium text-[#8f9aa8]">
             Admin access requires an assigned admin role.
           </p>
           {authStatus !== "authenticated" ? (
             <button
-              className="mt-4 rounded-lg bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white"
+              className="mt-4 rounded-2xl bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white"
               onClick={onOpenLogin}
               type="button"
             >
@@ -156,7 +156,7 @@ export function AdminPage({
             ) : (
               withdrawals?.withdrawalRequests.map((request) => (
                 <div
-                  className="rounded-lg border border-[#293440] bg-[#0f1318] p-4"
+                  className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4"
                   key={request.id}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -179,7 +179,7 @@ export function AdminPage({
                         : "Ready for review"}
                     </span>
                     <button
-                      className="flex items-center gap-2 rounded-lg border border-[#293440] px-3 py-2 text-[#ffb4b4] transition hover:border-[#ffb4b4]/70"
+                      className="flex items-center gap-2 rounded-2xl border border-[#293440] px-3 py-2 text-[#ffb4b4] transition hover:border-[#ffb4b4]/70"
                       disabled={request.status === "rejected"}
                       onClick={() => void rejectWithdrawal(request.id)}
                       type="button"
@@ -197,13 +197,13 @@ export function AdminPage({
         <Panel title="Market moderation">
           <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
             <input
-              className="h-12 min-w-0 rounded-lg border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
+              className="h-12 min-w-0 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
               placeholder="Market id"
               value={marketId}
               onChange={(event) => setMarketId(event.target.value)}
             />
             <select
-              className="h-12 rounded-lg border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
+              className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
               value={reason}
               onChange={(event) => setReason(event.target.value as HiddenMarketRule["reason"])}
             >
@@ -214,7 +214,7 @@ export function AdminPage({
               ))}
             </select>
             <button
-              className="flex h-12 items-center justify-center gap-2 rounded-lg bg-[#3b91f6] px-4 text-sm font-semibold text-white"
+              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#3b91f6] px-4 text-sm font-semibold text-white"
               onClick={() => void hideMarket()}
               type="button"
             >
@@ -229,7 +229,7 @@ export function AdminPage({
             ) : (
               audit?.hiddenMarkets.map((rule) => (
                 <div
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#293440] bg-[#0f1318] p-4"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] p-4"
                   key={rule.id}
                 >
                   <div>
@@ -239,7 +239,7 @@ export function AdminPage({
                     </span>
                   </div>
                   <button
-                    className="flex items-center gap-2 rounded-lg border border-[#293440] px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:border-[#3b91f6]/70"
+                    className="flex items-center gap-2 rounded-2xl border border-[#293440] px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:border-[#3b91f6]/70"
                     onClick={() => void unhideMarket(rule.marketId)}
                     type="button"
                   >
@@ -260,7 +260,7 @@ export function AdminPage({
           ) : (
             audit?.auditLogs.slice(0, 40).map((event) => (
               <div
-                className="grid gap-1 rounded-lg border border-[#293440] bg-[#0f1318] p-3 text-xs"
+                className="grid gap-1 rounded-2xl border border-[#293440] bg-[#0f1318] p-3 text-xs"
                 key={event.id}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -292,7 +292,7 @@ function AdminShell({ title, children }: { title: string; children: React.ReactN
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-[#293440] bg-[#171d24] p-4">
+    <div className="rounded-2xl border border-[#293440] bg-[#171d24] p-4">
       <span className="text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">{label}</span>
       <strong className="mt-2 block text-2xl font-semibold text-[#edf1f5]">{value}</strong>
     </div>
@@ -309,7 +309,7 @@ function Panel({
   className?: string;
 }) {
   return (
-    <section className={`min-w-0 rounded-lg border border-[#293440] bg-[#171d24] p-4 ${className}`}>
+    <section className={`min-w-0 rounded-2xl border border-[#293440] bg-[#171d24] p-4 ${className}`}>
       <h2 className="mb-4 text-lg font-semibold text-[#edf1f5]">{title}</h2>
       {children}
     </section>
@@ -318,7 +318,7 @@ function Panel({
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-[#293440] p-5 text-center text-sm font-semibold text-[#8f9aa8]">
+    <div className="rounded-2xl border border-dashed border-[#293440] p-5 text-center text-sm font-semibold text-[#8f9aa8]">
       {text}
     </div>
   );

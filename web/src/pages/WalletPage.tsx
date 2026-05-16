@@ -184,14 +184,14 @@ export function WalletPage() {
       <WalletShell
         title="Wallet"
         body={
-          <section className="rounded-lg border border-yellow-200 bg-yellow-50 p-5 text-yellow-900">
+          <section className="rounded-2xl border border-yellow-200 bg-yellow-50 p-5 text-yellow-900">
             <h2 className="text-lg font-semibold">Sign in required</h2>
             <p className="mt-1 text-sm">
               Wallet and balance data are available after you sign in.
             </p>
             <a
               href="/auth?mode=login&redirect=%2Fwallet"
-              className="mt-4 inline-flex rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white hover:bg-yellow-700"
+              className="mt-4 inline-flex rounded-2xl bg-yellow-600 px-4 py-2 text-sm font-semibold text-white hover:bg-yellow-700"
             >
               Log in or create account
             </a>
@@ -210,11 +210,11 @@ export function WalletPage() {
       <WalletShell
         title="Wallet"
         body={
-          <section className="rounded-lg border border-red-200 bg-red-50 p-5 text-red-800">
+          <section className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800">
             <h2 className="text-lg font-semibold">Wallet could not load</h2>
             <p className="mt-1 text-sm">{error}</p>
             <button
-              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+              className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
               onClick={() => void refreshWallet()}
               type="button"
             >
@@ -241,7 +241,7 @@ export function WalletPage() {
       title="Wallet"
       body={
         <>
-          <section className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-950">
+          <section className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950">
             <div className="flex gap-3">
               <AlertTriangle className="mt-0.5 size-5 shrink-0" />
               <div>
@@ -251,7 +251,7 @@ export function WalletPage() {
             </div>
           </section>
 
-          <section className="mb-6 rounded-lg border border-gray-200 bg-white p-6">
+          <section className="mb-6 rounded-2xl border border-gray-200 bg-white p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-gray-500">Available balance</p>
@@ -263,7 +263,7 @@ export function WalletPage() {
                 </p>
               </div>
               <button
-                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isCrediting}
                 onClick={() => void handleAddBalance()}
                 type="button"
@@ -282,7 +282,7 @@ export function WalletPage() {
           </section>
 
           <div className="mb-6 grid gap-6 lg:grid-cols-2">
-            <section className="rounded-lg border border-gray-200 bg-white p-6">
+            <section className="rounded-2xl border border-gray-200 bg-white p-6">
               <h2 className="text-xl font-semibold text-gray-950">Deposit instructions</h2>
               <p className="mt-1 text-sm text-gray-500">
                 Create an instruction for a USDT deposit on the selected network.
@@ -296,7 +296,7 @@ export function WalletPage() {
               <div className="mt-4">
                 <p className="text-sm font-medium text-gray-700">Deposit address</p>
                 {wallet ? (
-                  <p className="mt-1 break-all rounded-lg bg-gray-50 p-3 font-mono text-sm text-gray-900">
+                  <p className="mt-1 break-all rounded-2xl bg-gray-50 p-3 font-mono text-sm text-gray-900">
                     {wallet.address}
                   </p>
                 ) : (
@@ -308,7 +308,7 @@ export function WalletPage() {
                 <label className="min-w-0 flex-1 text-sm font-medium text-gray-700">
                   Expected amount
                   <input
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="mt-1 w-full rounded-2xl border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     min="0.01"
                     step="0.01"
                     type="number"
@@ -317,7 +317,7 @@ export function WalletPage() {
                   />
                 </label>
                 <button
-                  className="self-end rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="self-end rounded-2xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
                   disabled={isDepositCreating}
                   type="submit"
                 >
@@ -326,13 +326,13 @@ export function WalletPage() {
               </form>
             </section>
 
-            <section className="rounded-lg border border-gray-200 bg-white p-6">
+            <section className="rounded-2xl border border-gray-200 bg-white p-6">
               <h2 className="text-xl font-semibold text-gray-950">Withdrawal request</h2>
               <p className="mt-1 text-sm text-gray-500">
                 Withdrawal requests are reviewed before processing. Transfers are not available yet.
               </p>
               {!canRequestWithdrawal ? (
-                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
                   {withdrawalEligibilityText ??
                     "Complete account verification before requesting a withdrawal."}
                 </div>
@@ -342,7 +342,7 @@ export function WalletPage() {
                 <label className="block text-sm font-medium text-gray-700">
                   Amount
                   <input
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="mt-1 w-full rounded-2xl border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     min="0.01"
                     required
                     step="0.01"
@@ -354,7 +354,7 @@ export function WalletPage() {
                 <label className="block text-sm font-medium text-gray-700">
                   TRON destination address
                   <input
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="mt-1 w-full rounded-2xl border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     placeholder="T..."
                     required
                     type="text"
@@ -363,7 +363,7 @@ export function WalletPage() {
                   />
                 </label>
                 <button
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                   disabled={isWithdrawSubmitting || !canRequestWithdrawal}
                   type="submit"
                 >
@@ -377,11 +377,11 @@ export function WalletPage() {
             </section>
           </div>
 
-          <section className="rounded-lg border border-gray-200 bg-white p-6">
+          <section className="rounded-2xl border border-gray-200 bg-white p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-semibold text-gray-950">Wallet history</h2>
               <button
-                className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50"
+                className="inline-flex items-center gap-2 rounded-2xl border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50"
                 onClick={() => void refreshWallet()}
                 type="button"
               >
@@ -435,7 +435,7 @@ function WalletShell({ title, body }: { title: string; body: React.ReactNode }) 
 
 function LoadingState() {
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-12 text-center">
+    <section className="rounded-2xl border border-gray-200 bg-white p-12 text-center">
       <p className="text-gray-500">Loading wallet...</p>
     </section>
   );
@@ -443,7 +443,7 @@ function LoadingState() {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
       <p className="text-sm text-gray-500">{label}</p>
       <p className="mt-1 text-lg font-semibold text-gray-950">{value}</p>
     </div>
@@ -566,7 +566,7 @@ function HistoryRow({
   detail: string;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-2xl border border-gray-200 p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <p className="font-semibold text-gray-950">{title}</p>
         <p className="mt-1 text-sm text-gray-500">{meta}</p>
@@ -581,7 +581,7 @@ function HistoryRow({
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
+    <div className="rounded-2xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
       {text}
     </div>
   );

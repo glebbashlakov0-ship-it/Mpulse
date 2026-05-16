@@ -16,6 +16,7 @@ import type {
   LedgerEntriesPayload,
   Market,
   MarketCategory,
+  MarketTag,
   Portfolio,
   Trade,
   MyWalletPayload,
@@ -33,6 +34,58 @@ async function readApiError(response: Response, fallback: string) {
   } catch {
     return fallback;
   }
+}
+
+let csrfTokenPromise: Promise<string> | null = null;
+
+async function loadCsrfToken(forceRefresh = false) {
+  if (!csrfTokenPromise || forceRefresh) {
+    csrfTokenPromise = globalThis
+      .fetch("/api/auth/csrf", {
+        credentials: "same-origin",
+      })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await readApiError(response, "Could not prepare secure request"));
+        }
+
+        const payload = (await response.json()) as ApiResponse<{ csrfToken: string }>;
+        return payload.data.csrfToken;
+      });
+  }
+
+  return csrfTokenPromise;
+}
+
+function isUnsafeMethod(method: string) {
+  return ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
+}
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const method = init.method ?? "GET";
+  if (!isUnsafeMethod(method)) {
+    return globalThis.fetch(input, init);
+  }
+
+  const headers = new Headers(init.headers);
+  headers.set("X-CSRF-Token", await loadCsrfToken());
+  const response = await globalThis.fetch(input, {
+    ...init,
+    credentials: init.credentials ?? "same-origin",
+    headers,
+  });
+
+  if (response.status !== 403) {
+    return response;
+  }
+
+  const retryHeaders = new Headers(init.headers);
+  retryHeaders.set("X-CSRF-Token", await loadCsrfToken(true));
+  return globalThis.fetch(input, {
+    ...init,
+    credentials: init.credentials ?? "same-origin",
+    headers: retryHeaders,
+  });
 }
 
 function createIdempotencyKey(prefix: string) {
@@ -65,7 +118,7 @@ async function fetchWithTimeout(
   }
 
   try {
-    return await fetch(input, {
+    return await apiFetch(input, {
       ...init,
       signal: controller.signal,
     });
@@ -81,7 +134,7 @@ async function fetchWithTimeout(
 }
 
 export async function loadPortfolio() {
-  const response = await fetch("/api/trading/positions", {
+  const response = await apiFetch("/api/trading/positions", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -93,7 +146,7 @@ export async function loadPortfolio() {
 }
 
 export async function resetPortfolioApi() {
-  const response = await fetch("/api/portfolio/reset", {
+  const response = await apiFetch("/api/portfolio/reset", {
     method: "POST",
     credentials: "same-origin",
   });
@@ -120,7 +173,7 @@ export async function placeTradeApi({
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const response = await fetch("/api/trading/orders", {
+  const response = await apiFetch("/api/trading/orders", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -170,7 +223,7 @@ export async function registerUser(input: {
   password: string;
   displayName: string;
 }) {
-  const response = await fetch("/api/auth/register", {
+  const response = await apiFetch("/api/auth/register", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -188,7 +241,7 @@ export async function registerUser(input: {
 }
 
 export async function loginUser(input: { email: string; password: string; twoFactorCode?: string }) {
-  const response = await fetch("/api/auth/login", {
+  const response = await apiFetch("/api/auth/login", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -206,7 +259,7 @@ export async function loginUser(input: { email: string; password: string; twoFac
 }
 
 export async function verifyEmailToken(token: string) {
-  const response = await fetch("/api/auth/verify-email", {
+  const response = await apiFetch("/api/auth/verify-email", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -222,7 +275,7 @@ export async function verifyEmailToken(token: string) {
 }
 
 export async function resendVerificationEmail() {
-  const response = await fetch("/api/auth/resend-verification", {
+  const response = await apiFetch("/api/auth/resend-verification", {
     method: "POST",
     credentials: "same-origin",
   });
@@ -232,7 +285,7 @@ export async function resendVerificationEmail() {
 }
 
 export async function requestPasswordReset(email: string) {
-  const response = await fetch("/api/auth/request-password-reset", {
+  const response = await apiFetch("/api/auth/request-password-reset", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -248,7 +301,7 @@ export async function requestPasswordReset(email: string) {
 }
 
 export async function resetPassword(input: { token: string; password: string }) {
-  const response = await fetch("/api/auth/reset-password", {
+  const response = await apiFetch("/api/auth/reset-password", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -262,7 +315,7 @@ export async function resetPassword(input: { token: string; password: string }) 
 }
 
 export async function loadAuthSessions() {
-  const response = await fetch("/api/auth/sessions", {
+  const response = await apiFetch("/api/auth/sessions", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -273,7 +326,7 @@ export async function loadAuthSessions() {
 }
 
 export async function revokeAuthSession(id: string) {
-  const response = await fetch(`/api/auth/sessions/${encodeURIComponent(id)}`, {
+  const response = await apiFetch(`/api/auth/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -283,7 +336,7 @@ export async function revokeAuthSession(id: string) {
 }
 
 export async function revokeOtherAuthSessions() {
-  const response = await fetch("/api/auth/sessions/revoke-others", {
+  const response = await apiFetch("/api/auth/sessions/revoke-others", {
     method: "POST",
     credentials: "same-origin",
   });
@@ -292,8 +345,18 @@ export async function revokeOtherAuthSessions() {
   }
 }
 
+export async function revokeAllAuthSessions() {
+  const response = await apiFetch("/api/auth/sessions/revoke-all", {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not log out all devices"));
+  }
+}
+
 export async function loadTwoFactorStatus() {
-  const response = await fetch("/api/auth/2fa", {
+  const response = await apiFetch("/api/auth/2fa", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -304,7 +367,7 @@ export async function loadTwoFactorStatus() {
 }
 
 export async function startTwoFactorSetup() {
-  const response = await fetch("/api/auth/2fa/setup", {
+  const response = await apiFetch("/api/auth/2fa/setup", {
     method: "POST",
     credentials: "same-origin",
   });
@@ -316,7 +379,7 @@ export async function startTwoFactorSetup() {
 }
 
 export async function confirmTwoFactorSetup(code: string) {
-  const response = await fetch("/api/auth/2fa/confirm", {
+  const response = await apiFetch("/api/auth/2fa/confirm", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -332,7 +395,7 @@ export async function confirmTwoFactorSetup(code: string) {
 }
 
 export async function disableTwoFactor(code: string) {
-  const response = await fetch("/api/auth/2fa/disable", {
+  const response = await apiFetch("/api/auth/2fa/disable", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -347,8 +410,27 @@ export async function disableTwoFactor(code: string) {
   return payload.data;
 }
 
+export async function regenerateTwoFactorBackupCodes(code: string) {
+  const response = await apiFetch("/api/auth/2fa/backup-codes/regenerate", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ code }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not regenerate backup codes"));
+  }
+  const payload = (await response.json()) as ApiResponse<{
+    backupCodes: string[];
+    status: TwoFactorStatus;
+  }>;
+  return payload.data;
+}
+
 export async function logoutUser() {
-  const response = await fetch("/api/auth/logout", {
+  const response = await apiFetch("/api/auth/logout", {
     method: "POST",
     credentials: "same-origin",
   });
@@ -359,7 +441,7 @@ export async function logoutUser() {
 }
 
 export async function updateMySettings(settings: Partial<UserSettings>) {
-  const response = await fetch("/api/users/me/settings", {
+  const response = await apiFetch("/api/users/me/settings", {
     method: "PATCH",
     credentials: "same-origin",
     headers: {
@@ -377,7 +459,7 @@ export async function updateMySettings(settings: Partial<UserSettings>) {
 }
 
 export async function loadMarketDetail(marketId: string, signal: AbortSignal) {
-  const response = await fetch(`/api/markets/${encodeURIComponent(marketId)}`, {
+  const response = await apiFetch(`/api/markets/${encodeURIComponent(marketId)}`, {
     signal,
   });
   if (!response.ok) {
@@ -389,7 +471,7 @@ export async function loadMarketDetail(marketId: string, signal: AbortSignal) {
 }
 
 export async function loadMarkets(params: URLSearchParams, signal: AbortSignal) {
-  const response = await fetch(`/api/markets?${params.toString()}`, {
+  const response = await apiFetch(`/api/markets?${params.toString()}`, {
     signal,
   });
   if (!response.ok) {
@@ -404,7 +486,7 @@ export async function loadMarkets(params: URLSearchParams, signal: AbortSignal) 
 }
 
 export async function loadCategories(signal: AbortSignal) {
-  const response = await fetch("/api/categories", { signal });
+  const response = await apiFetch("/api/categories", { signal });
   if (!response.ok) {
     throw new Error("Categories request failed");
   }
@@ -413,8 +495,18 @@ export async function loadCategories(signal: AbortSignal) {
   return payload.data;
 }
 
+export async function loadTags(signal: AbortSignal) {
+  const response = await apiFetch("/api/tags", { signal });
+  if (!response.ok) {
+    throw new Error("Tags request failed");
+  }
+
+  const payload = (await response.json()) as ApiResponse<MarketTag[]>;
+  return payload.data;
+}
+
 export async function loadMyWallet() {
-  const response = await fetch("/api/wallets/me", {
+  const response = await apiFetch("/api/wallets/me", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -430,7 +522,7 @@ export async function createDepositIntent(input: {
   memo?: string | null;
   reference?: string | null;
 }) {
-  const response = await fetch("/api/wallets/deposit-intents", {
+  const response = await apiFetch("/api/wallets/deposit-intents", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -447,7 +539,7 @@ export async function createDepositIntent(input: {
 }
 
 export async function loadWalletDeposits() {
-  const response = await fetch("/api/wallets/deposits", {
+  const response = await apiFetch("/api/wallets/deposits", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -459,7 +551,7 @@ export async function loadWalletDeposits() {
 }
 
 export async function loadWithdrawalRequests() {
-  const response = await fetch("/api/wallets/withdrawal-requests", {
+  const response = await apiFetch("/api/wallets/withdrawal-requests", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -476,7 +568,7 @@ export async function createWithdrawalRequest(input: {
   idempotencyKey?: string;
 }) {
   const idempotencyKey = input.idempotencyKey ?? createIdempotencyKey("withdrawal");
-  const response = await fetch("/api/wallets/withdrawal-requests", {
+  const response = await apiFetch("/api/wallets/withdrawal-requests", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -529,7 +621,7 @@ export async function updateComplianceProfile(input: {
   countryCode: string | null;
   dateOfBirth: string | null;
 }) {
-  const response = await fetch("/api/compliance/me", {
+  const response = await apiFetch("/api/compliance/me", {
     method: "PATCH",
     credentials: "same-origin",
     headers: {
@@ -546,7 +638,7 @@ export async function updateComplianceProfile(input: {
 }
 
 export async function acceptLegalAcknowledgements() {
-  const response = await fetch("/api/compliance/accept-terms", {
+  const response = await apiFetch("/api/compliance/accept-terms", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -569,7 +661,7 @@ export async function acceptLegalAcknowledgements() {
 }
 
 export async function loadLedgerBalance() {
-  const response = await fetch("/api/ledger/balance?asset=USDT", {
+  const response = await apiFetch("/api/ledger/balance?asset=USDT", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -581,7 +673,7 @@ export async function loadLedgerBalance() {
 }
 
 export async function loadLedgerEntries(limit = 50) {
-  const response = await fetch(`/api/ledger/entries?asset=USDT&limit=${encodeURIComponent(limit)}`, {
+  const response = await apiFetch(`/api/ledger/entries?asset=USDT&limit=${encodeURIComponent(limit)}`, {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -593,7 +685,7 @@ export async function loadLedgerEntries(limit = 50) {
 }
 
 export async function createLedgerCreditApi(amount: number, idempotencyKey = createIdempotencyKey("ledger-credit")) {
-  const response = await fetch("/api/ledger/credits", {
+  const response = await apiFetch("/api/ledger/credits", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -616,7 +708,7 @@ export async function createLedgerCreditApi(amount: number, idempotencyKey = cre
 }
 
 export async function loadWatchlist() {
-  const response = await fetch("/api/watchlist", {
+  const response = await apiFetch("/api/watchlist", {
     credentials: "same-origin",
   });
   if (!response.ok) {
@@ -627,7 +719,7 @@ export async function loadWatchlist() {
 }
 
 export async function saveWatchlistMarket(market: Market) {
-  const response = await fetch(`/api/watchlist/${encodeURIComponent(market.id)}`, {
+  const response = await apiFetch(`/api/watchlist/${encodeURIComponent(market.id)}`, {
     method: "PUT",
     credentials: "same-origin",
     headers: {
@@ -641,7 +733,7 @@ export async function saveWatchlistMarket(market: Market) {
 }
 
 export async function deleteWatchlistMarket(marketId: string) {
-  const response = await fetch(`/api/watchlist/${encodeURIComponent(marketId)}`, {
+  const response = await apiFetch(`/api/watchlist/${encodeURIComponent(marketId)}`, {
     method: "DELETE",
     credentials: "same-origin",
   });
@@ -651,7 +743,7 @@ export async function deleteWatchlistMarket(marketId: string) {
 }
 
 export async function loadAdminUsers(signal: AbortSignal) {
-  const response = await fetch("/api/admin/users", {
+  const response = await apiFetch("/api/admin/users", {
     credentials: "same-origin",
     signal,
   });
@@ -664,7 +756,7 @@ export async function loadAdminUsers(signal: AbortSignal) {
 }
 
 export async function loadAdminAuditLogs(signal: AbortSignal) {
-  const response = await fetch("/api/admin/audit-logs", {
+  const response = await apiFetch("/api/admin/audit-logs", {
     credentials: "same-origin",
     signal,
   });
@@ -677,7 +769,7 @@ export async function loadAdminAuditLogs(signal: AbortSignal) {
 }
 
 export async function loadAdminWithdrawals(signal: AbortSignal) {
-  const response = await fetch("/api/admin/wallet-withdrawals", {
+  const response = await apiFetch("/api/admin/wallet-withdrawals", {
     credentials: "same-origin",
     signal,
   });
@@ -690,7 +782,7 @@ export async function loadAdminWithdrawals(signal: AbortSignal) {
 }
 
 export async function rejectAdminWithdrawal(id: string) {
-  const response = await fetch(`/api/admin/wallet-withdrawals/${encodeURIComponent(id)}/reject`, {
+  const response = await apiFetch(`/api/admin/wallet-withdrawals/${encodeURIComponent(id)}/reject`, {
     method: "POST",
     credentials: "same-origin",
   });
@@ -707,7 +799,7 @@ export async function rejectAdminWithdrawal(id: string) {
 }
 
 export async function hideAdminMarket(id: string, reason: HiddenMarketRule["reason"]) {
-  const response = await fetch(`/api/admin/markets/${encodeURIComponent(id)}/hide`, {
+  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(id)}/hide`, {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -728,7 +820,7 @@ export async function hideAdminMarket(id: string, reason: HiddenMarketRule["reas
 }
 
 export async function unhideAdminMarket(id: string) {
-  const response = await fetch(`/api/admin/markets/${encodeURIComponent(id)}/unhide`, {
+  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(id)}/unhide`, {
     method: "POST",
     credentials: "same-origin",
   });

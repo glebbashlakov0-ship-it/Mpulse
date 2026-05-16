@@ -38,7 +38,7 @@ export function VerifyEmailPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center px-4">
-      <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-xl p-8">
+      <div className="max-w-md w-full bg-gray-800 rounded-2xl shadow-xl p-8">
         <div className="text-center">
           {status === "verifying" && (
             <>
@@ -72,7 +72,7 @@ export function VerifyEmailPage() {
               <p className="text-gray-400 mb-6">{message}</p>
               <button
                 onClick={() => navigate("/")}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl transition-colors"
               >
                 Go to Home
               </button>

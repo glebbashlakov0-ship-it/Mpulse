@@ -139,9 +139,146 @@ test("GET /api/markets filters by topic on the backend", async () => {
     assert.equal(response.statusCode, 200);
     assert.deepEqual(
       body.data.map((market) => market.id),
-      ["crypto", "finance-with-crypto-topic"],
+      ["crypto"],
     );
-    assert.equal(body.meta.total, 2);
+    assert.equal(body.meta.total, 1);
+  } finally {
+    await app.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GET /api/markets keeps esports topic strict", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/events" || url.pathname === "/public-search") {
+      return Response.json(url.pathname === "/events" ? [] : { events: [] });
+    }
+
+    return Response.json([
+      marketFixture({
+        id: "apple-tech",
+        question: "Will Apple release a new product line before 2027?",
+        description: "Apple may release a gaming device or another technology product line.",
+        category: undefined,
+      }),
+      marketFixture({
+        id: "valorant",
+        question: "Will the Valorant final go five maps?",
+        category: undefined,
+      }),
+    ]);
+  };
+  const app = buildApp(testConfig());
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/markets?topic=esports",
+    });
+    const body = JSON.parse(response.body) as {
+      data: Array<{ id: string; category: string }>;
+      meta: { total: number };
+    };
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+      body.data.map((market) => market.id),
+      ["valorant"],
+    );
+    assert.equal(body.data[0]?.category, "esports");
+    assert.equal(body.meta.total, 1);
+  } finally {
+    await app.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GET /api/markets topic=esports returns sports-category esports topics", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/events" || url.pathname === "/markets") {
+      return Response.json([]);
+    }
+
+    if (url.pathname === "/public-search") {
+      return Response.json({
+        events: [
+          {
+            id: "dota-event",
+            slug: "dota-event",
+            title: "Dota 2 tournament",
+            category: "Sports",
+            active: true,
+            closed: false,
+            archived: false,
+            restricted: false,
+            volume: 250000,
+            volume24hr: 50000,
+            liquidity: 15000,
+            tags: [{ slug: "esports", label: "Esports" }],
+            markets: [
+              marketFixture({
+                id: "dota-final",
+                question: "Will Team Spirit win the Dota 2 final?",
+                category: "Sports",
+                volumeNum: 250000,
+              }),
+            ],
+          },
+          {
+            id: "apple-event",
+            slug: "apple-event",
+            title: "Apple product line",
+            category: "Tech",
+            active: true,
+            closed: false,
+            archived: false,
+            restricted: false,
+            volume: 500000,
+            volume24hr: 10000,
+            liquidity: 5000,
+            tags: [],
+            markets: [
+              marketFixture({
+                id: "apple-tech",
+                question: "Will Apple release a new product line before 2027?",
+                description: "Apple may release a gaming device or another technology product line.",
+                category: undefined,
+                volumeNum: 500000,
+              }),
+            ],
+          },
+        ],
+      });
+    }
+
+    return Response.json([]);
+  };
+  const app = buildApp(testConfig());
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/markets?topic=esports",
+    });
+    const body = JSON.parse(response.body) as {
+      data: Array<{ id: string; category: string; topics: string[] }>;
+      meta: { total: number };
+    };
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+      body.data.map((market) => market.id),
+      ["dota-final"],
+    );
+    assert.equal(body.data[0]?.category, "sports");
+    assert.equal(body.data[0]?.topics.includes("esports"), true);
+    assert.equal(body.meta.total, 1);
   } finally {
     await app.close();
     globalThis.fetch = originalFetch;
@@ -171,6 +308,160 @@ test("GET /api/markets treats topic=all as no-op", async () => {
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.meta.total, 2);
+  } finally {
+    await app.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GET /api/markets search uses market-specific event titles", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/events" || url.pathname === "/markets") {
+      return Response.json([]);
+    }
+
+    if (url.pathname === "/public-search") {
+      return Response.json({
+        events: [
+          {
+            id: "bitcoin-range-event",
+            title: "When will Bitcoin hit $150k?",
+            tags: [{ slug: "crypto", label: "Crypto" }],
+            markets: [
+              marketFixture({
+                id: "bitcoin-sept",
+                question: "Will Bitcoin hit $150k by September 30?",
+                category: undefined,
+              }),
+              marketFixture({
+                id: "bitcoin-dec",
+                question: "Will Bitcoin hit $150k by December 31?",
+                category: undefined,
+              }),
+            ],
+          },
+        ],
+      });
+    }
+
+    return Response.json([]);
+  };
+  const app = buildApp(testConfig());
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/markets?search=bitcoin&sort=relevance",
+    });
+    const body = JSON.parse(response.body) as {
+      data: Array<{ title: string }>;
+    };
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(
+      body.data.map((market) => market.title),
+      ["Will Bitcoin hit $150k by September 30?", "Will Bitcoin hit $150k by December 31?"],
+    );
+  } finally {
+    await app.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GET /api/markets returns diverse event-backed discovery", async () => {
+  const originalFetch = globalThis.fetch;
+  const events = [
+    {
+      id: "politics-series",
+      title: "Republican Presidential Nominee 2028",
+      active: true,
+      closed: false,
+      volume24hr: 100000,
+      tags: [{ slug: "politics", label: "Politics" }],
+      markets: Array.from({ length: 5 }).map((_, index) =>
+        marketFixture({
+          id: `politics-${index}`,
+          question: `Will Candidate ${index} win 2028?`,
+          category: undefined,
+          volumeNum: 900000 - index,
+          volume24hr: 90000 - index,
+        }),
+      ),
+    },
+    {
+      id: "sports-event",
+      title: "Sports finals",
+      active: true,
+      closed: false,
+      volume24hr: 80000,
+      tags: [{ slug: "sports", label: "Sports" }],
+      markets: [
+        marketFixture({ id: "sports", question: "Will the NBA finals go seven games?", category: undefined }),
+        marketFixture({ id: "sports-2", question: "Will the NBA finals end in six?", category: undefined }),
+      ],
+    },
+    {
+      id: "crypto-event",
+      title: "Bitcoin daily markets",
+      active: true,
+      closed: false,
+      volume24hr: 70000,
+      tags: [{ slug: "crypto", label: "Crypto" }],
+      markets: [
+        marketFixture({ id: "crypto", question: "Will Bitcoin hit $150k?", category: undefined }),
+        marketFixture({ id: "crypto-2", question: "Will Bitcoin hit $200k?", category: undefined }),
+      ],
+    },
+    {
+      id: "finance-event",
+      title: "Fed decision",
+      active: true,
+      closed: false,
+      volume24hr: 60000,
+      tags: [{ slug: "fed", label: "Fed" }],
+      markets: [
+        marketFixture({ id: "finance", question: "Will the Fed cut rates?", category: undefined }),
+        marketFixture({ id: "finance-2", question: "Will the Fed hold rates?", category: undefined }),
+      ],
+    },
+  ];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/events") {
+      return Response.json(events);
+    }
+    if (url.pathname === "/public-search") {
+      return Response.json({ events: [] });
+    }
+    return Response.json([]);
+  };
+  const app = buildApp(testConfig());
+
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/markets?limit=6&sort=trending&status=live",
+    });
+    const body = JSON.parse(response.body) as {
+      data: Array<{ id: string; title: string; topics: string[]; question?: string }>;
+    };
+    const repeatedSeriesCount = body.data.filter((market) =>
+      market.title.startsWith("Will Candidate"),
+    ).length;
+    const questionCardCount = body.data.filter((market) => /^will\b/i.test(market.title)).length;
+    const topics = new Set(body.data.flatMap((market) => market.topics));
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(repeatedSeriesCount, 0);
+    assert.equal(questionCardCount <= 2, true);
+    assert.equal(body.data[0]?.title, "Republican Presidential Nominee 2028");
+    assert.equal(topics.has("sports"), true);
+    assert.equal(topics.has("crypto"), true);
+    assert.equal(topics.has("finance"), true);
+    assert.equal(body.data.some((market) => market.question !== undefined), false);
   } finally {
     await app.close();
     globalThis.fetch = originalFetch;
@@ -215,6 +506,56 @@ test("GET /api/markets/:id returns detail shape with prices, related markets, an
     assert.ok(body.data.history);
     assert.equal(Array.isArray(body.data.related_markets), true);
     assert.equal(body.meta.sourceStatus, "fresh");
+  } finally {
+    await app.close();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("POST /api/markets/:id/snapshots/collect stores real history for detail", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+
+    if (url.pathname.startsWith("/markets/snapshot-detail")) {
+      return Response.json(
+        marketFixture({
+          id: "snapshot-detail",
+          outcomePrices: JSON.stringify(["0.66", "0.34"]),
+          volumeNum: 250000,
+          liquidityNum: 60000,
+        }),
+      );
+    }
+
+    return Response.json([]);
+  };
+  const app = buildApp(testConfig());
+
+  try {
+    const collect = await app.inject({
+      method: "POST",
+      url: "/api/markets/snapshot-detail/snapshots/collect",
+    });
+    const detail = await app.inject({
+      method: "GET",
+      url: "/api/markets/snapshot-detail",
+    });
+    const body = JSON.parse(detail.body) as {
+      data: {
+        history: {
+          is_synthetic: boolean;
+          snapshots: Array<{ id: string }>;
+          price_history: Array<{ yes: number | null }>;
+        };
+      };
+    };
+
+    assert.equal(collect.statusCode, 200);
+    assert.equal(detail.statusCode, 200);
+    assert.equal(body.data.history.is_synthetic, false);
+    assert.equal(body.data.history.snapshots.length, 1);
+    assert.equal(body.data.history.price_history[0]?.yes, 0.66);
   } finally {
     await app.close();
     globalThis.fetch = originalFetch;
@@ -415,6 +756,81 @@ test("POST /api/auth/register creates a user and HttpOnly session", async () => 
     assert.equal(body.data.user.passwordHash, undefined);
     assert.match(setCookie ?? "", /HttpOnly/);
     assert.match(setCookie ?? "", /SameSite=Lax/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("state-changing auth routes require a valid CSRF token when protection is enabled", async () => {
+  const app = buildApp(testConfig({ csrfProtectionEnabled: true }));
+
+  try {
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      payload: {
+        email: "csrf-blocked@example.com",
+        password: "password12345",
+        displayName: "CSRF Blocked",
+      },
+    });
+    const blockedBody = JSON.parse(blocked.body) as { error: { code: string } };
+
+    assert.equal(blocked.statusCode, 403);
+    assert.equal(blockedBody.error.code, "CSRF_TOKEN_INVALID");
+
+    const csrf = await app.inject({
+      method: "GET",
+      url: "/api/auth/csrf",
+    });
+    const csrfBody = JSON.parse(csrf.body) as { data: { csrfToken: string } };
+    const cookie = getCookieHeader(csrf);
+    const allowed = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      headers: {
+        cookie,
+        "x-csrf-token": csrfBody.data.csrfToken,
+      },
+      payload: {
+        email: "csrf-allowed@example.com",
+        password: "password12345",
+        displayName: "CSRF Allowed",
+      },
+    });
+
+    assert.equal(allowed.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test("state-changing auth routes reject mismatched CSRF tokens", async () => {
+  const app = buildApp(testConfig({ csrfProtectionEnabled: true }));
+
+  try {
+    const csrf = await app.inject({
+      method: "GET",
+      url: "/api/auth/csrf",
+    });
+    const cookie = getCookieHeader(csrf);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/register",
+      headers: {
+        cookie,
+        "x-csrf-token": "not-the-cookie-token",
+      },
+      payload: {
+        email: "csrf-mismatch@example.com",
+        password: "password12345",
+        displayName: "CSRF Mismatch",
+      },
+    });
+    const body = JSON.parse(response.body) as { error: { code: string } };
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(body.error.code, "CSRF_TOKEN_INVALID");
   } finally {
     await app.close();
   }
@@ -717,6 +1133,69 @@ test("admin core lets configured admins list users", async () => {
       "super_admin",
     );
     assert.equal(body.data.summary.super_admin, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("admin role matrix gates support, compliance, and finance actions", async () => {
+  const app = buildApp(
+    testConfig({
+      supportEmails: ["support@example.com"],
+      complianceAdminEmails: ["compliance-role@example.com"],
+      financeAdminEmails: ["finance-role@example.com"],
+    }),
+  );
+
+  try {
+    const supportCookie = await registerForTrading(app, "support@example.com");
+    const complianceCookie = await registerForTrading(app, "compliance-role@example.com");
+    const financeCookie = await registerForTrading(app, "finance-role@example.com");
+
+    const supportUsers = await app.inject({
+      method: "GET",
+      url: "/api/admin/users",
+      headers: { cookie: supportCookie },
+    });
+    const supportUsersBody = JSON.parse(supportUsers.body) as {
+      data: { users: Array<{ email: string; role: string }> };
+    };
+
+    assert.equal(supportUsers.statusCode, 200);
+    assert.equal(
+      supportUsersBody.data.users.find((user) => user.email === "support@example.com")?.role,
+      "support",
+    );
+
+    const supportWithdrawals = await app.inject({
+      method: "GET",
+      url: "/api/admin/wallet-withdrawals",
+      headers: { cookie: supportCookie },
+    });
+    assert.equal(supportWithdrawals.statusCode, 403);
+
+    const financeWithdrawals = await app.inject({
+      method: "GET",
+      url: "/api/admin/wallet-withdrawals",
+      headers: { cookie: financeCookie },
+    });
+    assert.equal(financeWithdrawals.statusCode, 200);
+
+    const financeHide = await app.inject({
+      method: "POST",
+      url: "/api/admin/markets/matrix-market/hide",
+      headers: { cookie: financeCookie },
+      payload: { reason: "manual_review" },
+    });
+    assert.equal(financeHide.statusCode, 403);
+
+    const complianceHide = await app.inject({
+      method: "POST",
+      url: "/api/admin/markets/matrix-market/hide",
+      headers: { cookie: complianceCookie },
+      payload: { reason: "manual_review" },
+    });
+    assert.equal(complianceHide.statusCode, 200);
   } finally {
     await app.close();
   }

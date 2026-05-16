@@ -7,10 +7,20 @@ const managedEnvKeys = [
   "NODE_ENV",
   "PORT",
   "POLYMARKET_GAMMA_URL",
+  "MARKET_SNAPSHOT_COLLECTOR_ENABLED",
+  "MARKET_SNAPSHOT_COLLECTOR_INTERVAL_MS",
+  "MARKET_SNAPSHOT_COLLECTOR_MARKET_IDS",
+  "MARKET_SNAPSHOT_HISTORY_LIMIT",
   "CACHE_ENABLED",
   "SESSION_SECRET",
   "SESSION_COOKIE_SECURE",
   "CORS_ALLOWED_ORIGINS",
+  "AUTH_RATE_LIMIT_BACKEND",
+  "REDIS_URL",
+  "SUPPORT_EMAILS",
+  "COMPLIANCE_ADMIN_EMAILS",
+  "FINANCE_ADMIN_EMAILS",
+  "SUPER_ADMIN_EMAILS",
   "WALLET_DEPOSIT_WEBHOOK_SECRET",
   "DATABASE_URL",
 ];
@@ -48,6 +58,7 @@ test("config defaults to local development mode", () => {
     assert.equal(config.appMode, "local");
     assert.equal(config.nodeEnv, "development");
     assert.equal(config.sessionCookieSecure, false);
+    assert.equal(config.authRateLimitBackend, "memory");
     assert.deepEqual(config.corsAllowedOrigins, []);
   });
 });
@@ -63,6 +74,14 @@ test("config rejects unsafe app mode and malformed env values", () => {
 
   withEnv({ CACHE_ENABLED: "sometimes" }, () => {
     assert.throws(() => getConfig(), /CACHE_ENABLED must be a boolean value/);
+  });
+
+  withEnv({ MARKET_SNAPSHOT_COLLECTOR_INTERVAL_MS: "999" }, () => {
+    assert.throws(() => getConfig(), /MARKET_SNAPSHOT_COLLECTOR_INTERVAL_MS must be an integer/);
+  });
+
+  withEnv({ AUTH_RATE_LIMIT_BACKEND: "redis" }, () => {
+    assert.throws(() => getConfig(), /REDIS_URL is required/);
   });
 });
 
@@ -83,6 +102,14 @@ test("production config requires explicit secure guardrails", () => {
     assert.equal(config.sessionCookieSecure, true);
     assert.deepEqual(config.corsAllowedOrigins, ["https://market.example"]);
     assert.equal(config.databaseUrl, productionEnv.DATABASE_URL);
+    assert.equal(config.authRateLimitBackend, "external");
+  });
+
+  withEnv({ ...productionEnv, REDIS_URL: "redis://localhost:6379" }, () => {
+    const config = getConfig();
+
+    assert.equal(config.authRateLimitBackend, "redis");
+    assert.equal(config.redisUrl, "redis://localhost:6379");
   });
 
   withEnv({ ...productionEnv, SESSION_COOKIE_SECURE: "false" }, () => {
@@ -99,5 +126,9 @@ test("production config requires explicit secure guardrails", () => {
 
   withEnv({ ...productionEnv, DATABASE_URL: "" }, () => {
     assert.throws(() => getConfig(), /DATABASE_URL is required in production/);
+  });
+
+  withEnv({ ...productionEnv, AUTH_RATE_LIMIT_BACKEND: "memory" }, () => {
+    assert.throws(() => getConfig(), /AUTH_RATE_LIMIT_BACKEND must be redis or external/);
   });
 });

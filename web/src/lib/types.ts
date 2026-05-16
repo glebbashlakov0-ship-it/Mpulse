@@ -34,6 +34,7 @@ export type MarketSnapshot = {
   volume: number;
   liquidity: number;
   source: "polymarket";
+  synthetic?: boolean;
 };
 
 export type Market = {
@@ -64,6 +65,13 @@ export type Market = {
     best_ask: number | null;
     last_trade_price: number | null;
   };
+  event_id: string | null;
+  event_slug: string | null;
+  event_title: string | null;
+  groupItemTitle: string | null;
+  groupItemThreshold: string | null;
+  canonical_market_id: string;
+  canonical_event_slug: string | null;
   prices?: {
     yes: number | null;
     no: number | null;
@@ -92,12 +100,19 @@ export type Market = {
       timestamp: string;
       yes: number | null;
       no: number | null;
+      outcomes?: Array<{ name: string; price: number | null }>;
       volume: number;
       liquidity: number;
       synthetic?: boolean;
     }>;
     is_synthetic: boolean;
   };
+  group_markets?: Array<Market & {
+    label: string;
+    yes_price: number | null;
+    no_price: number | null;
+    clobTokenIds: string[];
+  }>;
   source: "polymarket";
   displayImage?: string;
 };
@@ -132,6 +147,12 @@ export type MarketCategory = {
   description: string | null;
   image: string;
   keywords: string[];
+};
+
+export type MarketTag = {
+  id: string;
+  slug: string;
+  label: string;
 };
 
 export type MarketFilters = {
@@ -465,6 +486,7 @@ export type TwoFactorStatus = {
 export type TwoFactorSetup = {
   secret: string;
   otpauthUrl: string;
+  qrCodeDataUrl: string;
   backupCodes: string[];
 };
 

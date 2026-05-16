@@ -89,20 +89,11 @@ export function getRelatedMarketDisplayImage(relatedMarket: RelatedMarket) {
 }
 
 export function withUniqueImages(markets: Market[]) {
-  const sourceCounts = new Map<string, number>();
   const usedDisplayImages = new Set<string>();
-
-  for (const market of markets) {
-    const source = getSourceImage(market);
-    if (source) {
-      sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
-    }
-  }
 
   return markets.map((market) => {
     const source = getSourceImage(market);
-    const displayImage =
-      source && sourceCounts.get(source) === 1 ? source : getListFallbackImage(market, usedDisplayImages);
+    const displayImage = source ?? getListFallbackImage(market, usedDisplayImages);
 
     usedDisplayImages.add(displayImage);
 

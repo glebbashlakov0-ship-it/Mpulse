@@ -3,6 +3,7 @@ import { createCacheKey, type CacheReadResult, type CacheStore } from "./cache.j
 import { getCategories, normalizeCategoryValue } from "./categories.js";
 import { buildKeywordVisibilityRules, isMarketVisible } from "./moderation.js";
 import {
+  normalizeEvent,
   normalizeMarket,
   normalizeMarketDetail,
   normalizePriceSummary,
@@ -11,16 +12,30 @@ import {
 import type {
   MarketSnapshot,
   NormalizedCategory,
+  NormalizedEvent,
   NormalizedMarket,
   NormalizedMarketDetail,
+  NormalizedTag,
+  MarketPriceHistoryPoint,
   PolymarketEvent,
   PolymarketMarket,
+  PolymarketPriceHistoryResponse,
+  PolymarketTag,
 } from "./types.js";
 import { UpstreamError } from "./polymarketClient.js";
+import { buildSnapshotFromMarket } from "./snapshots.js";
+import type { MarketRepository } from "./marketRepository.js";
 
 type PolymarketClient = {
+  getEvents: <T>(query: Record<string, unknown>) => Promise<T>;
   getMarkets: <T>(query: Record<string, unknown>) => Promise<T>;
   getMarket: <T>(id: string) => Promise<T>;
+  getTags?: <T>(query: Record<string, unknown>) => Promise<T>;
+  getHomepageTags?: () => Promise<PolymarketTag[]>;
+  getPriceHistory?: (
+    tokenId: string,
+    options?: { interval?: string; fidelity?: number },
+  ) => Promise<PolymarketPriceHistoryResponse>;
   search: <T>(query: Record<string, unknown>) => Promise<T>;
 };
 
@@ -66,6 +81,11 @@ export type MarketListResult = {
   };
 };
 
+export type MarketSnapshotCollectResult = {
+  data: MarketSnapshot;
+  meta: MarketDataMeta;
+};
+
 export type MarketSourceStatus = "fresh" | "cache" | "stale" | "fallback" | "unavailable";
 
 export type MarketDataMeta = {
@@ -80,6 +100,8 @@ export class MarketDataError extends Error {
     public readonly code:
       | "INVALID_QUERY"
       | "MARKET_NOT_FOUND"
+      | "EVENT_NOT_FOUND"
+      | "MARKET_GROUP_NOT_FOUND"
       | "UPSTREAM_UNAVAILABLE",
     message: string,
     public readonly statusCode: number,
@@ -101,6 +123,65 @@ const relatedStopWords = new Set([
   "what",
   "when",
 ]);
+
+const discoveryTagSlugs = [
+  "sports",
+  "soccer",
+  "nba",
+  "nfl",
+  "crypto",
+  "bitcoin",
+  "ethereum",
+  "politics",
+  "finance",
+  "fed",
+  "rates",
+  "esports",
+  "elections",
+  "geopolitics",
+  "economy",
+  "business",
+  "tech",
+  "ai",
+  "pop-culture",
+  "weather",
+  "breaking-news",
+];
+
+const genericDiscoveryTagSlugs = new Set([
+  "agreement",
+  "awards",
+  "business",
+  "ceasefire",
+  "china",
+  "crypto",
+  "crypto-prices",
+  "culture",
+  "economy",
+  "elections",
+  "finance",
+  "games",
+  "geopolitics",
+  "global-elections",
+  "hide-from-new",
+  "main-election",
+  "mention-markets",
+  "multi-strikes",
+  "music",
+  "politics",
+  "pop-culture",
+  "recurring",
+  "rewards-100-4pt5-100",
+  "rewards-automation-200",
+  "soccer",
+  "sports",
+  "tech",
+  "weekly",
+  "world",
+  "world-elections",
+]);
+
+const maxDiscoveryMarketsPerEvent = 1;
 
 function toBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") {
@@ -288,7 +369,12 @@ function relevanceScore(market: NormalizedMarket, search: string) {
 function trendingScore(market: NormalizedMarket) {
   const yes = normalizePriceSummary(market).yes ?? 0.5;
   const confidence = Math.abs(yes - 0.5);
-  return market.volume * 0.7 + market.liquidity * 0.25 + confidence * 100_000;
+  return (
+    (market.volume_24h ?? 0) * 3 +
+    market.volume * 0.35 +
+    market.liquidity * 0.2 +
+    confidence * 100_000
+  );
 }
 
 function sortMarkets(markets: NormalizedMarket[], sort: MarketSort, search: string) {
@@ -325,18 +411,369 @@ function sortMarkets(markets: NormalizedMarket[], sort: MarketSort, search: stri
   });
 }
 
+function discoveryFamilyKey(market: NormalizedMarket) {
+  const title = market.title.toLowerCase();
+
+  if (/\b2028\b/.test(title) && /(presidential|president|nomination|election)/.test(title)) {
+    return "us-2028-election-series";
+  }
+
+  if (title.includes("2026 fifa world cup")) {
+    return "2026-fifa-world-cup-series";
+  }
+
+  if (/^will .+ win\b/.test(title)) {
+    return title.replace(/^will .+ win\b/, "will-x-win").replace(/\d+/g, "#");
+  }
+
+  return `${market.category ?? "other"}:${title}`;
+}
+
+function diversifyDiscoveryMarkets(markets: NormalizedMarket[]) {
+  const familyCounts = new Map<string, number>();
+  const familyLimited: NormalizedMarket[] = [];
+  const overflow: NormalizedMarket[] = [];
+
+  for (const market of markets) {
+    const key = discoveryFamilyKey(market);
+    const count = familyCounts.get(key) ?? 0;
+    familyCounts.set(key, count + 1);
+
+    if (count < 2) {
+      familyLimited.push(market);
+    } else {
+      overflow.push(market);
+    }
+  }
+
+  const buckets = new Map<string, NormalizedMarket[]>();
+  for (const market of familyLimited) {
+    const key = market.category ?? "other";
+    buckets.set(key, [...(buckets.get(key) ?? []), market]);
+  }
+
+  const categories = [...buckets.keys()].sort((left, right) => {
+    const leftTop = buckets.get(left)?.[0];
+    const rightTop = buckets.get(right)?.[0];
+    return trendingScore(rightTop as NormalizedMarket) - trendingScore(leftTop as NormalizedMarket);
+  });
+  const balanced: NormalizedMarket[] = [];
+
+  while (balanced.length < familyLimited.length) {
+    let added = false;
+    for (const category of categories) {
+      const next = buckets.get(category)?.shift();
+      if (next) {
+        balanced.push(next);
+        added = true;
+      }
+    }
+
+    if (!added) {
+      break;
+    }
+  }
+
+  const questionCards = balanced.filter((market) => /^will\b/i.test(market.title));
+  const nonQuestionCards = balanced.filter((market) => !/^will\b/i.test(market.title));
+  const questionLimit = Math.ceil(balanced.length * 0.35);
+
+  return [
+    ...nonQuestionCards,
+    ...questionCards.slice(0, questionLimit),
+    ...questionCards.slice(questionLimit),
+    ...overflow,
+  ];
+}
+
 function extractSearchMarkets(results: { events?: PolymarketEvent[]; markets?: PolymarketMarket[] }) {
   return [
     ...(results.markets ?? []),
-    ...(results.events ?? []).flatMap((event) => event.markets ?? []),
+    ...extractEventMarkets(results.events ?? [], { titleMode: "market" }),
   ];
 }
 
 function dedupeMarkets(markets: PolymarketMarket[]) {
   const byId = new Map<string, PolymarketMarket>();
   for (const market of markets) {
-    if (market.id) {
+    if (market.id && !byId.has(market.id)) {
       byId.set(market.id, market);
+    }
+  }
+
+  return [...byId.values()];
+}
+
+function getMarketEventIds(market: PolymarketMarket) {
+  return (market.events ?? [])
+    .map((event) => event.id)
+    .filter((id): id is string => Boolean(id));
+}
+
+function suppressEventChildrenWhenGrouped(
+  groupedEventMarkets: PolymarketMarket[],
+  fallbackMarkets: PolymarketMarket[],
+) {
+  if (groupedEventMarkets.length === 0 || fallbackMarkets.length === 0) {
+    return fallbackMarkets;
+  }
+
+  const representedEventIds = new Set(
+    groupedEventMarkets
+      .filter((market) => (market.groupMarkets?.length ?? 0) > 1)
+      .flatMap(getMarketEventIds),
+  );
+
+  if (representedEventIds.size === 0) {
+    return fallbackMarkets;
+  }
+
+  return fallbackMarkets.filter(
+    (market) => !getMarketEventIds(market).some((eventId) => representedEventIds.has(eventId)),
+  );
+}
+
+function eventTags(event: PolymarketEvent) {
+  return (event.tags ?? [])
+    .flatMap((tag) => [tag.slug, tag.label])
+    .filter((tag): tag is string => Boolean(tag))
+    .map((tag) => tag.toLowerCase());
+}
+
+function slugifyTag(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeDiscoveryTag(tag: PolymarketTag | NonNullable<PolymarketEvent["tags"]>[number]) {
+  const label = tag.label?.trim();
+  const slug = tag.slug?.trim() || (label ? slugifyTag(label) : "");
+
+  if (!label || !slug) {
+    return null;
+  }
+
+  return {
+    id: String(tag.id ?? slug),
+    slug: slugifyTag(slug),
+    label,
+  } satisfies NormalizedTag;
+}
+
+function isUsefulDiscoveryTag(tag: NormalizedTag) {
+  if (tag.label.length < 2 || tag.label.length > 32) {
+    return false;
+  }
+
+  if (genericDiscoveryTagSlugs.has(tag.slug)) {
+    return false;
+  }
+
+  if (/^(hide|rewards?|reward|macro-election|test)\b/i.test(tag.label)) {
+    return false;
+  }
+
+  return true;
+}
+
+function addDiscoveryTag(
+  tags: Map<string, NormalizedTag & { score: number }>,
+  tag: PolymarketTag | NonNullable<PolymarketEvent["tags"]>[number],
+  score: number,
+) {
+  const normalized = normalizeDiscoveryTag(tag);
+
+  if (!normalized || !isUsefulDiscoveryTag(normalized)) {
+    return;
+  }
+
+  const current = tags.get(normalized.slug);
+  tags.set(normalized.slug, {
+    ...normalized,
+    score: (current?.score ?? 0) + score,
+  });
+}
+
+function normalizeHomepageTags(tags: PolymarketTag[]) {
+  const seen = new Set<string>();
+  const normalizedTags: NormalizedTag[] = [];
+
+  for (const tag of tags) {
+    const normalized = normalizeDiscoveryTag(tag);
+    if (!normalized || normalized.slug === "all" || seen.has(normalized.slug)) {
+      continue;
+    }
+
+    seen.add(normalized.slug);
+    normalizedTags.push(normalized);
+  }
+
+  return normalizedTags.slice(0, 48);
+}
+
+function compactEventContext(event: PolymarketEvent): PolymarketEvent {
+  return {
+    id: event.id,
+    ticker: event.ticker,
+    slug: event.slug,
+    title: event.title,
+    description: event.description,
+    category: event.category,
+    image: event.image,
+    icon: event.icon,
+    startDate: event.startDate,
+    endDate: event.endDate,
+    active: event.active,
+    closed: event.closed,
+    archived: event.archived,
+    restricted: event.restricted,
+    volume: event.volume,
+    volume24hr: event.volume24hr,
+    liquidity: event.liquidity,
+    openInterest: event.openInterest,
+    tags: event.tags,
+    markets: [],
+  };
+}
+
+function getEventDisplayTitle(
+  event: PolymarketEvent,
+  market: PolymarketMarket,
+  options: { titleMode?: "event" | "market" } = {},
+) {
+  const eventTitle = event.title?.trim();
+  const marketTitle = market.question?.trim();
+  const marketCount = event.markets?.length ?? 0;
+
+  if (options.titleMode === "market") {
+    return marketTitle || eventTitle || "";
+  }
+
+  if (eventTitle && marketCount > 1) {
+    return eventTitle;
+  }
+
+  return marketTitle || eventTitle || "";
+}
+
+function marketFromEvent(
+  event: PolymarketEvent,
+  market: PolymarketMarket,
+  options: { titleMode?: "event" | "market" } = {},
+): PolymarketMarket {
+  const displayTitle = getEventDisplayTitle(event, market, options);
+  const eventMarkets = sortEventMarkets(event.markets ?? []);
+  const originalQuestion = market.question?.trim();
+  const originalDescription =
+    market.description ?? event.description ?? (originalQuestion && originalQuestion !== displayTitle
+      ? originalQuestion
+      : undefined);
+  const groupMarkets =
+    eventMarkets.length > 1
+      ? eventMarkets.map((childMarket) => ({
+          ...childMarket,
+          category: childMarket.category ?? event.category,
+          description: childMarket.description ?? event.description,
+          image: event.image ?? event.icon ?? childMarket.image,
+          icon: event.icon ?? event.image ?? childMarket.icon,
+          startDate: childMarket.startDate ?? event.startDate,
+          endDate: childMarket.endDate ?? event.endDate,
+          active: childMarket.active ?? event.active,
+          closed: childMarket.closed ?? event.closed,
+          archived: childMarket.archived ?? event.archived,
+          restricted: childMarket.restricted ?? event.restricted,
+          volume24hr: childMarket.volume24hr ?? event.volume24hr,
+          events: [compactEventContext(event)],
+        }))
+      : undefined;
+
+  return {
+    ...market,
+    question: displayTitle,
+    category: market.category ?? event.category,
+    description: originalDescription,
+    image: event.image ?? event.icon ?? market.image,
+    icon: event.icon ?? event.image ?? market.icon,
+    startDate: market.startDate ?? event.startDate,
+    endDate: market.endDate ?? event.endDate,
+    active: market.active ?? event.active,
+    closed: market.closed ?? event.closed,
+    archived: market.archived ?? event.archived,
+    restricted: market.restricted ?? event.restricted,
+    volume:
+      toNumber(event.volume) > toNumber(market.volumeNum ?? market.volume)
+        ? event.volume
+        : market.volume,
+    volumeNum: Math.max(toNumber(market.volumeNum ?? market.volume), toNumber(event.volume)),
+    volume24hr: market.volume24hr ?? event.volume24hr,
+    liquidity:
+      toNumber(event.liquidity) > toNumber(market.liquidityNum ?? market.liquidity)
+        ? event.liquidity
+        : market.liquidity,
+    liquidityNum: Math.max(
+      toNumber(market.liquidityNum ?? market.liquidity),
+      toNumber(event.liquidity),
+    ),
+    events: [compactEventContext(event)],
+    groupMarkets,
+  };
+}
+
+function sortEventMarkets(markets: PolymarketMarket[]) {
+  return [...markets].sort(
+    (left, right) =>
+      toNumber(right.volume24hr) - toNumber(left.volume24hr) ||
+      toNumber(right.volumeNum ?? right.volume) - toNumber(left.volumeNum ?? left.volume),
+  );
+}
+
+function extractEventMarkets(
+  events: PolymarketEvent[],
+  options: { titleMode?: "event" | "market" } = {},
+) {
+  return events.flatMap((event) =>
+    sortEventMarkets(event.markets ?? []).map((market) => marketFromEvent(event, market, options)),
+  );
+}
+
+function extractDiverseEventMarkets(events: PolymarketEvent[]) {
+  const markets: PolymarketMarket[] = [];
+  const seen = new Set<string>();
+  const sortedEvents = [...events].sort(
+    (left, right) =>
+      toNumber(right.volume24hr) - toNumber(left.volume24hr) ||
+      toNumber(right.volume) - toNumber(left.volume),
+  );
+
+  for (const event of sortedEvents) {
+    let addedForEvent = 0;
+    for (const market of sortEventMarkets(event.markets ?? [])) {
+      if (!market.id || seen.has(market.id)) {
+        continue;
+      }
+
+      seen.add(market.id);
+      markets.push(marketFromEvent(event, market));
+      addedForEvent += 1;
+
+      if (addedForEvent >= maxDiscoveryMarketsPerEvent) {
+        break;
+      }
+    }
+  }
+
+  return markets;
+}
+
+function dedupeEvents(events: PolymarketEvent[]) {
+  const byId = new Map<string, PolymarketEvent>();
+  for (const event of events) {
+    if (event.id && !byId.has(event.id)) {
+      byId.set(event.id, event);
     }
   }
 
@@ -360,6 +797,38 @@ function isWithinDateRange(market: NormalizedMarket, before: number | null, afte
   return true;
 }
 
+const strictTopicCategorySlugs = new Set([
+  "crypto",
+  "sports",
+  "finance",
+  "tech",
+  "culture",
+  "economy",
+  "weather",
+  "geopolitics",
+  "other",
+]);
+
+function matchesTopicFilter(market: NormalizedMarket, topic: string | null) {
+  if (!topic) {
+    return true;
+  }
+
+  if (topic === "esports") {
+    return market.category === "esports" || market.topics.includes("esports");
+  }
+
+  if (strictTopicCategorySlugs.has(topic)) {
+    return market.category === topic;
+  }
+
+  if (topic === "elections") {
+    return market.category === "elections" || market.category === "politics";
+  }
+
+  return market.category === topic || market.topics.includes(topic);
+}
+
 function toMarketFilter(params: MarketListParams, config: AppConfig) {
   const search =
     typeof params.search === "string" && params.search.trim()
@@ -377,7 +846,7 @@ function toMarketFilter(params: MarketListParams, config: AppConfig) {
   const category = normalizeCategoryValue(typeof params.category === "string" ? params.category : null);
   const topic =
     typeof params.topic === "string" && params.topic.trim().toLowerCase() !== "all"
-      ? normalizeCategoryValue(params.topic)
+      ? slugifyTag(params.topic)
       : null;
   const status =
     typeof params.status === "string" && params.status
@@ -425,6 +894,86 @@ function buildCacheMeta<T>(
     sourceStatus,
     warnings,
   };
+}
+
+function normalizeClobTokenHistory(response: PolymarketPriceHistoryResponse) {
+  return (response.history ?? [])
+    .map((point) => {
+      const timestamp = Number(point.t);
+      const price = Number(point.p);
+
+      if (!Number.isFinite(timestamp) || !Number.isFinite(price)) {
+        return null;
+      }
+
+      return {
+        timestamp,
+        price: Math.min(1, Math.max(0, price)),
+      };
+    })
+    .filter((point): point is { timestamp: number; price: number } => point !== null)
+    .sort((left, right) => left.timestamp - right.timestamp);
+}
+
+function toIsoFromClobTimestamp(timestamp: number) {
+  const timestampMs = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
+  const date = new Date(timestampMs);
+
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function mergeBinaryClobHistory({
+  yesPoints,
+  noPoints,
+  volume,
+  liquidity,
+}: {
+  yesPoints: Array<{ timestamp: number; price: number }>;
+  noPoints: Array<{ timestamp: number; price: number }>;
+  volume: number;
+  liquidity: number;
+}): MarketPriceHistoryPoint[] {
+  const byTimestamp = new Map<number, { yes?: number; no?: number }>();
+
+  for (const point of yesPoints) {
+    byTimestamp.set(point.timestamp, {
+      ...byTimestamp.get(point.timestamp),
+      yes: point.price,
+    });
+  }
+
+  for (const point of noPoints) {
+    byTimestamp.set(point.timestamp, {
+      ...byTimestamp.get(point.timestamp),
+      no: point.price,
+    });
+  }
+
+  let lastYes: number | null = null;
+  let lastNo: number | null = null;
+
+  const merged: MarketPriceHistoryPoint[] = [];
+
+  for (const [timestamp, prices] of [...byTimestamp.entries()].sort(([left], [right]) => left - right)) {
+    lastYes = prices.yes ?? lastYes;
+    lastNo = prices.no ?? lastNo;
+    const isoTimestamp = toIsoFromClobTimestamp(timestamp);
+
+    if (!isoTimestamp || (lastYes === null && lastNo === null)) {
+      continue;
+    }
+
+    merged.push({
+      timestamp: isoTimestamp,
+      yes: lastYes,
+      no: lastNo,
+      volume,
+      liquidity,
+      synthetic: false,
+    });
+  }
+
+  return merged;
 }
 
 async function loadWithStaleFallback<T>({
@@ -518,16 +1067,110 @@ export function buildMarketDataService({
   config,
   cache,
   polymarket,
+  marketRepository,
   getSnapshots,
 }: {
   config: AppConfig;
   cache: CacheStore;
   polymarket: PolymarketClient;
-  getSnapshots?: (marketId: string) => MarketSnapshot[];
+  marketRepository?: MarketRepository;
+  getSnapshots?: (marketId: string, limit?: number) => MarketSnapshot[] | Promise<MarketSnapshot[]>;
 }) {
   const visibilityRules = buildKeywordVisibilityRules(config.blockedMarketTerms);
+  const topicSearchTerms: Record<string, string[]> = {
+    esports: ["esports", "dota", "league of legends", "lol", "valorant", "cs2"],
+  };
 
-  async function getRawMarkets(params: { active?: boolean; closed?: boolean; search?: string }) {
+  function eventQueries(params: { active?: boolean; closed?: boolean }) {
+    const base = {
+      limit: Math.min(config.upstreamMarketLimit, 50),
+      active: params.active,
+      closed: params.closed,
+      order: "volume24hr",
+      ascending: false,
+    };
+
+    return [
+      base,
+      { ...base, featured: true },
+      { ...base, trending: true },
+      ...discoveryTagSlugs.map((tagSlug) => ({
+        ...base,
+        tag_slug: tagSlug,
+      })),
+    ];
+  }
+
+  async function getEventBackedMarkets(params: { active?: boolean; closed?: boolean }) {
+    const ttl = params.closed ? config.cacheTtlMs.closedMarkets : config.cacheTtlMs.activeMarkets;
+    const results = await Promise.all(
+      eventQueries(params).map(async (query) => {
+        try {
+          return await loadWithStaleFallback({
+            cache,
+            key: createCacheKey("polymarket:events", query),
+            ttlMs: ttl,
+            loader: () => polymarket.getEvents<PolymarketEvent[]>(query),
+            fallback: () => [],
+          });
+        } catch (error) {
+          if (error instanceof MarketDataError && error.code === "UPSTREAM_UNAVAILABLE") {
+            return {
+              value: [],
+              meta: buildCacheMeta(null, "fallback", [
+                "Event discovery upstream unavailable; market fallback used.",
+              ]),
+            };
+          }
+
+          throw error;
+        }
+      }),
+    );
+    const events = dedupeEvents(results.flatMap((result) => result.value));
+
+    return {
+      value: extractDiverseEventMarkets(events),
+      meta: mergeSourceMeta(...results.map((result) => result.meta)),
+    };
+  }
+
+  async function getTopicSearchMarkets(topic: string | null) {
+    const terms = topic ? topicSearchTerms[topic] : undefined;
+    if (!terms?.length) {
+      return {
+        value: [] as PolymarketMarket[],
+        meta: buildCacheMeta(null, "cache"),
+      };
+    }
+
+    const results = await Promise.all(
+      terms.map((term) => {
+        const searchQuery = { q: term, limit: config.upstreamMarketLimit };
+
+        return loadWithStaleFallback({
+          cache,
+          key: createCacheKey("polymarket:topic-search", searchQuery),
+          ttlMs: config.cacheTtlMs.searchResults,
+          loader: async () => extractSearchMarkets(await polymarket.search(searchQuery)),
+          fallback: () => [],
+        });
+      }),
+    );
+
+    return {
+      value: dedupeMarkets(results.flatMap((result) => result.value)),
+      meta: mergeSourceMeta(...results.map((result) => result.meta)),
+    };
+  }
+
+  async function getRawMarkets(params: {
+    active?: boolean;
+    closed?: boolean;
+    search?: string;
+    topic?: string | null;
+    discovery?: boolean;
+  }) {
     const baseQuery = {
       limit: config.upstreamMarketLimit,
       active: params.active,
@@ -542,9 +1185,34 @@ export function buildMarketDataService({
       ttlMs: ttl,
       loader: () => polymarket.getMarkets<PolymarketMarket[]>(baseQuery),
     });
+    const eventMarkets = await getEventBackedMarkets({
+      active: params.active,
+      closed: params.closed,
+    });
+    const topicMarkets = await getTopicSearchMarkets(params.topic ?? null);
+
+    if (!params.search && params.discovery && eventMarkets.value.length > 0) {
+      const topicFallbackMarkets = suppressEventChildrenWhenGrouped(
+        eventMarkets.value,
+        topicMarkets.value,
+      );
+
+      return {
+        value: dedupeMarkets([...eventMarkets.value, ...topicFallbackMarkets]),
+        meta: mergeSourceMeta(eventMarkets.meta, baseMarkets.meta, topicMarkets.meta),
+      };
+    }
 
     if (!params.search) {
-      return baseMarkets;
+      const fallbackMarkets = suppressEventChildrenWhenGrouped(eventMarkets.value, [
+        ...topicMarkets.value,
+        ...baseMarkets.value,
+      ]);
+
+      return {
+        value: dedupeMarkets([...eventMarkets.value, ...fallbackMarkets]),
+        meta: mergeSourceMeta(eventMarkets.meta, baseMarkets.meta, topicMarkets.meta),
+      };
     }
 
     const searchQuery = { q: params.search, limit: config.upstreamMarketLimit };
@@ -557,17 +1225,24 @@ export function buildMarketDataService({
     });
 
     return {
-      value: dedupeMarkets([...searchMarkets.value, ...baseMarkets.value]),
-      meta: mergeSourceMeta(baseMarkets.meta, searchMarkets.meta),
+      value: dedupeMarkets([
+        ...searchMarkets.value,
+        ...topicMarkets.value,
+        ...eventMarkets.value,
+        ...baseMarkets.value,
+      ]),
+      meta: mergeSourceMeta(baseMarkets.meta, eventMarkets.meta, searchMarkets.meta, topicMarkets.meta),
     };
   }
 
   async function listMarkets(params: MarketListParams): Promise<MarketListResult> {
     const filter = toMarketFilter(params, config);
     const rawMarketsResult = await getRawMarkets({
-      active: filter.active,
-      closed: filter.closed,
+      active: filter.active ?? (filter.status === "live" || filter.status === "upcoming" ? true : undefined),
+      closed: filter.closed ?? (filter.status === "live" || filter.status === "upcoming" ? false : filter.status === "closed" ? true : undefined),
       search: filter.search,
+      topic: filter.topic,
+      discovery: !filter.search && (filter.sort === "trending" || filter.sort === "popular"),
     });
     const normalized = rawMarketsResult.value
       .filter((market) => isMarketVisible(market, visibilityRules))
@@ -585,11 +1260,7 @@ export function buildMarketDataService({
           return false;
         }
 
-        if (
-          filter.topic &&
-          market.category !== filter.topic &&
-          !market.topics.includes(filter.topic)
-        ) {
+        if (!matchesTopicFilter(market, filter.topic)) {
           return false;
         }
 
@@ -616,7 +1287,11 @@ export function buildMarketDataService({
         return isWithinDateRange(market, filter.closingBefore, filter.closingAfter);
       });
     const sorted = sortMarkets(normalized, filter.sort, filter.search);
-    const data = sorted.slice(filter.offset, filter.offset + filter.limit);
+    const discoverySorted =
+      !filter.search && (filter.sort === "trending" || filter.sort === "popular")
+        ? diversifyDiscoveryMarkets(sorted)
+        : sorted;
+    const data = discoverySorted.slice(filter.offset, filter.offset + filter.limit);
     const nextOffset = filter.offset + filter.limit;
 
     return {
@@ -624,8 +1299,8 @@ export function buildMarketDataService({
       meta: {
         limit: filter.limit,
         offset: filter.offset,
-        next_cursor: nextOffset < sorted.length ? encodeCursor(nextOffset) : null,
-        total: sorted.length,
+        next_cursor: nextOffset < discoverySorted.length ? encodeCursor(nextOffset) : null,
+        total: discoverySorted.length,
         sort: filter.sort,
         ...rawMarketsResult.meta,
       },
@@ -715,6 +1390,249 @@ export function buildMarketDataService({
     };
   }
 
+  async function getEventBySlugOrId(identifier: string): Promise<{ data: NormalizedEvent; meta: MarketDataMeta }> {
+    const isNumericId = /^\d+$/.test(identifier);
+    const query = isNumericId ? { id: identifier } : { slug: identifier };
+    const eventResult = await loadWithStaleFallback({
+      cache,
+      key: createCacheKey("polymarket:event-detail", query),
+      ttlMs: config.cacheTtlMs.marketDetail,
+      loader: () => polymarket.getEvents<PolymarketEvent[]>(query),
+    });
+    const event = eventResult.value.find((candidate) =>
+      isNumericId ? candidate.id === identifier : candidate.slug === identifier,
+    ) ?? eventResult.value[0];
+
+    if (!event) {
+      throw new MarketDataError("EVENT_NOT_FOUND", "Event not found.", 404);
+    }
+
+    return {
+      data: normalizeEvent(event),
+      meta: eventResult.meta,
+    };
+  }
+
+  async function findParentEventForMarket(market: PolymarketMarket) {
+    const marketEvents = market.events ?? [];
+    const embeddedEvent = marketEvents.find((event) =>
+      (event.markets ?? []).some((childMarket) => childMarket.id === market.id),
+    );
+
+    if (embeddedEvent) {
+      return embeddedEvent;
+    }
+
+    if (!market.groupItemTitle) {
+      return null;
+    }
+
+    const searchText = market.question?.trim() || market.groupItemTitle.trim();
+    if (!searchText) {
+      return null;
+    }
+
+    const searchQuery = { q: searchText, limit: config.upstreamMarketLimit };
+    const searchResult = await loadWithStaleFallback({
+      cache,
+      key: createCacheKey("polymarket:event-by-market", { id: market.id, q: searchText }),
+      ttlMs: config.cacheTtlMs.marketDetail,
+      loader: async () => polymarket.search<{ events?: PolymarketEvent[] }>(searchQuery),
+      fallback: () => ({ events: [] }),
+    });
+
+    return (
+      (searchResult.value.events ?? []).find((event) =>
+        (event.markets ?? []).some((childMarket) => childMarket.id === market.id),
+      ) ?? null
+    );
+  }
+
+  function getGroupedEventMarkets(event: PolymarketEvent) {
+    const markets = event.markets ?? [];
+
+    if (markets.length <= 1) {
+      return [];
+    }
+
+    return sortEventMarkets(markets).map((childMarket) => ({
+      ...childMarket,
+      category: childMarket.category ?? event.category,
+      description: childMarket.description ?? event.description,
+      image: event.image ?? event.icon ?? childMarket.image,
+      icon: event.icon ?? event.image ?? childMarket.icon,
+      startDate: childMarket.startDate ?? event.startDate,
+      endDate: childMarket.endDate ?? event.endDate,
+      active: childMarket.active ?? event.active,
+      closed: childMarket.closed ?? event.closed,
+      archived: childMarket.archived ?? event.archived,
+      restricted: childMarket.restricted ?? event.restricted,
+      volume24hr: childMarket.volume24hr ?? event.volume24hr,
+      events: [compactEventContext(event)],
+    }));
+  }
+
+  async function getMarketGroupByMarketId(id: string): Promise<{ data: NormalizedMarketDetail; meta: MarketDataMeta }> {
+    const market = await loadWithStaleFallback({
+      cache,
+      key: createCacheKey("polymarket:market-detail", { id }),
+      ttlMs: config.cacheTtlMs.marketDetail,
+      loader: async () => {
+        try {
+          return await polymarket.getMarket<PolymarketMarket>(id);
+        } catch (error) {
+          if (error instanceof UpstreamError && error.statusCode === 404) {
+            throw new MarketDataError("MARKET_NOT_FOUND", "Market not found.", 404);
+          }
+
+          throw error;
+        }
+      },
+    });
+    const event = await findParentEventForMarket(market.value);
+
+    if (!event) {
+      throw new MarketDataError("MARKET_GROUP_NOT_FOUND", "Grouped event not found for market.", 404);
+    }
+
+    const groupMarkets = getGroupedEventMarkets(event);
+    const selectedMarket = marketFromEvent(
+      event,
+      (event.markets ?? []).find((childMarket) => childMarket.id === id) ?? market.value,
+    );
+    const relatedMarkets = await getRelatedMarkets(selectedMarket).catch(() => ({
+      value: [],
+      meta: buildCacheMeta(null, "fallback", [
+        "Related markets unavailable; empty fallback returned.",
+      ]),
+    }));
+    const snapshots = await listStoredSnapshots(id);
+    const clobHistory = await loadClobPriceHistory(selectedMarket).catch(() => []);
+
+    return {
+      data: normalizeMarketDetail(selectedMarket, relatedMarkets.value, snapshots, clobHistory, groupMarkets),
+      meta: mergeSourceMeta(market.meta, relatedMarkets.meta),
+    };
+  }
+
+  async function listStoredSnapshots(marketId: string) {
+    const snapshots = marketRepository
+      ? await marketRepository.listSnapshots(marketId, config.marketSnapshotHistoryLimit)
+      : await getSnapshots?.(marketId, config.marketSnapshotHistoryLimit);
+
+    return (snapshots ?? []).filter((snapshot) => snapshot.synthetic !== true);
+  }
+
+  async function loadClobPriceHistory(market: PolymarketMarket): Promise<MarketPriceHistoryPoint[]> {
+    const getPriceHistory = polymarket.getPriceHistory;
+
+    if (!getPriceHistory) {
+      return [];
+    }
+
+    const normalized = normalizeMarket(market);
+
+    if (normalized.outcomes.length !== 2) {
+      return [];
+    }
+
+    const yesOutcome =
+      normalized.outcomes.find((outcome) => outcome.name.trim().toLowerCase() === "yes")
+      ?? normalized.outcomes[0];
+    const noOutcome =
+      normalized.outcomes.find((outcome) => outcome.name.trim().toLowerCase() === "no")
+      ?? normalized.outcomes[1];
+
+    if (!yesOutcome?.clobTokenId || !noOutcome?.clobTokenId) {
+      return [];
+    }
+
+    const loadTokenHistory = (tokenId: string) =>
+      cache.getOrSet(
+        createCacheKey("polymarket:clob-price-history", { interval: "all", tokenId }),
+        config.cacheTtlMs.marketDetail,
+        () => getPriceHistory(tokenId, { interval: "all" }),
+      );
+
+    const [yesHistory, noHistory] = await Promise.allSettled([
+      loadTokenHistory(yesOutcome.clobTokenId),
+      loadTokenHistory(noOutcome.clobTokenId),
+    ]);
+    const yesPoints =
+      yesHistory.status === "fulfilled" ? normalizeClobTokenHistory(yesHistory.value) : [];
+    const noPoints =
+      noHistory.status === "fulfilled" ? normalizeClobTokenHistory(noHistory.value) : [];
+
+    return mergeBinaryClobHistory({
+      yesPoints,
+      noPoints,
+      volume: normalized.volume,
+      liquidity: normalized.liquidity,
+    });
+  }
+
+  async function collectMarketSnapshot(id: string): Promise<MarketSnapshotCollectResult> {
+    const market = await polymarket.getMarket<PolymarketMarket>(id).catch((error) => {
+      if (error instanceof UpstreamError && error.statusCode === 404) {
+        throw new MarketDataError("MARKET_NOT_FOUND", "Market not found.", 404);
+      }
+
+      if (error instanceof UpstreamError) {
+        throw new MarketDataError(
+          "UPSTREAM_UNAVAILABLE",
+          "Market data upstream is unavailable; snapshot was not collected.",
+          503,
+          {
+            upstreamStatusCode: error.statusCode,
+            upstreamMessage: error.message,
+          },
+        );
+      }
+
+      throw error;
+    });
+    const normalized = normalizeMarket(market);
+    const snapshot = buildSnapshotFromMarket(normalized);
+
+    if (marketRepository) {
+      await marketRepository.upsertMarket(normalized);
+      await marketRepository.upsertOutcomes(normalized.id, normalized.outcomes);
+      await marketRepository.saveSnapshot(snapshot);
+    }
+
+    return {
+      data: snapshot,
+      meta: buildCacheMeta(
+        {
+          value: snapshot,
+          createdAt: snapshot.captured_at,
+          expiresAt: snapshot.captured_at,
+          isStale: false,
+        },
+        "fresh",
+      ),
+    };
+  }
+
+  async function collectMarketSnapshots(ids: string[]) {
+    const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+    const results = await Promise.allSettled(uniqueIds.map((id) => collectMarketSnapshot(id)));
+
+    return {
+      data: results.flatMap((result) => (result.status === "fulfilled" ? [result.value.data] : [])),
+      errors: results.flatMap((result, index) =>
+        result.status === "rejected"
+          ? [
+              {
+                market_id: uniqueIds[index] ?? null,
+                message: result.reason instanceof Error ? result.reason.message : "Snapshot collection failed.",
+              },
+            ]
+          : [],
+      ),
+    };
+  }
+
   async function getMarketDetail(id: string): Promise<{ data: NormalizedMarketDetail; meta: MarketDataMeta }> {
     const market = await loadWithStaleFallback({
       cache,
@@ -740,8 +1658,33 @@ export function buildMarketDataService({
       ]),
     }));
     const meta = mergeSourceMeta(market.meta, relatedMarkets.meta);
+    const snapshots = await listStoredSnapshots(id);
+    const clobHistory = await loadClobPriceHistory(market.value).catch(() => []);
+    const event = await findParentEventForMarket(market.value).catch(() => null);
+
+    if (event) {
+      const groupMarkets = getGroupedEventMarkets(event);
+      if (groupMarkets.length > 1) {
+        const selectedMarket = marketFromEvent(
+          event,
+          (event.markets ?? []).find((childMarket) => childMarket.id === id) ?? market.value,
+        );
+
+        return {
+          data: normalizeMarketDetail(
+            selectedMarket,
+            relatedMarkets.value,
+            snapshots,
+            clobHistory,
+            groupMarkets,
+          ),
+          meta,
+        };
+      }
+    }
+
     return {
-      data: normalizeMarketDetail(market.value, relatedMarkets.value, getSnapshots?.(id) ?? []),
+      data: normalizeMarketDetail(market.value, relatedMarkets.value, snapshots, clobHistory),
       meta,
     };
   }
@@ -752,10 +1695,62 @@ export function buildMarketDataService({
     );
   }
 
+  async function listTags(): Promise<NormalizedTag[]> {
+    return cache.getOrSet("markets:discovery-tags", config.cacheTtlMs.categories, async () => {
+      const homepageTags = polymarket.getHomepageTags
+        ? normalizeHomepageTags(await polymarket.getHomepageTags().catch(() => []))
+        : [];
+
+      if (homepageTags.length >= 8) {
+        return homepageTags;
+      }
+
+      const collected = new Map<string, NormalizedTag & { score: number }>();
+
+      if (polymarket.getTags) {
+        const carouselTags = await polymarket
+          .getTags<PolymarketTag[]>({ limit: 50, is_carousel: true })
+          .catch(() => []);
+        for (const tag of carouselTags) {
+          addDiscoveryTag(collected, tag, 1000000);
+        }
+      }
+
+      const eventQuery = {
+        active: true,
+        closed: false,
+        limit: Math.min(config.upstreamMarketLimit, 100),
+        order: "volume24hr",
+        ascending: false,
+      };
+      const events = await polymarket
+        .getEvents<PolymarketEvent[]>(eventQuery)
+        .catch(() => []);
+
+      events.forEach((event, index) => {
+        const eventVolume = Math.max(1, toNumber(event.volume24hr ?? event.volume));
+        const positionBoost = Math.max(1, events.length - index);
+        for (const tag of event.tags ?? []) {
+          addDiscoveryTag(collected, tag, Math.log10(eventVolume + 10) * 100 + positionBoost);
+        }
+      });
+
+      return [...collected.values()]
+        .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label))
+        .map(({ score: _score, ...tag }) => tag)
+        .slice(0, 48);
+    });
+  }
+
   return {
     listMarkets,
     getMarketDetail,
+    getEventBySlugOrId,
+    getMarketGroupByMarketId,
+    collectMarketSnapshot,
+    collectMarketSnapshots,
     listCategories,
+    listTags,
     visibilityRules,
   };
 }

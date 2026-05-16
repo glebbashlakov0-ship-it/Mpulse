@@ -24,10 +24,10 @@ export class ResendEmailProvider implements EmailProvider {
     await this.resend.emails.send({
       from: this.fromEmail,
       to,
-      subject: "Verify your Market Pulse email",
+      subject: "Verify your Pulse Market email",
       html: `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Welcome to Market Pulse, ${escapeHtml(displayName)}!</h2>
+          <h2>Welcome to Pulse Market, ${escapeHtml(displayName)}!</h2>
           <p>Please verify your email address to complete your registration.</p>
           <p>
             <a href="${escapeHtml(verifyUrl)}" 
@@ -53,7 +53,7 @@ export class ResendEmailProvider implements EmailProvider {
     await this.resend.emails.send({
       from: this.fromEmail,
       to,
-      subject: "Reset your Market Pulse password",
+      subject: "Reset your Pulse Market password",
       html: `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
           <h2>Password Reset Request</h2>
@@ -81,7 +81,7 @@ export class ResendEmailProvider implements EmailProvider {
     await this.resend.emails.send({
       from: this.fromEmail,
       to,
-      subject: "Your Market Pulse verification code",
+      subject: "Your Pulse Market verification code",
       html: `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
           <h2>Two-Factor Authentication</h2>

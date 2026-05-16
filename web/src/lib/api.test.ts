@@ -8,6 +8,7 @@ import {
   loadCurrentUser,
   loadComplianceEligibility,
   loadLedgerEntries,
+  revokeAllAuthSessions,
   updateComplianceProfile,
 } from "./api";
 
@@ -39,6 +40,10 @@ async function withLocalFetch<T>(
 
   globalThis.fetch = (async (input, init) => {
     const url = String(input);
+    if (url === "/api/auth/csrf") {
+      return Response.json({ data: { csrfToken: "test-csrf-token" } });
+    }
+
     calls.push({ input: url, init });
     return handler(url, init);
   }) as typeof fetch;
@@ -305,6 +310,20 @@ describe("auth api helpers", () => {
         assert.equal(calls[0]?.input, "/api/auth/me");
         assert.equal(calls[0]?.init?.credentials, "same-origin");
         assert.equal(user?.email, "trader@example.com");
+      },
+    );
+  });
+
+  it("logs out all devices through the session management API", async () => {
+    await withLocalFetch(
+      () => Response.json({ data: { ok: true } }),
+      async (calls) => {
+        await revokeAllAuthSessions();
+
+        const call = calls[0];
+        assert.equal(call?.input, "/api/auth/sessions/revoke-all");
+        assert.equal(call?.init?.method, "POST");
+        assert.equal(getHeader(call?.init, "X-CSRF-Token"), "test-csrf-token");
       },
     );
   });

@@ -1,7 +1,6 @@
 import * as React from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft } from "lucide-react";
 import { MarketDetail } from "../components/MarketDetail";
 import { useMarketDetail } from "../hooks/useMarketDetail";
 
@@ -13,9 +12,9 @@ export function MarketDetailPage() {
 
   if (!id) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+      <div className="min-h-screen bg-[#0f1318] text-[#edf1f5]">
+        <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
+          <div className="rounded-2xl border border-red-500/35 bg-red-950/35 p-4 text-red-200">
             {t("errors.notFound")}
           </div>
         </div>
@@ -24,36 +23,30 @@ export function MarketDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <button
-          onClick={() => navigate("/")}
-          className="mb-6 flex items-center gap-2 text-gray-600 hover:text-gray-900"
-        >
-          <ArrowLeft className="size-5" />
-          {t("market.back")}
-        </button>
-
-        {state.status === "loading" && (
-          <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
-            <p className="text-gray-500">{t("common.loading")}</p>
+    <div className="min-h-screen bg-[#0f1318] text-[#edf1f5]">
+      {state.status === "loading" && (
+        <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
+          <div className="rounded-2xl border border-[#293440] bg-[#171d24] p-12 text-center">
+            <p className="text-[#8f9aa8]">{t("common.loading")}</p>
           </div>
-        )}
+        </div>
+      )}
 
-        {state.status === "error" && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+      {state.status === "error" && (
+        <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
+          <div className="rounded-2xl border border-red-500/35 bg-red-950/35 p-4 text-red-200">
             {t("errors.generic")}
           </div>
-        )}
+        </div>
+      )}
 
-        {state.status === "ready" && state.data && (
-          <MarketDetail
-            market={state.data}
-            detailStatus={state.status}
-            onBack={() => navigate("/")}
-          />
-        )}
-      </div>
+      {state.status === "ready" && state.data && (
+        <MarketDetail
+          market={state.data}
+          detailStatus={state.status}
+          onBack={() => navigate("/")}
+        />
+      )}
     </div>
   );
 }

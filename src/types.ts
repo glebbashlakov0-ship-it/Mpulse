@@ -30,6 +30,9 @@ export type PolymarketMarket = {
   oneDayPriceChange?: number;
   oneHourPriceChange?: number;
   events?: PolymarketEvent[];
+  groupItemTitle?: string;
+  groupItemThreshold?: string | number;
+  groupMarkets?: PolymarketMarket[];
 };
 
 export type PolymarketEvent = {
@@ -53,6 +56,24 @@ export type PolymarketEvent = {
   openInterest?: string | number;
   markets?: PolymarketMarket[];
   tags?: Array<{ id?: string; label?: string; slug?: string }>;
+};
+
+export type PolymarketTag = {
+  id?: string | number;
+  label?: string;
+  slug?: string;
+  isCarousel?: boolean;
+  forceShow?: boolean;
+  forceHide?: boolean;
+};
+
+export type PolymarketPriceHistoryPoint = {
+  t: number;
+  p: number | string;
+};
+
+export type PolymarketPriceHistoryResponse = {
+  history?: PolymarketPriceHistoryPoint[];
 };
 
 export type NormalizedOutcome = {
@@ -94,6 +115,12 @@ export type NormalizedCategory = {
   keywords: string[];
 };
 
+export type NormalizedTag = {
+  id: string;
+  slug: string;
+  label: string;
+};
+
 export type NormalizedMarketVolumeSummary = {
   volume: number;
   liquidity: number;
@@ -130,6 +157,7 @@ export type NormalizedMarket = {
   archived: boolean;
   restricted: boolean;
   volume: number;
+  volume_24h?: number;
   liquidity: number;
   outcomes: NormalizedOutcome[];
   trading: {
@@ -139,7 +167,22 @@ export type NormalizedMarket = {
     best_ask: number | null;
     last_trade_price: number | null;
   };
+  event_id: string | null;
+  event_slug: string | null;
+  event_title: string | null;
+  groupItemTitle: string | null;
+  groupItemThreshold: string | null;
+  canonical_market_id: string;
+  canonical_event_slug: string | null;
+  group_markets?: NormalizedGroupMarket[];
   source: "polymarket";
+};
+
+export type NormalizedGroupMarket = NormalizedMarket & {
+  label: string;
+  yes_price: number | null;
+  no_price: number | null;
+  clobTokenIds: string[];
 };
 
 export type MarketSnapshot = {
@@ -157,6 +200,7 @@ export type MarketPriceHistoryPoint = {
   timestamp: string;
   yes: number | null;
   no: number | null;
+  outcomes?: Array<{ name: string; price: number | null }>;
   volume: number;
   liquidity: number;
   synthetic?: boolean;
@@ -172,6 +216,7 @@ export type NormalizedMarketDetail = NormalizedMarket & {
     price_history: MarketPriceHistoryPoint[];
     is_synthetic: boolean;
   };
+  group_markets: NormalizedGroupMarket[];
 };
 
 export type NormalizedEvent = {

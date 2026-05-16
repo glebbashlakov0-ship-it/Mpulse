@@ -132,7 +132,7 @@ export function registerAdminRoutes(
   app.get(
     "/api/admin/wallet-withdrawals",
     {
-      preHandler: adminPreHandler(),
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
     async (request) => {
       const context = getAuthContext(request);

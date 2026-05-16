@@ -16,14 +16,16 @@ import {
   disableTwoFactor,
   loadAuthSessions,
   loadTwoFactorStatus,
+  regenerateTwoFactorBackupCodes,
   resendVerificationEmail,
+  revokeAllAuthSessions,
   revokeAuthSession,
   revokeOtherAuthSessions,
   startTwoFactorSetup,
 } from "../lib/api";
 import type { AuthSessionInfo, AuthUser, TwoFactorSetup, TwoFactorStatus, UserSettings } from "../lib/types";
 
-const panel = "rounded-[14px] border border-[#293440] bg-[#171d24]";
+const panel = "rounded-3xl border border-[#293440] bg-[#171d24]";
 
 export function ProfilePage({
   user,
@@ -51,6 +53,7 @@ export function ProfilePage({
   const [sessions, setSessions] = React.useState<AuthSessionInfo[]>([]);
   const [twoFactorStatus, setTwoFactorStatus] = React.useState<TwoFactorStatus | null>(null);
   const [twoFactorSetup, setTwoFactorSetup] = React.useState<TwoFactorSetup | null>(null);
+  const [regeneratedBackupCodes, setRegeneratedBackupCodes] = React.useState<string[]>([]);
   const [twoFactorCode, setTwoFactorCode] = React.useState("");
   const [message, setMessage] = React.useState<{
     tone: "success" | "error";
@@ -140,7 +143,12 @@ export function ProfilePage({
   async function revokeSession(sessionId: string) {
     setMessage(null);
     try {
+      const session = sessions.find((item) => item.id === sessionId);
       await revokeAuthSession(sessionId);
+      if (session?.current) {
+        await onLogout();
+        return;
+      }
       setSessions(await loadAuthSessions());
       setMessage({ tone: "success", text: "Session revoked." });
     } catch (error) {
@@ -165,6 +173,20 @@ export function ProfilePage({
     }
   }
 
+  async function revokeAllSessions() {
+    setMessage(null);
+    try {
+      await revokeAllAuthSessions();
+      setSessions([]);
+      await onLogout();
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Could not log out all devices.",
+      });
+    }
+  }
+
   async function startTwoFactor() {
     setMessage(null);
     try {
@@ -182,6 +204,7 @@ export function ProfilePage({
     try {
       setTwoFactorStatus(await confirmTwoFactorSetup(twoFactorCode));
       setTwoFactorSetup(null);
+      setRegeneratedBackupCodes([]);
       setTwoFactorCode("");
       setMessage({ tone: "success", text: "Two-factor authentication enabled." });
     } catch (error) {
@@ -196,6 +219,7 @@ export function ProfilePage({
     setMessage(null);
     try {
       setTwoFactorStatus(await disableTwoFactor(twoFactorCode));
+      setRegeneratedBackupCodes([]);
       setTwoFactorCode("");
       setMessage({ tone: "success", text: "Two-factor authentication disabled." });
     } catch (error) {
@@ -206,10 +230,26 @@ export function ProfilePage({
     }
   }
 
+  async function regenerateBackupCodes() {
+    setMessage(null);
+    try {
+      const result = await regenerateTwoFactorBackupCodes(twoFactorCode);
+      setTwoFactorStatus(result.status);
+      setRegeneratedBackupCodes(result.backupCodes);
+      setTwoFactorCode("");
+      setMessage({ tone: "success", text: "Backup codes regenerated. Save them now." });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Could not regenerate backup codes.",
+      });
+    }
+  }
+
   return (
     <section className="mx-auto w-full max-w-[1100px] overflow-x-hidden px-4 py-8 md:px-6 xl:px-8">
       <button
-        className="flex w-fit items-center gap-2 rounded-lg border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+        className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
         onClick={onBack}
         type="button"
       >
@@ -220,7 +260,7 @@ export function ProfilePage({
       <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
         <aside className={`${panel} h-fit min-w-0 p-5`}>
           <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-lg bg-[#1d252e] text-[#3b91f6]">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
               <UserCircle size={28} />
             </span>
             <div className="min-w-0">
@@ -244,7 +284,7 @@ export function ProfilePage({
 
           {user ? (
             <button
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-lg border border-[#293440] px-4 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#d34c45]/60 hover:text-red-300 disabled:opacity-50"
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#293440] px-4 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#d34c45]/60 hover:text-red-300 disabled:opacity-50"
               onClick={logout}
               disabled={isLoggingOut}
               type="button"
@@ -254,7 +294,7 @@ export function ProfilePage({
             </button>
           ) : (
             <button
-              className="mt-5 w-full rounded-lg bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none"
+              className="mt-5 w-full rounded-2xl bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none"
               onClick={onOpenLogin}
               type="button"
             >
@@ -290,7 +330,7 @@ export function ProfilePage({
                   Language
                 </span>
                 <select
-                  className="h-12 rounded-lg border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none transition focus:border-[#3b91f6]/70"
+                  className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none transition focus:border-[#3b91f6]/70"
                   value={language}
                   onChange={(event) =>
                     setLanguage(event.target.value as UserSettings["language"])
@@ -306,7 +346,7 @@ export function ProfilePage({
                   Country
                 </span>
                 <input
-                  className="h-12 rounded-lg border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none placeholder:text-[#8f9aa8] transition focus:border-[#3b91f6]/70"
+                  className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none placeholder:text-[#8f9aa8] transition focus:border-[#3b91f6]/70"
                   value={country}
                   onChange={(event) => setCountry(event.target.value)}
                   placeholder="Optional"
@@ -325,7 +365,7 @@ export function ProfilePage({
               />
 
               <button
-                className="flex h-12 w-fit items-center justify-center gap-2 rounded-lg bg-[#3b91f6] px-5 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:opacity-60"
+                className="flex h-12 w-fit items-center justify-center gap-2 rounded-2xl bg-[#3b91f6] px-5 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:opacity-60"
                 disabled={isSaving}
                 type="submit"
               >
@@ -334,12 +374,12 @@ export function ProfilePage({
               </button>
             </form>
           ) : (
-            <div className="mt-5 rounded-lg border border-dashed border-[#293440] bg-[#0f1318] p-8 text-center">
+            <div className="mt-5 rounded-2xl border border-dashed border-[#293440] bg-[#0f1318] p-8 text-center">
               <strong className="block text-base font-semibold text-[#edf1f5]">
                 Sign in required
               </strong>
               <button
-                className="mt-4 rounded-lg bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white"
+                className="mt-4 rounded-2xl bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white"
                 onClick={onOpenLogin}
                 type="button"
               >
@@ -371,9 +411,9 @@ export function ProfilePage({
                 />
               )}
 
-              <div className="rounded-lg border border-[#293440] bg-[#0f1318] p-4">
+              <div className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
                 <div className="flex items-start gap-3">
-                  <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#1d252e] text-[#3b91f6]">
+                  <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
                     <ShieldCheck size={21} />
                   </span>
                   <div className="min-w-0 flex-1">
@@ -387,7 +427,14 @@ export function ProfilePage({
                     </p>
                     {twoFactorSetup ? (
                       <div className="mt-4 grid gap-3">
-                        <code className="break-all rounded-lg bg-[#171d24] p-3 text-xs text-[#edf1f5]">
+                        <div className="w-fit rounded-2xl border border-[#293440] bg-white p-2">
+                          <img
+                            alt="Two-factor setup QR code"
+                            className="h-40 w-40"
+                            src={twoFactorSetup.qrCodeDataUrl}
+                          />
+                        </div>
+                        <code className="break-all rounded-2xl bg-[#171d24] p-3 text-xs text-[#edf1f5]">
                           {twoFactorSetup.otpauthUrl}
                         </code>
                         <p className="text-xs font-semibold text-[#8f9aa8]">
@@ -395,25 +442,35 @@ export function ProfilePage({
                         </p>
                       </div>
                     ) : null}
+                    {regeneratedBackupCodes.length > 0 ? (
+                      <p className="mt-4 rounded-2xl bg-[#171d24] p-3 text-xs font-semibold text-[#edf1f5]">
+                        New backup codes: {regeneratedBackupCodes.join(", ")}
+                      </p>
+                    ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       {(twoFactorSetup || twoFactorStatus?.enabled) ? (
                         <input
-                          className="h-10 rounded-lg border border-[#293440] bg-[#171d24] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
+                          className="h-10 rounded-2xl border border-[#293440] bg-[#171d24] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
                           value={twoFactorCode}
                           onChange={(event) => setTwoFactorCode(event.target.value)}
                           placeholder="123456"
                         />
                       ) : null}
                       {twoFactorSetup ? (
-                        <button className="rounded-lg bg-[#3b91f6] px-4 py-2 text-sm font-semibold text-white" onClick={confirmTwoFactor} type="button">
+                        <button className="rounded-2xl bg-[#3b91f6] px-4 py-2 text-sm font-semibold text-white" onClick={confirmTwoFactor} type="button">
                           Confirm
                         </button>
                       ) : twoFactorStatus?.enabled ? (
-                        <button className="rounded-lg border border-[#293440] px-4 py-2 text-sm font-semibold text-[#edf1f5]" onClick={turnOffTwoFactor} type="button">
-                          Disable
-                        </button>
+                        <>
+                          <button className="rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#edf1f5]" onClick={regenerateBackupCodes} type="button">
+                            Regenerate backup codes
+                          </button>
+                          <button className="rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#edf1f5]" onClick={turnOffTwoFactor} type="button">
+                            Disable
+                          </button>
+                        </>
                       ) : (
-                        <button className="rounded-lg bg-[#3b91f6] px-4 py-2 text-sm font-semibold text-white" onClick={startTwoFactor} type="button">
+                        <button className="rounded-2xl bg-[#3b91f6] px-4 py-2 text-sm font-semibold text-white" onClick={startTwoFactor} type="button">
                           Set up 2FA
                         </button>
                       )}
@@ -422,10 +479,10 @@ export function ProfilePage({
                 </div>
               </div>
 
-              <div className="rounded-lg border border-[#293440] bg-[#0f1318] p-4">
+              <div className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#1d252e] text-[#3b91f6]">
+                    <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
                       <Laptop size={21} />
                     </span>
                     <div>
@@ -437,13 +494,18 @@ export function ProfilePage({
                       </span>
                     </div>
                   </div>
-                  <button className="rounded-lg border border-[#293440] px-3 py-2 text-xs font-semibold text-[#edf1f5]" onClick={revokeOthers} type="button">
-                    Revoke others
-                  </button>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <button className="rounded-2xl border border-[#293440] px-3 py-2 text-xs font-semibold text-[#edf1f5]" onClick={revokeOthers} type="button">
+                      Revoke others
+                    </button>
+                    <button className="rounded-2xl border border-red-500/40 px-3 py-2 text-xs font-semibold text-red-200" onClick={revokeAllSessions} type="button">
+                      Log out all devices
+                    </button>
+                  </div>
                 </div>
                 <div className="mt-4 grid gap-2">
                   {sessions.map((session) => (
-                    <div className="grid gap-2 rounded-lg bg-[#171d24] p-3 text-sm font-semibold text-[#8f9aa8] md:grid-cols-[1fr_auto] md:items-center" key={session.id}>
+                    <div className="grid gap-2 rounded-2xl bg-[#171d24] p-3 text-sm font-semibold text-[#8f9aa8] md:grid-cols-[1fr_auto] md:items-center" key={session.id}>
                       <div className="min-w-0">
                         <span className="block truncate text-[#edf1f5]">
                           {session.userAgent ?? "Unknown device"} {session.current ? "(current)" : ""}
@@ -452,7 +514,7 @@ export function ProfilePage({
                           Last seen {new Date(session.lastSeenAt).toLocaleString()} · {session.ipAddress ?? "unknown IP"}
                         </span>
                       </div>
-                      <button className="rounded-lg border border-[#293440] px-3 py-2 text-xs text-[#edf1f5]" onClick={() => revokeSession(session.id)} type="button">
+                      <button className="rounded-2xl border border-[#293440] px-3 py-2 text-xs text-[#edf1f5]" onClick={() => revokeSession(session.id)} type="button">
                         Revoke
                       </button>
                     </div>
@@ -481,8 +543,8 @@ function SecurityBlock({
   onAction?: () => void;
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-[#293440] bg-[#0f1318] p-4">
-      <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#1d252e] text-[#3b91f6]">
+    <div className="flex items-start gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
+      <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
         {icon}
       </span>
       <div className="min-w-0 flex-1">
@@ -491,7 +553,7 @@ function SecurityBlock({
       </div>
       {actionLabel && onAction ? (
         <button
-          className="rounded-lg border border-[#293440] px-3 py-2 text-xs font-semibold text-[#edf1f5]"
+          className="rounded-2xl border border-[#293440] px-3 py-2 text-xs font-semibold text-[#edf1f5]"
           onClick={onAction}
           type="button"
         >
@@ -504,7 +566,7 @@ function SecurityBlock({
 
 function ProfileStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg bg-[#0f1318] px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#0f1318] px-3 py-2">
       <span>{label}</span>
       <strong className="min-w-0 truncate text-[#edf1f5]">{value}</strong>
     </div>
@@ -521,7 +583,7 @@ function Toggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-3 rounded-lg border border-[#293440] bg-[#0f1318] px-4 py-3 text-sm font-semibold text-[#edf1f5]">
+    <label className="flex items-center justify-between gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] px-4 py-3 text-sm font-semibold text-[#edf1f5]">
       <span>{label}</span>
       <input
         className="h-5 w-5 accent-[#3b91f6]"
@@ -536,7 +598,7 @@ function Toggle({
 function InlineMessage({ tone, text }: { tone: "success" | "error"; text: string }) {
   return (
     <div
-      className={`flex items-start gap-2 rounded-lg px-4 py-3 text-sm font-semibold ${
+      className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
         tone === "success" ? "bg-green-500/10 text-green-200" : "bg-red-500/10 text-red-200"
       }`}
     >

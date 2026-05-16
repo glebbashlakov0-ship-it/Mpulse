@@ -5,6 +5,7 @@ import type {
   NormalizedMarketPriceSummary,
   NormalizedRelatedMarket,
   NormalizedMarket,
+  NormalizedGroupMarket,
   NormalizedOutcome,
   MarketPriceHistoryPoint,
   PolymarketEvent,
@@ -85,11 +86,27 @@ function normalizeOutcomes(market: PolymarketMarket): NormalizedOutcome[] {
   });
 }
 
+function getPrimaryEventContext(market: PolymarketMarket) {
+  return market.events?.[0] ?? null;
+}
+
+function normalizeGroupValue(value: string | number | undefined) {
+  return value === undefined || value === null ? null : String(value);
+}
+
+function getGroupMarketLabel(market: PolymarketMarket | NormalizedMarket) {
+  const label = market.groupItemTitle?.trim();
+
+  return label || ("title" in market ? market.title : market.question) || "Market";
+}
+
 export function normalizeMarket(market: PolymarketMarket): NormalizedMarket {
   const category = inferCategory(market);
   const topics = inferTopics(market);
   const sourceImage = market.image ?? market.icon ?? null;
   const normalizedDates = normalizeDateFields(market);
+  const eventContext = getPrimaryEventContext(market);
+  const eventSlug = eventContext?.slug ?? null;
 
   return {
     id: market.id,
@@ -110,6 +127,7 @@ export function normalizeMarket(market: PolymarketMarket): NormalizedMarket {
     archived: Boolean(market.archived),
     restricted: Boolean(market.restricted),
     volume: toNumber(market.volumeNum ?? market.volume),
+    volume_24h: toNumber(market.volume24hr),
     liquidity: toNumber(market.liquidityNum ?? market.liquidity),
     outcomes: normalizeOutcomes(market),
     trading: {
@@ -119,6 +137,14 @@ export function normalizeMarket(market: PolymarketMarket): NormalizedMarket {
       best_ask: nullableNumber(market.bestAsk),
       last_trade_price: nullableNumber(market.lastTradePrice),
     },
+    event_id: eventContext?.id ?? null,
+    event_slug: eventSlug,
+    event_title: eventContext?.title ?? null,
+    groupItemTitle: market.groupItemTitle ?? null,
+    groupItemThreshold: normalizeGroupValue(market.groupItemThreshold),
+    canonical_market_id: market.id,
+    canonical_event_slug: eventSlug,
+    group_markets: normalizeGroupMarkets(market.groupMarkets ?? []),
     source: "polymarket",
   };
 }
@@ -209,14 +235,27 @@ function normalizeRelatedMarket(market: PolymarketMarket): NormalizedRelatedMark
 function buildPriceHistory(
   snapshots: MarketSnapshot[],
   fallbackMarket: NormalizedMarket,
+  clobHistory: MarketPriceHistoryPoint[] = [],
 ): { snapshots: MarketSnapshot[]; price_history: MarketPriceHistoryPoint[]; is_synthetic: boolean } {
+  if (clobHistory.length > 0) {
+    return {
+      snapshots,
+      price_history: clobHistory,
+      is_synthetic: false,
+    };
+  }
+
   if (snapshots.length > 0) {
     return {
       snapshots,
-      price_history: snapshots.map((snapshot) => ({
+      price_history: snapshots.map((snapshot, index) => ({
         timestamp: snapshot.captured_at,
         yes: snapshot.prices.yes,
         no: snapshot.prices.no,
+        outcomes:
+          snapshot.synthetic === true
+            ? buildSyntheticOutcomeHistory(fallbackMarket.outcomes, index, snapshots.length)
+            : undefined,
         volume: snapshot.volume,
         liquidity: snapshot.liquidity,
         synthetic: snapshot.synthetic,
@@ -230,9 +269,14 @@ function buildPriceHistory(
   const syntheticSnapshots = Array.from({ length: 12 }).map((_, index) => {
     const progress = index / 11;
     const drift = Math.sin(index * 0.9) * 0.015;
+    const isLatest = index === 11;
     const yes =
-      prices.yes === null ? null : clampProbability(prices.yes + (progress - 1) * 0.04 + drift);
-    const no = yes === null ? prices.no : clampProbability(1 - yes);
+      prices.yes === null
+        ? null
+        : isLatest
+          ? prices.yes
+          : clampProbability(prices.yes + (progress - 1) * 0.04 + drift);
+    const no = isLatest ? prices.no : yes === null ? prices.no : clampProbability(1 - yes);
     const capturedAt = new Date(now - (11 - index) * 60 * 60 * 1000).toISOString();
 
     return {
@@ -257,6 +301,11 @@ function buildPriceHistory(
       timestamp: snapshot.captured_at,
       yes: snapshot.prices.yes,
       no: snapshot.prices.no,
+      outcomes: buildSyntheticOutcomeHistory(
+        fallbackMarket.outcomes,
+        Number(snapshot.id.split(":").at(-1) ?? 0),
+        syntheticSnapshots.length,
+      ),
       volume: snapshot.volume,
       liquidity: snapshot.liquidity,
       synthetic: true,
@@ -265,13 +314,40 @@ function buildPriceHistory(
   };
 }
 
+function buildSyntheticOutcomeHistory(
+  outcomes: NormalizedMarket["outcomes"],
+  index: number,
+  total: number,
+) {
+  const progress = total <= 1 ? 1 : index / (total - 1);
+
+  return outcomes.map((outcome, outcomeIndex) => {
+    const basePrice = outcome.price ?? outcome.probability;
+    const isLatest = index === total - 1;
+    const drift = Math.sin((index + 1) * (outcomeIndex + 1) * 0.7) * 0.01;
+    const trend = (progress - 1) * 0.02;
+
+    return {
+      name: outcome.name,
+      price:
+        basePrice === null
+          ? null
+          : isLatest
+            ? basePrice
+            : clampProbability(basePrice + drift + trend),
+    };
+  });
+}
+
 export function normalizeMarketDetail(
   market: PolymarketMarket,
   relatedMarkets: PolymarketMarket[] = [],
   snapshots: MarketSnapshot[] = [],
+  clobHistory: MarketPriceHistoryPoint[] = [],
+  groupMarkets: PolymarketMarket[] = [],
 ): NormalizedMarketDetail {
   const normalized = normalizeMarket(market);
-  const history = buildPriceHistory(snapshots, normalized);
+  const history = buildPriceHistory(snapshots, normalized, clobHistory);
   const related = relatedMarkets
     .filter((relatedMarket) => relatedMarket.id !== market.id)
     .map(normalizeRelatedMarket)
@@ -287,7 +363,39 @@ export function normalizeMarketDetail(
     },
     related_markets: related,
     history,
+    group_markets: normalizeGroupMarkets(groupMarkets),
   };
+}
+
+export function normalizeGroupMarket(market: PolymarketMarket): NormalizedGroupMarket {
+  const normalized = normalizeMarket(market);
+  const prices = normalizePriceSummary(normalized);
+
+  return {
+    ...normalized,
+    label: getGroupMarketLabel(market),
+    yes_price: prices.yes,
+    no_price: prices.no,
+    clobTokenIds: parseJsonArray(market.clobTokenIds),
+  };
+}
+
+export function normalizeGroupMarkets(markets: PolymarketMarket[]): NormalizedGroupMarket[] {
+  return [...markets]
+    .sort((left, right) => {
+      const leftThreshold = Number(left.groupItemThreshold);
+      const rightThreshold = Number(right.groupItemThreshold);
+      const thresholdSort =
+        Number.isFinite(leftThreshold) && Number.isFinite(rightThreshold)
+          ? leftThreshold - rightThreshold
+          : 0;
+
+      return (
+        thresholdSort ||
+        toNumber(right.volumeNum ?? right.volume) - toNumber(left.volumeNum ?? left.volume)
+      );
+    })
+    .map(normalizeGroupMarket);
 }
 
 export function normalizeEvent(event: PolymarketEvent): NormalizedEvent {
@@ -336,7 +444,16 @@ export function normalizeEvent(event: PolymarketEvent): NormalizedEvent {
       label: tag.label ?? null,
       slug: tag.slug ?? null,
     })),
-    markets: (event.markets ?? []).map(normalizeMarket),
+    markets: (event.markets ?? []).map((market) =>
+      normalizeMarket({
+        ...market,
+        question: market.question ?? event.title,
+        category: market.category ?? event.category,
+        image: event.image ?? event.icon ?? market.image,
+        icon: event.icon ?? event.image ?? market.icon,
+        events: [event],
+      }),
+    ),
     source: "polymarket",
   };
 }

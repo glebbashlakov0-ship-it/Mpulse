@@ -260,6 +260,13 @@ function mapMarket(row: MarketRow): NormalizedMarket {
     liquidity: Number(row.liquidity),
     outcomes: row.outcomes ?? [],
     trading: row.trading,
+    event_id: null,
+    event_slug: null,
+    event_title: null,
+    groupItemTitle: null,
+    groupItemThreshold: null,
+    canonical_market_id: row.id,
+    canonical_event_slug: null,
     source: row.source,
   };
 }

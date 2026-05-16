@@ -26,7 +26,7 @@ import type { Market } from "../lib/types";
 import { usePortfolio } from "../hooks/usePortfolio";
 import { MarketImage } from "./MarketMedia";
 
-const panel = "rounded-[14px] border border-[#293440] bg-[#171d24]";
+const panel = "rounded-3xl border border-[#293440] bg-[#171d24]";
 const muted = "text-sm font-semibold text-[#8f9aa8]";
 
 export function PortfolioPage({
@@ -72,7 +72,7 @@ export function PortfolioPage({
     <section className="mx-auto w-full max-w-[1500px] overflow-x-hidden px-4 py-8 md:px-6 xl:px-8">
       <div className="grid gap-6">
         <button
-          className="flex w-fit items-center gap-2 rounded-lg border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+          className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
           onClick={onBack}
         >
           <ArrowLeft size={18} />
@@ -92,7 +92,7 @@ export function PortfolioPage({
             </p>
           </div>
           <button
-            className="rounded-lg border border-[#293440] px-4 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#d34c45]/60 hover:text-red-300 disabled:opacity-50"
+            className="rounded-2xl border border-[#293440] px-4 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#d34c45]/60 hover:text-red-300 disabled:opacity-50"
             onClick={resetPortfolio}
             disabled={isResetting}
           >
@@ -153,14 +153,14 @@ export function PortfolioPage({
 
                 return (
                   <article
-                    className="grid min-w-0 gap-4 rounded-lg border border-[#293440] bg-[#0f1318] p-4 md:grid-cols-[minmax(0,1fr)_110px_130px_120px_auto] md:items-center"
+                    className="grid min-w-0 gap-4 rounded-2xl border border-[#293440] bg-[#0f1318] p-4 md:grid-cols-[minmax(0,1fr)_110px_130px_120px_auto] md:items-center"
                     key={position.marketId}
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       {market ? (
                         <MarketImage market={market} />
                       ) : (
-                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-[#1d252e] text-[#8f9aa8]">
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#1d252e] text-[#8f9aa8]">
                           <ImageOff size={20} />
                         </span>
                       )}
@@ -182,7 +182,7 @@ export function PortfolioPage({
                       tone={pnl >= 0 ? "positive" : "negative"}
                     />
                     <button
-                      className="rounded-lg bg-[#1d252e] px-4 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#293440]"
+                      className="rounded-2xl bg-[#1d252e] px-4 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#293440]"
                       onClick={() => onOpenMarketId(position.marketId)}
                     >
                       Open
@@ -223,7 +223,7 @@ export function PortfolioPage({
           <div className="mt-4 grid gap-3">
             {portfolio.trades.map((trade) => (
               <article
-                className="grid min-w-0 gap-4 rounded-lg border border-[#293440] bg-[#0f1318] p-4 md:grid-cols-[minmax(0,1fr)_130px_120px_90px_90px] md:items-center"
+                className="grid min-w-0 gap-4 rounded-2xl border border-[#293440] bg-[#0f1318] p-4 md:grid-cols-[minmax(0,1fr)_130px_120px_90px_90px] md:items-center"
                 key={trade.id}
               >
                 <div className="min-w-0">
@@ -256,7 +256,7 @@ export function PortfolioPage({
 function InlineState({ tone, text }: { tone: "success" | "error" | "info"; text: string }) {
   return (
     <div
-      className={`flex items-start gap-2 rounded-lg px-4 py-3 text-sm font-semibold ${
+      className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
         tone === "success"
           ? "bg-green-500/10 text-green-200"
           : tone === "error"
@@ -279,7 +279,7 @@ function PortfolioSkeleton() {
     <div className="mt-4 grid gap-3">
       {Array.from({ length: 3 }).map((_, index) => (
         <div
-          className="h-24 animate-pulse rounded-lg border border-[#293440] bg-[#0f1318]"
+          className="h-24 animate-pulse rounded-2xl border border-[#293440] bg-[#0f1318]"
           key={index}
         />
       ))}
@@ -365,7 +365,7 @@ function PositionStat({
 
 function EmptyState({ title, text }: { title: string; text: string }) {
   return (
-    <div className="mt-4 rounded-lg border border-dashed border-[#293440] bg-[#0f1318] p-8 text-center">
+    <div className="mt-4 rounded-2xl border border-dashed border-[#293440] bg-[#0f1318] p-8 text-center">
       <strong className="block text-base font-semibold text-[#edf1f5]">{title}</strong>
       <span className="mt-2 block text-sm font-medium text-[#8f9aa8]">{text}</span>
     </div>

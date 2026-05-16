@@ -32,6 +32,7 @@ import {
   PostgresComplianceRepository,
 } from "./compliance.js";
 import { type AppConfig, getConfig } from "./config.js";
+import { isStateChangingMethod, validateCsrfRequest } from "./csrf.js";
 import { buildDatabase } from "./db.js";
 import {
   buildLedgerService,
@@ -41,9 +42,9 @@ import {
 } from "./ledger.js";
 import { MemoryPortfolioRepository, PostgresPortfolioRepository } from "./portfolioRepository.js";
 import { buildMarketDataService, MarketDataError } from "./marketDataService.js";
+import { MemoryMarketRepository, PostgresMarketRepository } from "./marketRepository.js";
 import { buildPolymarketClient, UpstreamError } from "./polymarketClient.js";
 import { buildAuthRateLimiter } from "./rateLimit.js";
-import { MemorySnapshotStore } from "./snapshots.js";
 import {
   buildWalletService,
   MemoryWalletRepository,
@@ -74,7 +75,9 @@ export function buildApp(config: AppConfig = getConfig()) {
   const db = buildDatabase(config);
   const polymarket = buildPolymarketClient(config);
   const cache = new MemoryCacheStore(config.cacheEnabled);
-  const snapshots = new MemorySnapshotStore();
+  const marketRepository = db.enabled
+    ? new PostgresMarketRepository(db)
+    : new MemoryMarketRepository();
   const authRepositories = db.enabled ? buildPostgresAuthRepositories(db) : undefined;
   const twoFactor = buildTwoFactorService(
     db.enabled ? new PostgresTwoFactorRepository(db, config) : new MemoryTwoFactorRepository(),
@@ -123,20 +126,42 @@ export function buildApp(config: AppConfig = getConfig()) {
     config,
     cache,
     polymarket,
-    getSnapshots: (marketId) => snapshots.listForMarket(marketId),
+    marketRepository,
   });
+  let snapshotCollectorTimer: ReturnType<typeof setInterval> | null = null;
 
   if (!db.enabled) {
     app.log.warn("Database disabled. Set DATABASE_URL to enable Postgres repositories.");
   }
 
   app.addHook("onClose", async () => {
+    if (snapshotCollectorTimer) {
+      clearInterval(snapshotCollectorTimer);
+    }
+
+    await authRateLimiter.close?.();
     await db.close();
   });
 
   app.register(cors, {
     origin: config.corsAllowedOrigins.length > 0 ? config.corsAllowedOrigins : true,
     credentials: true,
+  });
+
+  app.addHook("preHandler", async (request, reply) => {
+    if (!config.csrfProtectionEnabled || !isStateChangingMethod(request.method)) {
+      return;
+    }
+
+    if (!validateCsrfRequest(request, config)) {
+      return reply.status(403).send({
+        data: null,
+        error: {
+          code: "CSRF_TOKEN_INVALID",
+          message: "CSRF token is missing or invalid.",
+        },
+      });
+    }
   });
 
   app.addHook("preHandler", async (request) => {
@@ -235,7 +260,7 @@ export function buildApp(config: AppConfig = getConfig()) {
 
   // Register route modules
   registerHealthRoutes(app, config, db, marketData);
-  registerEventRoutes(app, polymarket);
+  registerEventRoutes(app, polymarket, marketData);
   registerMarketRoutes(app, marketData);
   registerAuthRoutes(app, auth, audit, config, authRateLimiter, verification, twoFactor);
   registerComplianceRoutes(app, auth, compliance, config);
@@ -246,6 +271,25 @@ export function buildApp(config: AppConfig = getConfig()) {
   });
   registerAdminRoutes(app, auth, audit, admin, config);
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
+
+  if (config.marketSnapshotCollectorEnabled && config.marketSnapshotCollectorMarketIds.length > 0) {
+    const collectConfiguredSnapshots = async () => {
+      const result = await marketData.collectMarketSnapshots(config.marketSnapshotCollectorMarketIds);
+      if (result.errors.length > 0) {
+        app.log.warn({ errors: result.errors }, "Market snapshot collector finished with errors.");
+      } else {
+        app.log.info({ count: result.data.length }, "Market snapshot collector saved snapshots.");
+      }
+    };
+
+    app.addHook("onReady", async () => {
+      void collectConfiguredSnapshots();
+      snapshotCollectorTimer = setInterval(
+        () => void collectConfiguredSnapshots(),
+        config.marketSnapshotCollectorIntervalMs,
+      );
+    });
+  }
 
   return app;
 }

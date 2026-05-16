@@ -25,7 +25,7 @@ export function RequestPasswordResetPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 flex items-center justify-center px-4">
-      <div className="max-w-md w-full bg-gray-800 rounded-lg shadow-xl p-8">
+      <div className="max-w-md w-full bg-gray-800 rounded-2xl shadow-xl p-8">
         <div className="mb-6">
           <button
             onClick={() => navigate("/")}
@@ -44,7 +44,7 @@ export function RequestPasswordResetPage() {
         </p>
 
         {status === "success" ? (
-          <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 mb-6">
+          <div className="bg-green-500/10 border border-green-500/20 rounded-2xl p-4 mb-6">
             <div className="flex items-start gap-3">
               <svg className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -67,14 +67,14 @@ export function RequestPasswordResetPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-2xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 placeholder="you@example.com"
                 disabled={status === "loading"}
               />
             </div>
 
             {status === "error" && message && (
-              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+              <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-3">
                 <p className="text-red-400 text-sm">{message}</p>
               </div>
             )}
@@ -82,7 +82,7 @@ export function RequestPasswordResetPage() {
             <button
               type="submit"
               disabled={status === "loading"}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-2xl transition-colors"
             >
               {status === "loading" ? "Sending..." : "Send Reset Link"}
             </button>

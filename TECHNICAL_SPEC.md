@@ -1,11 +1,11 @@
-# Техническое задание: Market Pulse
+# Техническое задание: Pulse Market
 
 Статус документа: рабочее ТЗ финального продукта.
 Дата актуализации: 2 мая 2026.
 
 ## 1. Краткое описание продукта
 
-Market Pulse - это Arabic-first платформа прогнозных рынков, где пользователь может смотреть актуальные рынки, изучать вероятность исходов, открывать позиции, пополнять баланс, управлять портфелем и отслеживать историю сделок.
+Pulse Market - это Arabic-first платформа прогнозных рынков, где пользователь может смотреть актуальные рынки, изучать вероятность исходов, открывать позиции, пополнять баланс, управлять портфелем и отслеживать историю сделок.
 
 На первом этапе продукт использует публичные данные Polymarket как источник рыночной информации. Финальная версия должна иметь собственную пользовательскую систему, кошельки, баланс, историю операций, модерацию контента, арабскую локализацию, административную панель и юридически корректный контур работы с реальными деньгами.
 
@@ -194,14 +194,20 @@ wallet signing, settlement и real-money flows пока не реализова�
   открытого рынка.~~
 - [x] ~~Блок правил/описания.~~
 - [x] ~~UI графика вероятностей.~~
-- [x] ~~Detail API возвращает `history.price_history` с synthetic fallback, если durable
-  `history.snapshots` пока пустой.~~
+- [x] ~~Frontend chart rendering downsamples large CLOB histories and renders only the latest point
+  marker per series, so real Polymarket histories do not create thousands of SVG nodes.~~
+- [x] ~~Detail API возвращает `history.price_history`: для binary markets сначала реальные
+  Polymarket CLOB Yes/No token history, затем durable `history.snapshots`, затем synthetic
+  fallback только если оба real sources недоступны.~~
+- [x] ~~Real snapshot pipeline: collector сохраняет текущие prices в `market_snapshots`, а detail
+  использует snapshots как fallback/дополнение после CLOB history.~~
 - [x] ~~Отображение local-позиции по рынку.~~
 - [x] ~~История local trades по рынку через backend local API.~~
 
 Нужно сделать:
 
-- [ ] Реальные исторические данные для графика.
+- [x] ~~Реальные исторические данные для binary-графика через Polymarket CLOB price history.~~
+- [x] ~~Реальные snapshot-точки для графика через repository/Postgres collector.~~
 - [ ] Реальные комментарии.
 - [ ] Реальные holders/positions/activity tabs.
 - [ ] Подробные правила resolution для каждого рынка.
@@ -233,19 +239,31 @@ wallet signing, settlement и real-money flows пока не реализова�
 - [x] ~~Frontend auth state загружается с backend и не хранит session token в localStorage.~~
 - [x] ~~Admin roles core: `user`, `support`, `compliance_admin`, `finance_admin`,
   `super_admin`; frontend не может назначать роль.~~
+- [x] ~~Email verification endpoints + profile resend UX через backend token flow.~~
+- [x] ~~Password reset request/reset endpoints + frontend reset UX.~~
+- [x] ~~2FA setup/status/confirm/disable, QR data URL, backup codes и backup-code regeneration.~~
+- [x] ~~Session/device management: list sessions, revoke session, revoke other sessions/logout all
+  other devices.~~
+- [x] ~~CSRF signed double-submit protection для browser state-changing API через
+  `GET /api/auth/csrf` и `X-CSRF-Token`.~~
+- [x] ~~Role/permission env allowlists: `SUPPORT_EMAILS`, `COMPLIANCE_ADMIN_EMAILS`,
+  `FINANCE_ADMIN_EMAILS`, `SUPER_ADMIN_EMAILS`; legacy `ADMIN_EMAILS` = `super_admin`.~~
 
 Нужно сделать:
 
 - [x] ~~Production startup fail-fast без `DATABASE_URL`; явный production config не может тихо
   уйти в memory fallback для critical runtime state.~~
-- [ ] User model в базе данных.
-- [ ] Password reset.
-- [ ] Email verification.
-- [ ] 2FA.
-- [ ] Production roles/permissions beyond core admin guards.
-- [ ] Device/session management.
-- [ ] Production Redis/edge/proxy-based rate limit вместо in-memory limiter.
-- [ ] Production audit logs beyond current core coverage.
+- [x] ~~User model в базе данных для auth users/sessions/settings.~~
+- [x] ~~Password reset.~~
+- [x] ~~Email verification.~~
+- [x] ~~2FA.~~
+- [x] ~~Production roles/permissions core beyond single admin allowlist.~~
+- [x] ~~Device/session management core.~~
+- [x] ~~Production guardrail не разрешает in-memory auth rate limiter; доступны
+  `AUTH_RATE_LIMIT_BACKEND=redis` + `REDIS_URL` для backend Redis limiter и `external` для
+  edge/proxy/managed limiter.~~
+- [x] ~~Production audit coverage расширена на auth security/session/2FA/admin core events.~~
+- [x] ~~Реальный Redis rate-limit adapter внутри backend для auth endpoints.~~
 - [x] ~~Auth-owned portfolio, positions, trades и watchlist через repositories; Postgres
   используется при `DATABASE_URL`, memory fallback остается только dev/test без DB.~~
 - [ ] Ограничения доступа по стране/юрисдикции.
@@ -541,7 +559,8 @@ wallet signing, settlement и real-money flows пока не реализова�
 
 - [x] ~~Admin role model core: `user`, `support`, `compliance_admin`, `finance_admin`,
   `super_admin`; frontend не может назначать роли, runtime core использует backend/DB-owned
-  role и серверный allowlist `ADMIN_EMAILS`.~~
+  role и серверные allowlists `SUPPORT_EMAILS`, `COMPLIANCE_ADMIN_EMAILS`,
+  `FINANCE_ADMIN_EMAILS`, `SUPER_ADMIN_EMAILS`; legacy `ADMIN_EMAILS` = `super_admin`.~~
 - [x] ~~Admin guard core: `requireAdmin` и `requireAdminRole([...])`; все `/api/admin/*`
   endpoints требуют authenticated admin, обычный authenticated user получает 403.~~
 - [x] ~~Protected admin API core: `GET /api/admin/users`, `GET /api/admin/audit-logs`,
@@ -568,7 +587,9 @@ wallet signing, settlement и real-money flows пока не реализова�
 - [ ] Moderation queue.
 - [ ] Finance operations queue.
 - [ ] Translation queue.
-- [ ] Persist admin runtime repositories in Postgres and add production admin 2FA/session controls.
+- [x] ~~Production admin 2FA/session controls foundation через общие 2FA/session endpoints.~~
+- [ ] Persist any remaining admin runtime repositories in Postgres and add production admin policy
+  hardening.
 - [ ] Production finance approval/broadcast/reconciliation flow after separate legal/security
   decision.
 
@@ -610,6 +631,7 @@ Backend должен обеспечивать:
 - [x] ~~Stable normalized market fields: id, slug, title, description, category, topics, image,
   outcomes, prices/detail, volume, liquidity, dates, status, source.~~
 - [x] ~~Структура historical snapshots и endpoint схемы.~~
+- [x] ~~Polymarket CLOB price history client для backend-only графиков binary рынков.~~
 - [x] ~~Postgres/Supabase DB core через `DATABASE_URL`/`DATABASE_SSL`, `src/db.ts`, SQL migrations и `npm run db:migrate`.~~
 - [x] ~~Repository/service core для auth, market persistence, portfolio/trade skeleton и audit logs.~~
 - [x] ~~Backend local portfolio/trade API с server-side проверкой balance.~~
@@ -714,7 +736,7 @@ Frontend должен включать:
 - [x] ~~Фильтры списка: search, category/topic, sort, status, min/max volume, closing before/after.~~
 - [x] ~~Trading ticket показывает success/error/disabled states и обновляет portfolio из backend response.~~
 - [x] ~~Portfolio показывает local cash, equity, positions value, local PnL, positions, history и empty/error states.~~
-- [x] ~~Frontend Product Polish: компактные Polymarket-like карточки Market Pulse, без больших
+- [x] ~~Frontend Product Polish: компактные Polymarket-like карточки Pulse Market, без больших
   banner images внутри карточек.~~
 - [x] ~~Mobile overflow hardening для market detail, portfolio, profile и admin shell.~~
 - [x] ~~Карточки/detail outcomes не хардкодят `Yes`; binary rows показывают Yes/No,
@@ -732,7 +754,8 @@ Frontend должен включать:
 Нужно сделать:
 
 - [ ] Перевести UI на арабский и RTL.
-- [ ] Production auth polish: email verification, password recovery, 2FA, device/session UI.
+- [x] ~~Production auth polish core: email verification, password recovery, 2FA QR/backup
+  codes, and device/session UI.~~
 - [ ] Wallet flow.
 - [ ] KYC flow.
 - [ ] Расширенные настройки профиля.
@@ -780,8 +803,20 @@ Frontend должен включать:
 - [x] ~~`POST /api/auth/register` - регистрация in-memory пользователя и создание cookie session.~~
 - [x] ~~`POST /api/auth/login` - вход и создание cookie session.~~
 - [x] ~~`POST /api/auth/logout` - удаление session и очистка cookie.~~
+- [x] ~~`GET /api/auth/csrf` - выдача signed double-submit CSRF token для unsafe browser
+  requests.~~
 - [x] ~~`GET /api/auth/me` - текущий пользователь по HttpOnly cookie session.~~
 - [x] ~~`PATCH /api/users/me/settings` - protected обновление базовых настроек профиля.~~
+- [x] ~~`GET /api/auth/sessions`, `DELETE /api/auth/sessions/:id`,
+  `POST /api/auth/sessions/revoke-others`, `POST /api/auth/sessions/revoke-all` -
+  session/device management and logout all devices.~~
+- [x] ~~`POST /api/auth/verify-email`, `POST /api/auth/resend-verification` - email
+  verification core.~~
+- [x] ~~`POST /api/auth/request-password-reset`, `POST /api/auth/reset-password` - password
+  recovery core.~~
+- [x] ~~`GET /api/auth/2fa`, `POST /api/auth/2fa/setup`,
+  `POST /api/auth/2fa/confirm`, `POST /api/auth/2fa/disable`,
+  `POST /api/auth/2fa/backup-codes/regenerate` - 2FA QR/backup-code core.~~
 
 ### Нужные endpoints
 
@@ -870,8 +905,19 @@ Frontend должен включать:
 - [x] ~~Backend validation для email/password/settings payload.~~
 - [x] ~~`SESSION_SECRET` и session cookie настройки вынесены в `.env`.~~
 - [x] ~~In-memory rate limit для auth endpoints добавлен только для local.~~
+- [x] ~~Production auth rate-limit guardrail добавлен: `AUTH_RATE_LIMIT_BACKEND=memory`
+  запрещен в production; `redis` использует `REDIS_URL`, `external` требует
+  edge/proxy/managed limiter.~~
 - [x] ~~Audit log core и `audit_logs` table для auth events.~~
 - [x] ~~Admin role/guard/audit core для `/api/admin/*`; обычный user получает 403.~~
+- [x] ~~CSRF strategy реализована через signed double-submit token:
+  `GET /api/auth/csrf`, readable CSRF cookie, `X-CSRF-Token`.~~
+- [x] ~~Session/device management core реализован: список сессий, revoke session,
+  revoke other sessions.~~
+- [x] ~~Email verification, password recovery и 2FA QR/backup-code UX реализованы в backend и
+  frontend profile/auth flows.~~
+- [x] ~~Security audit events расширены на password reset, email verification, sessions, 2FA и
+  admin actions.~~
 - [x] ~~Production CORS allowlist config guardrail через `CORS_ALLOWED_ORIGINS`; production не
   стартует с wildcard/пустым allowlist.~~
 - [x] ~~Production config validation rejects unsafe `APP_MODE`, malformed env values,
@@ -879,17 +925,21 @@ Frontend должен включать:
 
 Нужно сделать:
 
-- [ ] Production rate limits через Redis, edge или reverse proxy, особенно для auth endpoints.
-- [ ] Полная auth/session security: CSRF strategy, session rotation policy, device management.
+- [x] ~~Production rate-limit guardrail через Redis или edge/proxy/external mode; memory backend не
+  разрешен в production.~~
+- [x] ~~Auth/session security core: CSRF strategy и device/session management.~~
+- [x] ~~Реальный Redis adapter внутри backend для auth rate limits.~~
+- [ ] Session rotation policy hardening.
 - [ ] Общие request validation schemas/OpenAPI.
 - [ ] Secrets manager.
-- [ ] Email verification.
-- [ ] Password recovery.
-- [ ] 2FA.
+- [x] ~~Email verification.~~
+- [x] ~~Password recovery.~~
+- [x] ~~2FA.~~
 - [x] ~~Roles/permissions core для admin roles.~~
 - [x] ~~Audit logs core для auth, trading, ledger, wallet, compliance и admin events.~~
-- [ ] Full production audit coverage for moderation, security events, persistent admin actions,
-  and finance operations.
+- [x] ~~Security event audit coverage for auth/reset/email/session/2FA/admin core.~~
+- [ ] Full production audit coverage for moderation, persistent admin actions, and finance
+  operations after production workflows exist.
 - [ ] Security logging.
 - [ ] Pen-test перед запуском real-money режима.
 
@@ -916,7 +966,8 @@ Frontend должен включать:
 Нужно сделать:
 
 - [ ] Redis cache adapter и production Redis deployment.
-- [ ] Durable cached market snapshots в Postgres/Supabase.
+- [x] ~~Durable market snapshots в Postgres через `market_snapshots`.~~
+- [ ] Durable market cache metadata в Postgres/Supabase.
 - [ ] Background sync.
 - [ ] CDN/static asset strategy.
 - [ ] Monitoring dashboards.
@@ -996,6 +1047,9 @@ Frontend должен включать:
   requirement.~~
 - [x] ~~Focused tests для production DB fail-fast guardrail, DB-mode no guest portfolio memory
   fallback, and repository clear user portfolio behavior.~~
+- [x] ~~Security tests для CSRF opt-in enforcement, invalid CSRF rejection, 2FA QR/setup/confirm,
+  backup-code regeneration, disable, session/device list/revoke/logout-all, security audit events,
+  role matrix, and production rate-limit guardrails.~~
 
 Нужно сделать:
 
@@ -1021,13 +1075,15 @@ Frontend должен включать:
 - [x] ~~Related markets подбираются по category/topics, исключают текущий рынок и blocked topics,
   имеют fallback по категории.~~
 - [x] ~~Структура historical market snapshots подготовлена.~~
-- [x] ~~Detail history возвращает `price_history` и synthetic fallback, если durable snapshots пока
-  пустые.~~
+- [x] ~~Detail history возвращает real CLOB `price_history` для binary markets, snapshots fallback
+  при CLOB outage/empty response и synthetic fallback только когда CLOB и snapshots недоступны.~~
+- [x] ~~Manual/dev snapshot collector endpoint `POST /api/markets/:id/snapshots/collect` и
+  configurable periodic collector для `MARKET_SNAPSHOT_COLLECTOR_MARKET_IDS`.~~
 - [x] ~~Убрана зависимость от random placeholder images.~~
 - [ ] Redis adapter вместо local in-memory cache.
-- [ ] Background worker для записи market snapshots.
-- [ ] Durable storage для snapshots и market cache в Postgres/Supabase.
-- [ ] Использовать snapshots для графиков, PnL history и trending logic.
+- [ ] Production worker orchestration/queue для записи market snapshots на больших списках рынков.
+- [ ] Durable storage для market cache в Postgres/Supabase.
+- [ ] Использовать snapshots для PnL history и trending logic.
 - [ ] Перенести visibility rules из config/env в `market_visibility_rules` + admin workflow.
 - [ ] Заполнить Arabic translations для categories/markets через translation pipeline.
 - [x] ~~Довести frontend controls для всех backend filters/sorts: volume, closing date, status, sort.~~
@@ -1062,12 +1118,14 @@ Frontend должен включать:
 - [x] ~~DB-backed auth smoke test against Supabase.~~
 - [x] ~~Make DB auth the production default and remove silent memory fallback from deployed
   environments through production `DATABASE_URL` guardrails and buildApp fail-fast.~~
-- [ ] Email verification.
-- [ ] Восстановление доступа.
-- [ ] 2FA для чувствительных действий.
-- [ ] Role/permission checks.
-- [ ] Auth-owned portfolio, positions, trades, wallet и watchlist.
-- [ ] Production Redis/edge/proxy-based rate limits и full audit coverage.
+- [x] ~~Email verification.~~
+- [x] ~~Восстановление доступа.~~
+- [x] ~~2FA для login/account security, QR setup, backup codes, disable и regeneration.~~
+- [x] ~~Role/permission checks для user/support/compliance_admin/finance_admin/super_admin.~~
+- [x] ~~Auth-owned portfolio, positions, trades, wallet и watchlist через repositories/API.~~
+- [x] ~~Production Redis/external rate-limit mode + guardrail против memory limiter in production.~~
+- [x] ~~Security audit coverage для auth/session/reset/email/2FA/admin core.~~
+- [x] ~~Реальный Redis adapter для backend auth rate limits.~~
 - [ ] Гарантия, что пользователь видит только свои данные во всех private endpoints.
 
 ### 4. База данных и backend-архитектура
@@ -1185,13 +1243,15 @@ Frontend должен включать:
   только с явным allowlist.~~
 - [x] ~~Production config guardrails: `APP_MODE=local`, non-placeholder session/webhook
   secrets, secure cookies in production, and required production `DATABASE_URL`.~~
+- [x] ~~CSRF protection для state-changing browser API через signed double-submit token.~~
 - [ ] HTTPS.
 - [x] ~~Rate limits core: local in-memory rate limit для auth endpoints реализован.~~
 - [x] ~~Input validation: валидация реализована в auth, compliance, wallets, ledger, trading.~~
 - [x] ~~SQL injection protection: используются parameterized queries через pg.~~
 - [x] ~~Audit logs core: auth/trading/wallet/ledger/admin audit events реализованы.~~
 - [x] ~~Secrets через `.env`: dotenv используется, production guardrails проверяют секреты.~~
-- [ ] Production Redis/edge/proxy rate limits вместо in-memory.
+- [x] ~~Production Redis/edge/proxy rate-limit mode instead of in-memory process limiter.~~
+- [x] ~~Реальный Redis adapter inside backend для auth endpoints.~~
 - [ ] Dependency security checks.
 - [ ] Security review перед real-money режимом.
 

@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { createClient, type RedisClientType } from "redis";
 import type { AppConfig } from "./config.js";
 
 type RateLimitBucket = {
@@ -12,6 +13,11 @@ type RateLimitResult = {
 };
 
 export const RATE_LIMIT_MESSAGE = "Too many attempts. Try again later.";
+
+export type AuthRateLimiter = {
+  check(keys: string[], now?: number): RateLimitResult | Promise<RateLimitResult>;
+  close?(): Promise<void>;
+};
 
 export class MemoryRateLimiter {
   private readonly buckets = new Map<string, RateLimitBucket>();
@@ -73,6 +79,83 @@ export class MemoryRateLimiter {
   }
 }
 
+export class ExternalRateLimiter {
+  check(_keys: string[]): RateLimitResult {
+    return {
+      ok: true,
+      retryAfterMs: 0,
+    };
+  }
+}
+
+export class RedisRateLimiter {
+  private readonly client: RedisClientType;
+  private connectPromise: Promise<unknown> | null = null;
+
+  constructor(
+    redisUrl: string,
+    private readonly windowMs: number,
+    private readonly max: number,
+  ) {
+    this.client = createClient({ url: redisUrl });
+  }
+
+  async check(keys: string[]): Promise<RateLimitResult> {
+    if (this.max <= 0 || this.windowMs <= 0) {
+      return {
+        ok: true,
+        retryAfterMs: 0,
+      };
+    }
+
+    await this.connect();
+    const results = await Promise.all(keys.map((key) => this.incrementKey(key)));
+    const limited = results.filter((result) => result.count > this.max);
+
+    if (limited.length === 0) {
+      return {
+        ok: true,
+        retryAfterMs: 0,
+      };
+    }
+
+    return {
+      ok: false,
+      retryAfterMs: Math.max(0, Math.min(...limited.map((result) => result.ttlMs))),
+    };
+  }
+
+  async close() {
+    if (this.client.isOpen) {
+      await this.client.quit();
+    }
+  }
+
+  private async connect() {
+    if (this.client.isOpen) {
+      return;
+    }
+
+    this.connectPromise ??= this.client.connect();
+    await this.connectPromise;
+  }
+
+  private async incrementKey(key: string) {
+    const namespacedKey = `market-pulse:${key}`;
+    const count = await this.client.incr(namespacedKey);
+
+    if (count === 1) {
+      await this.client.pExpire(namespacedKey, this.windowMs);
+    }
+
+    const ttl = await this.client.pTTL(namespacedKey);
+    return {
+      count,
+      ttlMs: ttl > 0 ? ttl : this.windowMs,
+    };
+  }
+}
+
 export function getClientRateLimitId(request: FastifyRequest) {
   return request.ip || request.socket.remoteAddress || "unknown";
 }
@@ -107,8 +190,22 @@ export function sendRateLimited(reply: FastifyReply, retryAfterMs: number) {
   });
 }
 
-export function buildAuthRateLimiter(config: AppConfig) {
+export function buildAuthRateLimiter(config: AppConfig): AuthRateLimiter {
+  if (config.authRateLimitBackend === "external") {
+    return new ExternalRateLimiter();
+  }
+
+  if (config.authRateLimitBackend === "redis") {
+    if (!config.redisUrl) {
+      throw new Error("REDIS_URL is required when AUTH_RATE_LIMIT_BACKEND=redis.");
+    }
+
+    return new RedisRateLimiter(
+      config.redisUrl,
+      config.authRateLimitWindowMs,
+      config.authRateLimitMax,
+    );
+  }
+
   return new MemoryRateLimiter(config.authRateLimitWindowMs, config.authRateLimitMax);
 }
-
-export type AuthRateLimiter = ReturnType<typeof buildAuthRateLimiter>;

@@ -1,6 +1,6 @@
-# Market Pulse Runbook
+# Pulse Market Runbook
 
-Market Pulse is still `local`: no real money, real withdrawals, wallet signing, private
+Pulse Market is still `local`: no real money, real withdrawals, wallet signing, private
 keys, settlement, or real trading.
 
 ## Local Startup
@@ -62,6 +62,32 @@ curl 'http://localhost:4000/api/markets?search=bitcoin&category=crypto&sort=rele
 until `DATABASE_URL`, the DB connection, market data layer, webhook secret, and production guardrails
 are ready.
 
+## Auth And Security Operations
+
+Browser clients should fetch a CSRF token before unsafe requests:
+
+```bash
+curl -c /tmp/mp-cookies.txt 'http://localhost:4000/api/auth/csrf'
+```
+
+The response returns `data.csrfToken` and sets the `mp_csrf` cookie. Send that value in
+`X-CSRF-Token` for `POST`, `PUT`, `PATCH`, and `DELETE` when `CSRF_PROTECTION_ENABLED=true`.
+The web client helper handles this automatically.
+
+Use role-specific local/dev allowlists instead of one shared admin list:
+
+```txt
+SUPER_ADMIN_EMAILS=owner@example.com
+SUPPORT_EMAILS=support@example.com
+COMPLIANCE_ADMIN_EMAILS=compliance@example.com
+FINANCE_ADMIN_EMAILS=finance@example.com
+```
+
+`ADMIN_EMAILS` still works as a legacy super-admin allowlist. Production must not use the
+in-process memory auth limiter. Set `AUTH_RATE_LIMIT_BACKEND=redis` with `REDIS_URL` for
+backend-enforced Redis limits, or `AUTH_RATE_LIMIT_BACKEND=external` only when an edge/proxy/
+managed limiter is enforced outside this process.
+
 ## Market Data Operations
 
 All Polymarket traffic must stay server-side. Frontend calls should use `GET /api/markets`,
@@ -82,9 +108,14 @@ instead of silently falling back.
 
 Stable categories/topics are Politics, Sports, Crypto, Tech, Finance, Geopolitics, Culture,
 Economy, Weather, Elections, and Other. `GET /api/markets?topic=all` is a no-op; other topic
-values are normalized and matched against `market.topics` or `market.category`. Detail history
-currently includes synthetic fallback chart points when durable `market_snapshots` are empty;
-production should replace this with a snapshot worker and persisted history.
+values are normalized and matched against `market.topics` or `market.category`.
+
+Market detail history first reads persisted `market_snapshots` from the market repository/Postgres.
+If no real snapshots exist, the API still returns a synthetic fallback with `history.is_synthetic:
+true`; the frontend must treat that as a placeholder, not a live chart. Local/dev can collect one
+snapshot manually with `POST /api/markets/:id/snapshots/collect` using a valid CSRF token. Periodic
+collection is controlled by `MARKET_SNAPSHOT_COLLECTOR_ENABLED`,
+`MARKET_SNAPSHOT_COLLECTOR_INTERVAL_MS`, and `MARKET_SNAPSHOT_COLLECTOR_MARKET_IDS`.
 
 ## Webhook Mismatch Or Manual Review
 
@@ -108,13 +139,16 @@ curl -b /tmp/mp-cookies.txt 'http://localhost:4000/api/admin/audit-logs'
 ```
 
 Important event types include `auth.*`, `trading.*`, `ledger.ledger_credit`, `ledger.rejected`,
-`wallet.deposit_*`, `wallet.rejected`, and `admin.*`.
+`wallet.deposit_*`, `wallet.rejected`, and `admin.*`. Auth security events cover email
+verification, password reset, session revocation, logout-all-devices, 2FA setup/enabled/disabled,
+and backup-code regeneration.
 
 ## Production Follow-Ups
 
 - Add monitoring/alerting for `/api/ready`, DB connectivity, webhook mismatch/manual-review counts,
   and audit log volume.
 - Add deployment, backup/restore, rollback, and incident runbooks.
-- Replace in-memory rate limits with Redis, edge, or reverse-proxy limits.
+- Provision production Redis or edge/proxy rate-limit infrastructure and verify login/register
+  throttling before production traffic.
 - Keep real withdrawals, private keys, wallet signing, settlement, and real trading out until a
   separate legal/security/finance decision is made.

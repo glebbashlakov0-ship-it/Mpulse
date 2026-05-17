@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  compactMarketForList,
   normalizeDateSummary,
   normalizeGroupMarkets,
   normalizeMarket,
@@ -43,6 +44,31 @@ test("normalizes price summary for binary markets", () => {
   assert.equal(prices.no, 0.3);
   assert.equal(prices.midpoint, 0.7);
   assert.ok(prices.spread !== null && Math.abs(prices.spread - 0.04) < 0.000001);
+});
+
+test("normalizes Polymarket card metadata for rewards and footers", () => {
+  const market = normalizeMarket(
+    marketFixture({
+      volume24hr: 25000,
+      commentCount: 62,
+      rewardsMinSize: 200,
+      rewardsMaxSpread: 5.5,
+      clobRewards: [{ rewardsDailyRate: 1000 }],
+      holdingRewardsEnabled: false,
+      gameStartTime: "2026-05-17T18:00:00.000Z",
+    }),
+  );
+
+  assert.equal(market.volume_24h, 25000);
+  assert.equal(market.comment_count, 62);
+  assert.equal(market.game_start_time, "2026-05-17T18:00:00.000Z");
+  assert.deepEqual(market.rewards, {
+    enabled: true,
+    daily_rate: 1000,
+    holding: false,
+    min_size: 200,
+    max_spread: 5.5,
+  });
 });
 
 test("normalizes date summary without throwing on missing dates", () => {
@@ -117,6 +143,38 @@ test("normalizes grouped event context and child market labels", () => {
     "yes-token",
     "no-token",
   ]);
+});
+
+test("compacts market list payloads without removing card-critical grouped data", () => {
+  const parent = normalizeMarket({
+    ...marketFixture({
+      id: "group-parent",
+      question: "Grouped event",
+      description: "Long parent description that is only needed on detail pages.",
+    }),
+    groupMarkets: [
+      ...Array.from({ length: 10 }).map((_, index) =>
+        marketFixture({
+          id: `group-child-${index}`,
+          question: `Grouped event child ${index}`,
+          description: "Long child description that should not ship with the card grid.",
+          groupItemTitle: `Child ${index}`,
+          outcomePrices: JSON.stringify([String(0.1 + index * 0.05), String(0.9 - index * 0.05)]),
+        }),
+      ),
+    ],
+  });
+  const compact = compactMarketForList(parent);
+  const child = compact.group_markets?.[0];
+
+  assert.equal(compact.description, null);
+  assert.equal(compact.group_markets?.length, 8);
+  assert.equal(child?.description, null);
+  assert.equal(child?.label, "Child 9");
+  assert.equal(child?.yes_price, 0.55);
+  assert.equal(child?.trading.accepting_orders, true);
+  assert.deepEqual(child?.outcomes, []);
+  assert.deepEqual(child?.clobTokenIds, []);
 });
 
 test("detail uses real snapshots before synthetic price history", () => {

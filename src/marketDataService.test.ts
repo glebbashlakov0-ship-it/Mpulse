@@ -176,6 +176,257 @@ test("builds a diverse event-backed discovery feed instead of one repeated event
   assert.equal(topics.has("elections"), true);
 });
 
+test("keeps discovery market loading focused instead of querying every known tag", async () => {
+  const eventQueries: Array<Record<string, unknown>> = [];
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>(query: Record<string, unknown>) => {
+        eventQueries.push(query);
+        return [] as T;
+      },
+      getMarkets: async <T>() => [marketFixture({ id: "base-market" })] as T,
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  await service.listMarkets({ limit: 12, sort: "trending", status: "live" });
+
+  assert.equal(eventQueries.length, 3);
+  assert.deepEqual(
+    eventQueries.map((query) => ({
+      featured: query.featured ?? false,
+      trending: query.trending ?? false,
+      tag: query.tag_slug ?? null,
+    })),
+    [
+      { featured: false, trending: false, tag: null },
+      { featured: true, trending: false, tag: null },
+      { featured: false, trending: true, tag: null },
+    ],
+  );
+});
+
+test("paginates upstream market discovery beyond Polymarket's single page cap", async () => {
+  const marketQueries: Array<Record<string, unknown>> = [];
+  const service = buildMarketDataService({
+    config: testConfig({ upstreamMarketLimit: 250 }),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>() => [] as T,
+      getMarkets: async <T>(query: Record<string, unknown>) => {
+        marketQueries.push(query);
+        return [
+          marketFixture({
+            id: `market-offset-${query.offset ?? 0}`,
+            question: `Offset ${query.offset ?? 0} market`,
+            volumeNum: 1_000_000 - Number(query.offset ?? 0),
+          }),
+        ] as T;
+      },
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  const result = await service.listMarkets({ limit: 10, sort: "trending", status: "live" });
+
+  assert.deepEqual(
+    marketQueries.map((query) => [query.limit, query.offset]),
+    [
+      [100, 0],
+      [100, 100],
+      [50, 200],
+    ],
+  );
+  assert.equal(result.meta.total, 3);
+});
+
+test("paginates event discovery because Polymarket cards are event-first", async () => {
+  const eventQueries: Array<Record<string, unknown>> = [];
+  const service = buildMarketDataService({
+    config: testConfig({ upstreamMarketLimit: 250 }),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>(query: Record<string, unknown>) => {
+        eventQueries.push(query);
+        if (query.featured || query.trending || query.offset === 0) {
+          return [] as T;
+        }
+
+        return [
+          eventFixture({
+            id: `event-offset-${query.offset}`,
+            title: `Event offset ${query.offset}`,
+            volume: 1_000_000 - Number(query.offset),
+            markets: [
+              marketFixture({
+                id: `event-market-${query.offset}`,
+                question: `Will event offset ${query.offset} resolve yes?`,
+              }),
+            ],
+          }),
+        ] as T;
+      },
+      getMarkets: async <T>() => [] as T,
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  const result = await service.listMarkets({ limit: 10, sort: "trending", status: "live" });
+
+  assert.deepEqual(
+    eventQueries
+      .filter((query) => !query.featured && !query.trending)
+      .map((query) => [query.limit, query.offset]),
+    [
+      [100, 0],
+      [50, 100],
+    ],
+  );
+  assert.equal(result.meta.total, 1);
+});
+
+test("uses focused event tags for search pages without broad discovery fanout", async () => {
+  const eventQueries: Array<Record<string, unknown>> = [];
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>(query: Record<string, unknown>) => {
+        eventQueries.push(query);
+        return [
+          eventFixture({
+            id: "iran-event",
+            title: "Iran leadership transition",
+            tags: [{ slug: "iran", label: "Iran" }],
+            markets: [
+              marketFixture({
+                id: "iran-child",
+                question: "Will Iran leadership change in 2026?",
+                category: undefined,
+              }),
+            ],
+          }),
+        ] as T;
+      },
+      getMarkets: async <T>() => [] as T,
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  const result = await service.listMarkets({ search: "Iran", sort: "trending", status: "live" });
+
+  assert.deepEqual(eventQueries.map((query) => query.tag_slug), ["iran"]);
+  assert.equal(result.meta.total, 1);
+  assert.equal(result.data[0]?.title, "Will Iran leadership change in 2026?");
+});
+
+test("keeps broad fallback markets available after grouped discovery cards", async () => {
+  const fallbackMarkets = Array.from({ length: 75 }).map((_, index) =>
+    marketFixture({
+      id: `fallback-${index}`,
+      question: `Fallback market ${index}`,
+      category: index % 2 === 0 ? "Politics" : "Crypto",
+      volumeNum: 1_000_000 - index * 1_000,
+      volume24hr: 100_000 - index * 500,
+    }),
+  );
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient(
+      fallbackMarkets,
+      fallbackMarkets[0],
+      [
+        eventFixture({
+          id: "grouped-event",
+          title: "Grouped event",
+          tags: [{ slug: "politics", label: "Politics" }],
+          markets: [
+            marketFixture({
+              id: "group-child-1",
+              question: "Will grouped child one resolve yes?",
+              category: undefined,
+              volumeNum: 2_000_000,
+            }),
+            marketFixture({
+              id: "group-child-2",
+              question: "Will grouped child two resolve yes?",
+              category: undefined,
+              volumeNum: 1_900_000,
+            }),
+          ],
+        }),
+      ],
+    ),
+  });
+
+  const result = await service.listMarkets({ limit: 36, sort: "trending", status: "live" });
+
+  assert.equal(result.data.length, 36);
+  assert.equal(result.meta.total > 36, true);
+  assert.equal(result.meta.next_cursor !== null, true);
+  assert.equal(result.data.some((market) => market.title === "Grouped event"), true);
+  assert.equal(result.data.some((market) => market.id.startsWith("fallback-")), true);
+});
+
+test("collapses embedded Polymarket event siblings into one grouped card", async () => {
+  const nomineeEvent = eventFixture({
+    id: "nominee-event",
+    slug: "democratic-presidential-nominee-2028",
+    title: "Democratic Presidential Nominee 2028",
+    volume: 1_200_000,
+    volume24hr: 100_000,
+  });
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient([
+      marketFixture({
+        id: "oprah",
+        question: "Will Oprah Winfrey win the 2028 Democratic presidential nomination?",
+        category: undefined,
+        volumeNum: 900_000,
+        outcomePrices: JSON.stringify(["0.11", "0.89"]),
+        events: [nomineeEvent],
+      }),
+      marketFixture({
+        id: "bernie",
+        question: "Will Bernie Sanders win the 2028 Democratic presidential nomination?",
+        category: undefined,
+        volumeNum: 800_000,
+        outcomePrices: JSON.stringify(["0.09", "0.91"]),
+        events: [nomineeEvent],
+      }),
+      marketFixture({
+        id: "standalone",
+        question: "Will Bitcoin be above $100k by June?",
+        category: "Crypto",
+        volumeNum: 100_000,
+      }),
+    ]),
+  });
+
+  const result = await service.listMarkets({ limit: 12, sort: "volume", status: "live" });
+
+  assert.equal(result.meta.total, 2);
+  assert.equal(result.data[0]?.title, "Democratic Presidential Nominee 2028");
+  assert.equal(result.data[0]?.group_markets?.length, 2);
+  assert.deepEqual(
+    result.data[0]?.group_markets?.map((market) => market.label).sort(),
+    ["Bernie Sanders", "Oprah Winfrey"],
+  );
+  assert.equal(
+    result.data.some((market) => market.title.startsWith("Will Oprah")),
+    false,
+  );
+});
+
 test("normalizes event-backed markets with event tags, media, and 24h volume", async () => {
   const service = buildMarketDataService({
     config: testConfig(),
@@ -296,8 +547,8 @@ test("suppresses individual child cards when an event-backed grouped card is ava
     result.data[0]?.group_markets?.map((market) => [market.id, market.label, market.yes_price]),
     [
       ["starmer-may-15", "May 15", 0.61],
-      ["starmer-may-19", "May 19", 0.03],
       ["starmer-may-31", "May 31", 0.11],
+      ["starmer-may-19", "May 19", 0.03],
     ],
   );
 });

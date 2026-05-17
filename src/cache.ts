@@ -22,6 +22,7 @@ export type CacheReadResult<T> = {
 
 export class MemoryCacheStore implements CacheStore {
   private readonly entries = new Map<string, CacheEntry>();
+  private readonly inFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly enabled = true) {}
 
@@ -78,17 +79,32 @@ export class MemoryCacheStore implements CacheStore {
       return cached;
     }
 
-    const value = await loader();
-    this.set(key, value, ttlMs);
-    return value;
+    const pending = this.inFlight.get(key);
+    if (pending) {
+      return pending as Promise<T>;
+    }
+
+    const loadPromise = loader()
+      .then((value) => {
+        this.set(key, value, ttlMs);
+        return value;
+      })
+      .finally(() => {
+        this.inFlight.delete(key);
+      });
+
+    this.inFlight.set(key, loadPromise);
+    return loadPromise;
   }
 
   delete(key: string): void {
     this.entries.delete(key);
+    this.inFlight.delete(key);
   }
 
   clear(): void {
     this.entries.clear();
+    this.inFlight.clear();
   }
 }
 

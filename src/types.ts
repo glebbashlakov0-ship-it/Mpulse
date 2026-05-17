@@ -27,6 +27,12 @@ export type PolymarketMarket = {
   createdAt?: string;
   updatedAt?: string;
   volume24hr?: string | number;
+  commentCount?: number;
+  gameStartTime?: string;
+  clobRewards?: Array<{ rewardsDailyRate?: number; rewardsAmount?: number }>;
+  rewardsMinSize?: string | number;
+  rewardsMaxSpread?: string | number;
+  holdingRewardsEnabled?: boolean;
   oneDayPriceChange?: number;
   oneHourPriceChange?: number;
   events?: PolymarketEvent[];
@@ -54,6 +60,8 @@ export type PolymarketEvent = {
   volume24hr?: string | number;
   liquidity?: string | number;
   openInterest?: string | number;
+  commentCount?: number;
+  competitive?: number;
   markets?: PolymarketMarket[];
   tags?: Array<{ id?: string; label?: string; slug?: string }>;
 };
@@ -159,6 +167,15 @@ export type NormalizedMarket = {
   volume: number;
   volume_24h?: number;
   liquidity: number;
+  comment_count?: number;
+  game_start_time?: string | null;
+  rewards?: {
+    enabled: boolean;
+    daily_rate: number;
+    holding: boolean;
+    min_size: number | null;
+    max_spread: number | null;
+  };
   outcomes: NormalizedOutcome[];
   trading: {
     order_book_enabled: boolean;

@@ -34,6 +34,134 @@ export function getMarketKind(market: Market) {
   return market.category_label ?? market.category ?? "Market";
 }
 
+export function getMarketEyebrowParts(market: Market) {
+  const primary = formatMarketTaxonomyLabel(market.category_label ?? market.category ?? "Market");
+  const secondary =
+    getTopicEyebrowLabel(market, primary) ??
+    getEventEyebrowLabel(market, primary);
+
+  return secondary && secondary.toLowerCase() !== primary.toLowerCase()
+    ? [primary, secondary]
+    : [primary];
+}
+
+function getTopicEyebrowLabel(market: Market, primary: string) {
+  const categorySlug = normalizeTaxonomyToken(market.category ?? "");
+  const primarySlug = normalizeTaxonomyToken(primary);
+
+  const topic = market.topics.find((value) => {
+    const normalized = normalizeTaxonomyToken(value);
+
+    return (
+      normalized &&
+      normalized !== categorySlug &&
+      normalized !== primarySlug &&
+      !broadTopicLabels.has(normalized)
+    );
+  });
+
+  return topic ? formatMarketTaxonomyLabel(topic) : null;
+}
+
+function getEventEyebrowLabel(market: Market, primary: string) {
+  const titlePrefix = market.event_title?.split(":")[0]?.trim();
+
+  if (titlePrefix && titlePrefix !== market.title && titlePrefix.toLowerCase() !== primary.toLowerCase()) {
+    return formatMarketTaxonomyLabel(titlePrefix);
+  }
+
+  const eventSlug = market.canonical_event_slug ?? market.event_slug;
+
+  if (!eventSlug) {
+    return null;
+  }
+
+  const conciseSlug = eventSlug
+    .replace(/-what-will-.+$/i, "")
+    .replace(/-who-will-.+$/i, "")
+    .replace(/-will-.+$/i, "");
+
+  return conciseSlug && conciseSlug !== eventSlug
+    ? formatMarketTaxonomyLabel(conciseSlug)
+    : null;
+}
+
+function formatMarketTaxonomyLabel(value: string) {
+  const normalized = value
+    .replace(/[_/]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+
+  if (!normalized) {
+    return "Market";
+  }
+
+  return normalized
+    .replace(/\bu-s\b/g, "us")
+    .split("-")
+    .map(formatTaxonomyWord)
+    .join(" ")
+    .replace(/\bTrump Xi\b/g, "Trump-Xi")
+    .replace(/\bAnd\b/g, "and")
+    .replace(/\bOf\b/g, "of")
+    .replace(/\bThe\b/g, "the")
+}
+
+function formatTaxonomyWord(word: string) {
+  const special = specialTaxonomyLabels[word];
+
+  if (special) {
+    return special;
+  }
+
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function normalizeTaxonomyToken(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+const specialTaxonomyLabels: Record<string, string> = {
+  ai: "AI",
+  btc: "BTC",
+  crypto: "Crypto",
+  defi: "DeFi",
+  epl: "EPL",
+  esports: "Esports",
+  eu: "EU",
+  gpt: "GPT",
+  nba: "NBA",
+  nfl: "NFL",
+  nhl: "NHL",
+  uk: "UK",
+  us: "U.S.",
+  usa: "U.S.",
+  xi: "Xi",
+};
+
+const broadTopicLabels = new Set([
+  "breaking",
+  "culture",
+  "crypto",
+  "economy",
+  "elections",
+  "finance",
+  "geopolitics",
+  "markets",
+  "mentions",
+  "new",
+  "politics",
+  "sports",
+  "tech",
+  "trending",
+  "weather",
+]);
+
 export function getSourceImage(market: MarketImageLike) {
   return market.image ?? market.icon ?? null;
 }

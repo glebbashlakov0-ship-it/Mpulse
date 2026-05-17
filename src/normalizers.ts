@@ -13,6 +13,8 @@ import type {
 } from "./types.js";
 import { getCategoryImage, inferCategory, inferTopics } from "./categories.js";
 
+const maxListGroupMarkets = 8;
+
 export function parseJsonArray(value: string | string[] | undefined): string[] {
   if (Array.isArray(value)) {
     return value;
@@ -50,6 +52,29 @@ function nullableNumber(value: number | string | undefined): number | null {
   }
 
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getRewardDailyRate(market: PolymarketMarket) {
+  return (market.clobRewards ?? []).reduce((total, reward) => {
+    const rate = nullableNumber(reward.rewardsDailyRate);
+
+    return total + (rate ?? 0);
+  }, 0);
+}
+
+function normalizeRewards(market: PolymarketMarket): NormalizedMarket["rewards"] {
+  const dailyRate = getRewardDailyRate(market);
+  const holding = Boolean(market.holdingRewardsEnabled);
+  const minSize = nullableNumber(market.rewardsMinSize);
+  const maxSpread = nullableNumber(market.rewardsMaxSpread);
+
+  return {
+    enabled: dailyRate > 0 || holding,
+    daily_rate: dailyRate,
+    holding,
+    min_size: minSize,
+    max_spread: maxSpread,
+  };
 }
 
 export function clampProbability(value: number): number {
@@ -129,6 +154,9 @@ export function normalizeMarket(market: PolymarketMarket): NormalizedMarket {
     volume: toNumber(market.volumeNum ?? market.volume),
     volume_24h: toNumber(market.volume24hr),
     liquidity: toNumber(market.liquidityNum ?? market.liquidity),
+    comment_count: toNumber(market.commentCount ?? eventContext?.commentCount),
+    game_start_time: market.gameStartTime ?? null,
+    rewards: normalizeRewards(market),
     outcomes: normalizeOutcomes(market),
     trading: {
       order_book_enabled: Boolean(market.enableOrderBook),
@@ -396,6 +424,49 @@ export function normalizeGroupMarkets(markets: PolymarketMarket[]): NormalizedGr
       );
     })
     .map(normalizeGroupMarket);
+}
+
+export function compactMarketForList(market: NormalizedMarket): NormalizedMarket {
+  return {
+    ...market,
+    description: null,
+    group_markets: market.group_markets
+      ?.map(compactGroupMarketForList)
+      .sort(sortListGroupMarkets)
+      .slice(0, maxListGroupMarkets),
+  };
+}
+
+function compactGroupMarketForList(market: NormalizedGroupMarket): NormalizedGroupMarket {
+  return {
+    ...market,
+    description: null,
+    outcomes: [],
+    group_markets: undefined,
+    clobTokenIds: [],
+  };
+}
+
+function sortListGroupMarkets(left: NormalizedGroupMarket, right: NormalizedGroupMarket) {
+  const leftTradable = isListGroupMarketTradable(left) ? 1 : 0;
+  const rightTradable = isListGroupMarketTradable(right) ? 1 : 0;
+
+  return (
+    rightTradable - leftTradable ||
+    (right.yes_price ?? -1) - (left.yes_price ?? -1) ||
+    right.volume - left.volume
+  );
+}
+
+function isListGroupMarketTradable(market: NormalizedGroupMarket) {
+  return (
+    market.active !== false &&
+    market.closed !== true &&
+    market.archived !== true &&
+    market.trading.accepting_orders !== false &&
+    market.status !== "closed" &&
+    market.status !== "expired"
+  );
 }
 
 export function normalizeEvent(event: PolymarketEvent): NormalizedEvent {

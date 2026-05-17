@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   getFallbackImage,
+  getMarketEyebrowParts,
   getOutcomeActionLabel,
   getPortfolioSummary,
   getPositionPnl,
@@ -9,7 +10,14 @@ import {
   getRelatedMarketDisplayImage,
   withUniqueImages,
 } from "./market";
-import { getCardRows } from "../components/MarketCard";
+import {
+  getCardRows,
+  getGaugeArcPaths,
+  getGaugeStroke,
+  getGaugeStrokeOpacity,
+  getMarketProbabilityGaugeVariant,
+  getProbabilityGaugeDisplay,
+} from "../components/MarketCard";
 import type { Market, LocalPosition, RelatedMarket } from "./types";
 
 function market(overrides: Partial<Market>): Market {
@@ -136,6 +144,36 @@ describe("market helpers", () => {
     assert.equal(getOutcomeActionLabel("", false), "Trade");
   });
 
+  it("builds detail eyebrow labels from meaningful topics instead of generic duplicates", () => {
+    assert.deepEqual(
+      getMarketEyebrowParts(
+        market({
+          category: "politics",
+          category_label: "Politics",
+          topics: ["politics", "crypto", "trump-xi-summit", "china"],
+          event_slug: "trump-xi-summit-what-will-china-announce-by-may-22",
+          canonical_event_slug: "trump-xi-summit-what-will-china-announce-by-may-22",
+          event_title: "Trump-Xi Summit: What will China announce by May 22?",
+        }),
+      ),
+      ["Politics", "Trump-Xi Summit"],
+    );
+
+    assert.deepEqual(
+      getMarketEyebrowParts(
+        market({
+          category: "geopolitics",
+          category_label: "Geopolitics",
+          topics: ["geopolitics", "iran"],
+          event_slug: null,
+          canonical_event_slug: null,
+          event_title: null,
+        }),
+      ),
+      ["Geopolitics", "Iran"],
+    );
+  });
+
   it("uses live high-probability grouped outcomes for card previews before resolved zero rows", () => {
     const grouped = market({
       id: "starmer-card",
@@ -203,6 +241,84 @@ describe("market helpers", () => {
         ["June 30", 0.26],
       ],
     );
+  });
+
+  it("shows probability gauges only for single-market cards", () => {
+    const singleBinary = market({
+      id: "hantavirus-card",
+      title: "Hantavirus pandemic in 2026?",
+      category: "weather",
+      category_label: "Weather",
+      topics: ["weather"],
+    });
+    const upDown = market({
+      id: "btc-updown",
+      title: "BTC Up or Down 5m",
+      outcomes: [
+        { name: "Up", price: 0.53, clobTokenId: null },
+        { name: "Down", price: 0.47, clobTokenId: null },
+      ],
+    });
+    const grouped = market({
+      id: "venezuela-leader-card",
+      title: "Venezuela leader end of 2026?",
+      category: "politics",
+      category_label: "Politics",
+      topics: ["politics"],
+      group_markets: [
+        {
+          ...market({
+            id: "venezuela-maduro",
+            title: "Will Nicolas Maduro be the leader of Venezuela end of 2026?",
+            groupItemTitle: "Nicolas Maduro",
+          }),
+          label: "Nicolas Maduro",
+          yes_price: 0.64,
+          no_price: 0.36,
+          clobTokenIds: [],
+        },
+        {
+          ...market({
+            id: "venezuela-rodriguez",
+            title: "Will Delcy Rodriguez be the leader of Venezuela end of 2026?",
+            groupItemTitle: "Delcy Rodriguez",
+          }),
+          label: "Delcy Rodriguez",
+          yes_price: 0.21,
+          no_price: 0.79,
+          clobTokenIds: [],
+        },
+      ],
+    });
+
+    assert.equal(getMarketProbabilityGaugeVariant(singleBinary), "chance");
+    assert.equal(getMarketProbabilityGaugeVariant(upDown), "updown");
+    assert.equal(getMarketProbabilityGaugeVariant(grouped), null);
+  });
+
+  it("matches Polymarket gauge display, color thresholds, and arc spacing", () => {
+    const upDown = market({
+      id: "btc-updown",
+      title: "BTC Up or Down 5m",
+      outcomes: [
+        { name: "Up", price: 0.49, clobTokenId: null },
+        { name: "Down", price: 0.51, clobTokenId: null },
+      ],
+    });
+
+    assert.deepEqual(getProbabilityGaugeDisplay(upDown, "updown"), {
+      label: "Up",
+      value: 0.49,
+    });
+    assert.equal(getGaugeStroke(0.07), "#e23939");
+    assert.equal(getGaugeStroke(0.31), "#fe9a00");
+    assert.equal(getGaugeStroke(0.61), "#30a159");
+    assert.equal(getGaugeStrokeOpacity(0.5), 0.55);
+    assert.equal(getGaugeStrokeOpacity(0.07), 0.937);
+    assert.deepEqual(getGaugeArcPaths(0.07), {
+      track: "M -28.560424837354034 -5.035797152340984 A 29 29 0 1 1 28.559424837354037 5.035797152340968",
+      value: "M -28.560424837354034 5.035797152340978 A 29 29 0 0 1 -28.982333983553776 1.0120854043725203",
+    });
   });
 
   it("calculates position value and pnl from market prices", () => {

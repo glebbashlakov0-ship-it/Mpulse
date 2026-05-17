@@ -145,12 +145,6 @@ export function SiteFooter() {
           account access, and payment features may vary by region and eligibility.
         </p>
 
-        <button
-          className="fixed bottom-5 left-1/2 z-30 hidden -translate-x-1/2 rounded-full bg-[#1d252e] px-4 py-2 text-sm font-semibold text-[#edf1f5] shadow-xl transition hover:bg-[#293440] md:flex"
-          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-        >
-          Back to top ↑
-        </button>
       </div>
     </footer>
   );

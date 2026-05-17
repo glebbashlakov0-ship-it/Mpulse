@@ -3,6 +3,7 @@ import { createCacheKey, type CacheReadResult, type CacheStore } from "./cache.j
 import { getCategories, normalizeCategoryValue } from "./categories.js";
 import { buildKeywordVisibilityRules, isMarketVisible } from "./moderation.js";
 import {
+  compactMarketForList,
   normalizeEvent,
   normalizeMarket,
   normalizeMarketDetail,
@@ -124,30 +125,6 @@ const relatedStopWords = new Set([
   "when",
 ]);
 
-const discoveryTagSlugs = [
-  "sports",
-  "soccer",
-  "nba",
-  "nfl",
-  "crypto",
-  "bitcoin",
-  "ethereum",
-  "politics",
-  "finance",
-  "fed",
-  "rates",
-  "esports",
-  "elections",
-  "geopolitics",
-  "economy",
-  "business",
-  "tech",
-  "ai",
-  "pop-culture",
-  "weather",
-  "breaking-news",
-];
-
 const genericDiscoveryTagSlugs = new Set([
   "agreement",
   "awards",
@@ -182,6 +159,10 @@ const genericDiscoveryTagSlugs = new Set([
 ]);
 
 const maxDiscoveryMarketsPerEvent = 1;
+const polymarketDiscoveryEventLimit = 150;
+const polymarketEventPageLimit = 100;
+const polymarketMarketPageLimit = 100;
+const backgroundCacheRefreshes = new Set<string>();
 
 function toBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") {
@@ -280,7 +261,25 @@ function getSearchText(market: PolymarketMarket | NormalizedMarket) {
       : "question" in market
         ? market.question
         : "";
-  return `${market.category ?? ""} ${title ?? ""} ${market.description ?? ""}`.toLowerCase();
+  const topics = "topics" in market ? market.topics.join(" ") : "";
+  const eventTitle = "event_title" in market ? (market.event_title ?? "") : "";
+  const groupItemTitle = "groupItemTitle" in market ? (market.groupItemTitle ?? "") : "";
+  const groupTitles =
+    "group_markets" in market
+      ? (market.group_markets ?? []).map((groupMarket) => groupMarket.title).join(" ")
+      : "";
+
+  return [
+    market.category ?? "",
+    topics,
+    title ?? "",
+    eventTitle,
+    groupItemTitle,
+    groupTitles,
+    market.description ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 function getMarketKeywords(market: PolymarketMarket) {
@@ -504,10 +503,22 @@ function dedupeMarkets(markets: PolymarketMarket[]) {
   return [...byId.values()];
 }
 
-function getMarketEventIds(market: PolymarketMarket) {
+function getEventKey(event: PolymarketEvent | undefined) {
+  if (!event) {
+    return null;
+  }
+
+  if (event.id) {
+    return `id:${event.id}`;
+  }
+
+  return event.slug ? `slug:${event.slug}` : null;
+}
+
+function getMarketEventKeys(market: PolymarketMarket) {
   return (market.events ?? [])
-    .map((event) => event.id)
-    .filter((id): id is string => Boolean(id));
+    .flatMap((event) => [event.id ? `id:${event.id}` : null, event.slug ? `slug:${event.slug}` : null])
+    .filter((key): key is string => Boolean(key));
 }
 
 function suppressEventChildrenWhenGrouped(
@@ -521,7 +532,7 @@ function suppressEventChildrenWhenGrouped(
   const representedEventIds = new Set(
     groupedEventMarkets
       .filter((market) => (market.groupMarkets?.length ?? 0) > 1)
-      .flatMap(getMarketEventIds),
+      .flatMap(getMarketEventKeys),
   );
 
   if (representedEventIds.size === 0) {
@@ -529,7 +540,7 @@ function suppressEventChildrenWhenGrouped(
   }
 
   return fallbackMarkets.filter(
-    (market) => !getMarketEventIds(market).some((eventId) => representedEventIds.has(eventId)),
+    (market) => !getMarketEventKeys(market).some((eventId) => representedEventIds.has(eventId)),
   );
 }
 
@@ -635,6 +646,7 @@ function compactEventContext(event: PolymarketEvent): PolymarketEvent {
     volume24hr: event.volume24hr,
     liquidity: event.liquidity,
     openInterest: event.openInterest,
+    commentCount: event.commentCount,
     tags: event.tags,
     markets: [],
   };
@@ -687,6 +699,7 @@ function marketFromEvent(
           archived: childMarket.archived ?? event.archived,
           restricted: childMarket.restricted ?? event.restricted,
           volume24hr: childMarket.volume24hr ?? event.volume24hr,
+          commentCount: childMarket.commentCount ?? event.commentCount,
           events: [compactEventContext(event)],
         }))
       : undefined;
@@ -710,6 +723,7 @@ function marketFromEvent(
         : market.volume,
     volumeNum: Math.max(toNumber(market.volumeNum ?? market.volume), toNumber(event.volume)),
     volume24hr: market.volume24hr ?? event.volume24hr,
+    commentCount: market.commentCount ?? event.commentCount,
     liquidity:
       toNumber(event.liquidity) > toNumber(market.liquidityNum ?? market.liquidity)
         ? event.liquidity
@@ -721,6 +735,98 @@ function marketFromEvent(
     events: [compactEventContext(event)],
     groupMarkets,
   };
+}
+
+function inferEmbeddedGroupItemTitle(event: PolymarketEvent, market: PolymarketMarket) {
+  if (market.groupItemTitle?.trim()) {
+    return market.groupItemTitle;
+  }
+
+  const question = market.question?.trim().replace(/\?$/, "") ?? "";
+  const eventTitle = event.title?.trim().replace(/\?$/, "") ?? "";
+
+  if (!question || question === eventTitle) {
+    return market.groupItemTitle;
+  }
+
+  const winner = /^will\s+(.+?)\s+win\b/i.exec(question);
+  if (winner?.[1]) {
+    return winner[1].trim();
+  }
+
+  const dated = /\bby\s+(.+)$/i.exec(question);
+  if (dated?.[1] && /^when\s+will\b/i.test(eventTitle)) {
+    return `by ${dated[1].trim()}`;
+  }
+
+  return market.groupItemTitle;
+}
+
+function collapseEmbeddedEventGroups(markets: PolymarketMarket[]) {
+  const buckets = new Map<
+    string,
+    {
+      event: PolymarketEvent;
+      markets: PolymarketMarket[];
+    }
+  >();
+  const passthrough: PolymarketMarket[] = [];
+
+  for (const market of markets) {
+    if ((market.groupMarkets?.length ?? 0) > 1) {
+      passthrough.push(market);
+      continue;
+    }
+
+    const event = market.events?.find((candidate) => getEventKey(candidate));
+    const key = getEventKey(event);
+
+    if (!event || !key) {
+      passthrough.push(market);
+      continue;
+    }
+
+    const bucket = buckets.get(key) ?? {
+      event,
+      markets: [],
+    };
+    bucket.markets.push(market);
+    buckets.set(key, bucket);
+  }
+
+  const grouped: PolymarketMarket[] = [];
+  const singles: PolymarketMarket[] = [];
+
+  for (const { event, markets: eventMarkets } of buckets.values()) {
+    const uniqueMarkets = dedupeMarkets(eventMarkets);
+
+    if (uniqueMarkets.length <= 1) {
+      singles.push(uniqueMarkets[0]);
+      continue;
+    }
+
+    const groupedChildren = sortEventMarkets(uniqueMarkets).map((market) => ({
+      ...market,
+      groupItemTitle: inferEmbeddedGroupItemTitle(event, market),
+      category: market.category ?? event.category,
+      image: event.image ?? event.icon ?? market.image,
+      icon: event.icon ?? event.image ?? market.icon,
+      events: [compactEventContext(event)],
+    }));
+    const selectedMarket = groupedChildren[0];
+
+    grouped.push(
+      marketFromEvent(
+        {
+          ...event,
+          markets: groupedChildren,
+        },
+        selectedMarket,
+      ),
+    );
+  }
+
+  return dedupeMarkets([...passthrough, ...grouped, ...singles]);
 }
 
 function sortEventMarkets(markets: PolymarketMarket[]) {
@@ -827,6 +933,14 @@ function matchesTopicFilter(market: NormalizedMarket, topic: string | null) {
   }
 
   return market.category === topic || market.topics.includes(topic);
+}
+
+function matchesCategoryFilter(market: NormalizedMarket, category: string | null) {
+  if (!category) {
+    return true;
+  }
+
+  return market.category === category || market.topics.includes(category);
 }
 
 function toMarketFilter(params: MarketListParams, config: AppConfig) {
@@ -997,6 +1111,17 @@ async function loadWithStaleFallback<T>({
     };
   }
 
+  if (cached) {
+    refreshCacheInBackground({ cache, key, ttlMs, loader });
+
+    return {
+      value: cached.value,
+      meta: buildCacheMeta(cached, "stale", [
+        "Upstream refresh is running; stale cached market data returned immediately.",
+      ]),
+    };
+  }
+
   try {
     const value = await loader();
     cache.set(key, value, ttlMs);
@@ -1007,15 +1132,6 @@ async function loadWithStaleFallback<T>({
       meta: buildCacheMeta(refreshed, "fresh"),
     };
   } catch (error) {
-    if (cached) {
-      return {
-        value: cached.value,
-        meta: buildCacheMeta(cached, "stale", [
-          "Upstream unavailable; stale cached market data returned.",
-        ]),
-      };
-    }
-
     if (fallback) {
       return {
         value: fallback(),
@@ -1039,6 +1155,34 @@ async function loadWithStaleFallback<T>({
 
     throw error;
   }
+}
+
+function refreshCacheInBackground<T>({
+  cache,
+  key,
+  ttlMs,
+  loader,
+}: {
+  cache: CacheStore;
+  key: string;
+  ttlMs: number;
+  loader: () => Promise<T>;
+}) {
+  if (backgroundCacheRefreshes.has(key)) {
+    return;
+  }
+
+  backgroundCacheRefreshes.add(key);
+  void loader()
+    .then((value) => {
+      cache.set(key, value, ttlMs);
+    })
+    .catch(() => {
+      // Keep serving the stale entry until a later refresh succeeds.
+    })
+    .finally(() => {
+      backgroundCacheRefreshes.delete(key);
+    });
 }
 
 function mergeSourceMeta(...items: MarketDataMeta[]): MarketDataMeta {
@@ -1081,30 +1225,88 @@ export function buildMarketDataService({
     esports: ["esports", "dota", "league of legends", "lol", "valorant", "cs2"],
   };
 
-  function eventQueries(params: { active?: boolean; closed?: boolean }) {
+  function eventQueries(params: {
+    active?: boolean;
+    closed?: boolean;
+    category?: string | null;
+    topic?: string | null;
+    search?: string | null;
+  }) {
     const base = {
-      limit: Math.min(config.upstreamMarketLimit, 50),
       active: params.active,
       closed: params.closed,
-      order: "volume24hr",
+      order: "volume_24hr",
       ascending: false,
     };
+    const focusedTags = [
+      params.topic,
+      params.category,
+      params.search ? slugifyTag(params.search) : null,
+    ].filter((tag): tag is string => Boolean(tag));
 
-    return [
-      base,
-      { ...base, featured: true },
-      { ...base, trending: true },
-      ...discoveryTagSlugs.map((tagSlug) => ({
-        ...base,
-        tag_slug: tagSlug,
-      })),
-    ];
+    const queries: Array<{ query: Record<string, unknown>; paginate: boolean; maxItems?: number }> = params.search
+      ? []
+      : [
+          {
+            query: base,
+            paginate: true,
+            maxItems: Math.min(config.upstreamMarketLimit, polymarketDiscoveryEventLimit),
+          },
+          { query: { ...base, featured: true }, paginate: false },
+          { query: { ...base, trending: true }, paginate: false },
+        ];
+
+    for (const focusedTag of new Set(focusedTags)) {
+      queries.push({
+        query: {
+          ...base,
+          tag_slug: focusedTag,
+        },
+        paginate: true,
+        maxItems: config.upstreamMarketLimit,
+      });
+    }
+
+    return queries;
   }
 
-  async function getEventBackedMarkets(params: { active?: boolean; closed?: boolean }) {
+  function eventQueryPages(query: Record<string, unknown>, maxItems = config.upstreamMarketLimit) {
+    const pageLimit = Math.min(maxItems, polymarketEventPageLimit);
+    const pageCount = Math.max(1, Math.ceil(maxItems / pageLimit));
+
+    return Array.from({ length: pageCount }).map((_, index) => ({
+      ...query,
+      limit: Math.min(pageLimit, maxItems - index * pageLimit),
+      offset: index * pageLimit,
+    }));
+  }
+
+  function marketQueryPages(query: Record<string, unknown>) {
+    const pageLimit = Math.min(config.upstreamMarketLimit, polymarketMarketPageLimit);
+    const pageCount = Math.max(1, Math.ceil(config.upstreamMarketLimit / pageLimit));
+
+    return Array.from({ length: pageCount }).map((_, index) => ({
+      ...query,
+      limit: Math.min(pageLimit, config.upstreamMarketLimit - index * pageLimit),
+      offset: index * pageLimit,
+    }));
+  }
+
+  async function getEventBackedMarkets(params: {
+    active?: boolean;
+    closed?: boolean;
+    category?: string | null;
+    topic?: string | null;
+    search?: string | null;
+  }) {
     const ttl = params.closed ? config.cacheTtlMs.closedMarkets : config.cacheTtlMs.activeMarkets;
+    const queries = eventQueries(params).flatMap(({ query, paginate, maxItems }) =>
+      paginate
+        ? eventQueryPages(query, maxItems)
+        : [{ ...query, limit: Math.min(config.upstreamMarketLimit, polymarketEventPageLimit), offset: 0 }],
+    );
     const results = await Promise.all(
-      eventQueries(params).map(async (query) => {
+      queries.map(async (query) => {
         try {
           return await loadWithStaleFallback({
             cache,
@@ -1159,7 +1361,7 @@ export function buildMarketDataService({
     );
 
     return {
-      value: dedupeMarkets(results.flatMap((result) => result.value)),
+      value: collapseEmbeddedEventGroups(dedupeMarkets(results.flatMap((result) => result.value))),
       meta: mergeSourceMeta(...results.map((result) => result.meta)),
     };
   }
@@ -1167,34 +1369,66 @@ export function buildMarketDataService({
   async function getRawMarkets(params: {
     active?: boolean;
     closed?: boolean;
+    category?: string | null;
     search?: string;
     topic?: string | null;
     discovery?: boolean;
   }) {
+    const focusedTag = params.topic ?? params.category ?? null;
     const baseQuery = {
-      limit: config.upstreamMarketLimit,
       active: params.active,
       closed: params.closed,
       order: "volumeNum",
       ascending: false,
     };
+    const marketQueries: Array<Record<string, unknown>> = [baseQuery];
+
+    if (focusedTag) {
+      marketQueries.push({
+        ...baseQuery,
+        tag_slug: focusedTag,
+      });
+    }
+
+    if (params.category) {
+      marketQueries.push({
+        ...baseQuery,
+        category: params.category,
+      });
+    }
+
     const ttl = params.closed ? config.cacheTtlMs.closedMarkets : config.cacheTtlMs.activeMarkets;
-    const baseMarkets = await loadWithStaleFallback({
-      cache,
-      key: createCacheKey("polymarket:markets", baseQuery),
-      ttlMs: ttl,
-      loader: () => polymarket.getMarkets<PolymarketMarket[]>(baseQuery),
-    });
-    const eventMarkets = await getEventBackedMarkets({
+    const baseMarketsPromise = Promise.all(
+      marketQueries.flatMap(marketQueryPages).map((query) =>
+        loadWithStaleFallback({
+          cache,
+          key: createCacheKey("polymarket:markets", query),
+          ttlMs: ttl,
+          loader: () => polymarket.getMarkets<PolymarketMarket[]>(query),
+        }),
+      ),
+    ).then((results) => ({
+      value: collapseEmbeddedEventGroups(dedupeMarkets(results.flatMap((result) => result.value))),
+      meta: mergeSourceMeta(...results.map((result) => result.meta)),
+    }));
+    const eventMarketsPromise = getEventBackedMarkets({
       active: params.active,
       closed: params.closed,
+      category: params.category ?? null,
+      topic: params.topic ?? null,
+      search: params.search ?? null,
     });
-    const topicMarkets = await getTopicSearchMarkets(params.topic ?? null);
+    const topicMarketsPromise = getTopicSearchMarkets(params.topic ?? params.category ?? null);
+    const [baseMarkets, eventMarkets, topicMarkets] = await Promise.all([
+      baseMarketsPromise,
+      eventMarketsPromise,
+      topicMarketsPromise,
+    ]);
 
     if (!params.search && params.discovery && eventMarkets.value.length > 0) {
       const topicFallbackMarkets = suppressEventChildrenWhenGrouped(
         eventMarkets.value,
-        topicMarkets.value,
+        [...topicMarkets.value, ...baseMarkets.value],
       );
 
       return {
@@ -1223,14 +1457,17 @@ export function buildMarketDataService({
       loader: async () => extractSearchMarkets(await polymarket.search(searchQuery)),
       fallback: () => [],
     });
-
-    return {
-      value: dedupeMarkets([
+    const searchFallbackMarkets = suppressEventChildrenWhenGrouped(
+      eventMarkets.value,
+      collapseEmbeddedEventGroups([
         ...searchMarkets.value,
         ...topicMarkets.value,
-        ...eventMarkets.value,
         ...baseMarkets.value,
       ]),
+    );
+
+    return {
+      value: dedupeMarkets([...eventMarkets.value, ...searchFallbackMarkets]),
       meta: mergeSourceMeta(baseMarkets.meta, eventMarkets.meta, searchMarkets.meta, topicMarkets.meta),
     };
   }
@@ -1240,6 +1477,7 @@ export function buildMarketDataService({
     const rawMarketsResult = await getRawMarkets({
       active: filter.active ?? (filter.status === "live" || filter.status === "upcoming" ? true : undefined),
       closed: filter.closed ?? (filter.status === "live" || filter.status === "upcoming" ? false : filter.status === "closed" ? true : undefined),
+      category: filter.category,
       search: filter.search,
       topic: filter.topic,
       discovery: !filter.search && (filter.sort === "trending" || filter.sort === "popular"),
@@ -1256,7 +1494,7 @@ export function buildMarketDataService({
           return false;
         }
 
-        if (filter.category && market.category !== filter.category) {
+        if (!matchesCategoryFilter(market, filter.category)) {
           return false;
         }
 
@@ -1291,7 +1529,9 @@ export function buildMarketDataService({
       !filter.search && (filter.sort === "trending" || filter.sort === "popular")
         ? diversifyDiscoveryMarkets(sorted)
         : sorted;
-    const data = discoverySorted.slice(filter.offset, filter.offset + filter.limit);
+    const data = discoverySorted
+      .slice(filter.offset, filter.offset + filter.limit)
+      .map(compactMarketForList);
     const nextOffset = filter.offset + filter.limit;
 
     return {
@@ -1468,6 +1708,7 @@ export function buildMarketDataService({
       archived: childMarket.archived ?? event.archived,
       restricted: childMarket.restricted ?? event.restricted,
       volume24hr: childMarket.volume24hr ?? event.volume24hr,
+      commentCount: childMarket.commentCount ?? event.commentCount,
       events: [compactEventContext(event)],
     }));
   }

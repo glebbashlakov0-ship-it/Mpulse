@@ -9,6 +9,7 @@ const tradeButton =
   "inline-flex h-[27px] w-10 items-center justify-center rounded-md text-[13px] font-bold transition hover:text-white";
 
 type CardLayout = "binary" | "multi" | "sports" | "price" | "chance";
+type ProbabilityGaugeVariant = "updown" | "chance";
 type CardRow = {
   label: string;
   yesPrice: number | null;
@@ -43,6 +44,7 @@ export function MarketCard({
   const isUpDownCard = isUpDownMarket(market);
   const isSportsMatchCard = isSportsMatchMarket(market, layout);
   const isHeadToHeadCard = isHeadToHeadMarket(market, layout, isSportsMatchCard);
+  const probabilityGaugeVariant = getMarketProbabilityGaugeVariant(market);
   const shouldShowRows =
     !isUpDownCard &&
     !isSportsMatchCard &&
@@ -100,7 +102,9 @@ export function MarketCard({
               </h2>
             </div>
           </div>
-          {isUpDownCard ? <UpDownGauge market={market} /> : null}
+          {probabilityGaugeVariant ? (
+            <MarketProbabilityGauge market={market} variant={probabilityGaugeVariant} />
+          ) : null}
         </div>
       </div>
 
@@ -122,46 +126,13 @@ export function MarketCard({
 
         <div className="relative flex w-full items-center text-[13px] font-semibold text-[#8f9aa8]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
-            {isUpDownCard ? (
-              <LiveFooterLabel label={getFooterLabel(market)} />
-            ) : (
-              <div className="flex min-w-0 flex-row items-center gap-1">
-                <p className="truncate">
-                  <span>{formatMoney(market.volume)} </span>Vol.
-                </p>
-                <span className="h-1 w-1 shrink-0 rounded-full bg-[#566272]" />
-                <span className="truncate">{getFooterLabel(market)}</span>
-              </div>
-            )}
-            <div className="flex shrink-0 items-center">
-              {!isUpDownCard ? (
-                <IconBadge label="Rewards">
-                  <Gift size={16} />
-                </IconBadge>
-              ) : null}
-              {onWatchlistToggle ? (
-                <button
-                  className={`relative z-40 grid h-7 w-7 place-items-center rounded-full transition ${
-                    isWatched
-                      ? "bg-[#3b91f6]/20 text-[#3b91f6]"
-                      : "text-[#8f9aa8] hover:bg-white/5 hover:text-[#edf1f5]"
-                  }`}
-                  aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
-                  aria-pressed={isWatched}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onWatchlistToggle();
-                  }}
-                  type="button"
-                >
-                  <Bookmark size={16} fill={isWatched ? "currentColor" : "none"} />
-                </button>
-              ) : (
-                <IconBadge label="Add to favorites">
-                  <Bookmark size={16} />
-                </IconBadge>
-              )}
-            </div>
+            {isUpDownCard ? <LiveFooterLabel label={getFooterLabel(market)} /> : <MarketFooterMeta market={market} />}
+            <CardActionIcons
+              isWatched={isWatched}
+              market={market}
+              onWatchlistToggle={onWatchlistToggle}
+              showRewards={!isUpDownCard}
+            />
           </div>
         </div>
       </div>
@@ -208,31 +179,12 @@ function HeadToHeadCard({
 
         <div className="relative flex w-full items-center text-[13px] font-semibold text-[#8f9aa8]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
-            <HeadToHeadFooterLabel market={market} />
-            <div className="flex shrink-0 items-center">
-              {onWatchlistToggle ? (
-                <button
-                  className={`relative z-40 grid h-7 w-7 place-items-center rounded-full transition ${
-                    isWatched
-                      ? "bg-[#3b91f6]/20 text-[#3b91f6]"
-                      : "text-[#8f9aa8] hover:bg-white/5 hover:text-[#edf1f5]"
-                  }`}
-                  aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
-                  aria-pressed={isWatched}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onWatchlistToggle();
-                  }}
-                  type="button"
-                >
-                  <Bookmark size={16} fill={isWatched ? "currentColor" : "none"} />
-                </button>
-              ) : (
-                <IconBadge label="Add to favorites">
-                  <Bookmark size={16} />
-                </IconBadge>
-              )}
-            </div>
+            <MarketFooterMeta market={market} />
+            <CardActionIcons
+              isWatched={isWatched}
+              market={market}
+              onWatchlistToggle={onWatchlistToggle}
+            />
           </div>
         </div>
       </div>
@@ -302,34 +254,12 @@ function SportsMatchCard({
 
         <div className="relative flex w-full items-center text-[13px] font-semibold text-[#8f9aa8]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
-            <SportsFooterLabel market={market} />
-            <div className="flex shrink-0 items-center">
-              <IconBadge label="Rewards">
-                <Gift size={16} />
-              </IconBadge>
-              {onWatchlistToggle ? (
-                <button
-                  className={`relative z-40 grid h-7 w-7 place-items-center rounded-full transition ${
-                    isWatched
-                      ? "bg-[#3b91f6]/20 text-[#3b91f6]"
-                      : "text-[#8f9aa8] hover:bg-white/5 hover:text-[#edf1f5]"
-                  }`}
-                  aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
-                  aria-pressed={isWatched}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onWatchlistToggle();
-                  }}
-                  type="button"
-                >
-                  <Bookmark size={16} fill={isWatched ? "currentColor" : "none"} />
-                </button>
-              ) : (
-                <IconBadge label="Add to favorites">
-                  <Bookmark size={16} />
-                </IconBadge>
-              )}
-            </div>
+            <MarketFooterMeta market={market} />
+            <CardActionIcons
+              isWatched={isWatched}
+              market={market}
+              onWatchlistToggle={onWatchlistToggle}
+            />
           </div>
         </div>
       </div>
@@ -558,49 +488,135 @@ function MiniTradeButton({ label, tone }: { label: "Yes" | "No"; tone: "yes" | "
   );
 }
 
-function UpDownGauge({ market }: { market: Market }) {
-  const up = getDirectionalOutcome(market, "up");
-  const value = getOutcomePrice(up ?? market.outcomes[0]);
-  const percent = value === null ? 0 : Math.round(value * 100);
-  const label = up?.name ?? "Up";
+function MarketProbabilityGauge({ market, variant }: { market: Market; variant: ProbabilityGaugeVariant }) {
+  const display = getProbabilityGaugeDisplay(market, variant);
+  const percent = display.value === null ? 0 : Math.round(display.value * 100);
+  const paths = getGaugeArcPaths(display.value);
+  const stroke = getGaugeStroke(display.value);
+  const strokeOpacity = getGaugeStrokeOpacity(display.value);
 
   return (
     <div className="ml-2 mr-1 flex w-[58px] shrink-0 flex-col items-end justify-center gap-2">
       <div className="flex h-[34px]">
         <svg
           width="58"
-          height="35"
-          viewBox="-29 -29 58 35"
+          height="34.03579715234098"
+          viewBox="-29 -29 58 34.03579715234098"
           className="w-[58px] max-w-[58px] overflow-visible"
           aria-hidden="true"
         >
           <path
-            d="M 3.5 -28.8 A 29 29 0 0 1 28.6 5"
+            d={paths.track}
             fill="none"
             stroke="#293440"
             strokeLinecap="round"
             strokeWidth="4.5"
           />
           <path
-            d="M -28.6 5 A 29 29 0 0 1 -2.5 -28.9"
+            d={paths.value}
             fill="none"
-            stroke="#4fa06d"
+            stroke={stroke}
             strokeLinecap="round"
-            strokeOpacity={Math.max(0.35, value ?? 0.51)}
+            strokeOpacity={strokeOpacity}
             strokeWidth="4.5"
           />
         </svg>
       </div>
       <div className="flex w-full -translate-y-[28px] flex-col items-center">
-        <p className="text-center text-[22px] font-semibold leading-none text-[#edf1f5]">
-          {value === null ? "--" : `${percent}%`}
+        <p className="text-center text-[22px] font-medium leading-none text-[#edf1f5]">
+          {display.value === null ? "--" : `${percent}%`}
         </p>
         <p className="line-clamp-2 text-center text-[13px] font-semibold leading-tight text-[#8f9aa8]">
-          {label}
+          {display.label}
         </p>
       </div>
     </div>
   );
+}
+
+export function getProbabilityGaugeDisplay(market: Market, variant: ProbabilityGaugeVariant) {
+  const up = getDirectionalOutcome(market, "up");
+
+  if (variant === "updown") {
+    return {
+      label: up?.name ?? "Up",
+      value: getOutcomePrice(up),
+    };
+  }
+
+  const yes = findOutcome(market, "yes") ?? market.outcomes[0] ?? null;
+  const isYesNoMarket =
+    market.outcomes.length === 2 &&
+    market.outcomes[0]?.name.toLowerCase() === "yes" &&
+    market.outcomes[1]?.name.toLowerCase() === "no";
+
+  return {
+    label: isYesNoMarket ? "chance" : yes?.name ?? "chance",
+    value: getOutcomePrice(yes),
+  };
+}
+
+export function getGaugeStroke(value: number | null) {
+  const percent = getGaugePercent(value);
+
+  if (percent < 30) {
+    return "#e23939";
+  }
+
+  if (percent < 50) {
+    return "#fe9a00";
+  }
+
+  return "#30a159";
+}
+
+export function getGaugeStrokeOpacity(value: number | null) {
+  if (value === null) {
+    return 0;
+  }
+
+  const percent = getGaugePercent(value);
+
+  return roundGaugeNumber((Math.abs(percent - 50) / 50) * 0.45 + 0.55);
+}
+
+export function getGaugeArcPaths(value: number | null) {
+  const percent = getGaugePercent(value);
+  const valueAngle = Math.round(80 + percent * 2);
+  const activeEndAngle =
+    percent === 100 ? 280 : Math.min(Math.max(valueAngle - 6, 82), 266);
+  const trackStartAngle = Math.max(Math.min(valueAngle + 6, 278), 94);
+
+  return {
+    track: describeGaugeArc(trackStartAngle, 280),
+    value: describeGaugeArc(80, activeEndAngle),
+  };
+}
+
+function describeGaugeArc(startAngle: number, endAngle: number) {
+  const radius = 29;
+  const start = gaugePolarToCartesian(radius, startAngle + 90);
+  const end = gaugePolarToCartesian(radius, endAngle + 90);
+  const largeArcFlag = endAngle - startAngle < 180 ? 0 : 1;
+
+  return `M ${start.x - 0.001} ${start.y} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`;
+}
+
+function gaugePolarToCartesian(radius: number, angle: number) {
+  const radians = (angle * Math.PI) / 180;
+
+  return {
+    x: radius * Math.cos(radians),
+    y: radius * Math.sin(radians),
+  };
+}
+
+function roundGaugeNumber(value: number) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function getGaugePercent(value: number | null) {
+  return value === null ? 0 : Math.min(100, Math.max(0, value * 100));
 }
 
 function FloatingAmount({ side, values }: { side: "left" | "right"; values: string[] }) {
@@ -641,6 +657,78 @@ function LiveFooterLabel({ label }: { label: string }) {
       </div>
       <span className="mx-px opacity-50">·</span>
       <span className="truncate">{label}</span>
+    </div>
+  );
+}
+
+function MarketFooterMeta({ market }: { market: Market }) {
+  const items = getMarketFooterItems(market);
+
+  return (
+    <div className="flex min-w-0 flex-row items-center gap-1 overflow-hidden">
+      {items.map((item, index) => (
+        <span className={getFooterItemClassName(index)} key={`${item}-${index}`}>
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function getFooterItemClassName(index: number) {
+  const base = "min-w-0 truncate";
+
+  if (index === 0) {
+    return base;
+  }
+
+  if (index >= 3) {
+    return `${base} hidden xl:inline`;
+  }
+
+  return `${base} before:mx-1 before:text-[#566272] before:content-['•']`;
+}
+
+function CardActionIcons({
+  isWatched,
+  market,
+  onWatchlistToggle,
+  showRewards = true,
+}: {
+  isWatched: boolean;
+  market: Market;
+  onWatchlistToggle?: () => void;
+  showRewards?: boolean;
+}) {
+  return (
+    <div className="flex shrink-0 items-center">
+      {showRewards && hasMarketRewards(market) ? (
+        <IconBadge label="Rewards">
+          <Gift size={16} />
+        </IconBadge>
+      ) : null}
+      {onWatchlistToggle ? (
+        <button
+          className={`relative z-40 grid h-7 w-7 place-items-center rounded-full transition ${
+            isWatched
+              ? "bg-[#3b91f6]/20 text-[#3b91f6]"
+              : "text-[#8f9aa8] hover:bg-white/5 hover:text-[#edf1f5]"
+          }`}
+          aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
+          aria-pressed={isWatched}
+          onClick={(event) => {
+            event.stopPropagation();
+            onWatchlistToggle();
+          }}
+          type="button"
+        >
+          <Bookmark size={16} fill={isWatched ? "currentColor" : "none"} />
+        </button>
+      ) : (
+        <IconBadge label="Add to favorites">
+          <Bookmark size={16} />
+        </IconBadge>
+      )}
     </div>
   );
 }
@@ -750,6 +838,31 @@ function isUpDownMarket(market: Market) {
       outcomeText.includes("up") &&
       outcomeText.includes("down"))
   );
+}
+
+export function getMarketProbabilityGaugeVariant(market: Market): ProbabilityGaugeVariant | null {
+  const layout = getCardLayout(market);
+  const rows = getCardRows(market);
+  const hasGroupedRows = (market.group_markets?.length ?? 0) > 1;
+  const isUpDownCard = isUpDownMarket(market);
+  const isSportsMatchCard = isSportsMatchMarket(market, layout);
+  const isHeadToHeadCard = isHeadToHeadMarket(market, layout, isSportsMatchCard);
+  const shouldShowRows =
+    !isUpDownCard &&
+    !isSportsMatchCard &&
+    !isHeadToHeadCard &&
+    rows.length > 0 &&
+    (hasGroupedRows || layout === "multi" || layout === "price" || layout === "sports");
+
+  if (shouldShowRows || isSportsMatchCard || isHeadToHeadCard) {
+    return null;
+  }
+
+  if (isUpDownCard) {
+    return "updown";
+  }
+
+  return layout === "binary" || layout === "chance" ? "chance" : null;
 }
 
 function getSportsTeams(market: Market): SportsTeam[] {
@@ -987,8 +1100,8 @@ function findOutcome(market: Market, name: string) {
   return market.outcomes.find((outcome) => outcome.name.toLowerCase() === name);
 }
 
-function getOutcomePrice(outcome: Outcome) {
-  return outcome.price ?? outcome.probability ?? null;
+function getOutcomePrice(outcome: Outcome | null | undefined) {
+  return outcome?.price ?? outcome?.probability ?? null;
 }
 
 function getDirectionalOutcome(market: Market, direction: "up" | "down") {
@@ -1056,6 +1169,24 @@ function getPreviewRowPrice(row: CardRow) {
   return row.yesPrice ?? -1;
 }
 
+function getMarketFooterItems(market: Market) {
+  const items = [`${formatMoney(market.volume)} Vol.`];
+  const label = getFooterLabel(market);
+
+  if (label) {
+    items.push(label);
+  }
+
+  return items;
+}
+
+function hasMarketRewards(market: Market): boolean {
+  return Boolean(
+    market.rewards?.enabled ||
+      market.group_markets?.some((groupMarket) => groupMarket.rewards?.enabled),
+  );
+}
+
 function getFooterLabel(market: Market) {
   const text = getMarketSearchText(market);
 
@@ -1079,16 +1210,20 @@ function getFooterLabel(market: Market) {
     return "Bitcoin";
   }
 
-  if (text.includes("la liga") || text.includes("laliga") || text.includes("real madrid") || text.includes("oviedo")) {
+  if (text.includes("la liga") || text.includes("la-liga") || text.includes("laliga") || text.includes("real madrid") || text.includes("oviedo")) {
     return "La Liga";
   }
 
-  if (text.includes("premier league")) {
+  if (text.includes("premier league") || text.includes("premier-league")) {
     return "Premier League";
   }
 
   if (text.includes("nba")) {
     return "NBA";
+  }
+
+  if (text.includes("basketball")) {
+    return "Basketball";
   }
 
   if (text.includes("nfl")) {
@@ -1101,6 +1236,22 @@ function getFooterLabel(market: Market) {
 
   if (text.includes("mlb")) {
     return "MLB";
+  }
+
+  if (text.includes("soccer")) {
+    return "Soccer";
+  }
+
+  if (text.includes("tennis")) {
+    return "Tennis";
+  }
+
+  if (text.includes("cricket")) {
+    return "Cricket";
+  }
+
+  if (text.includes("golf")) {
+    return "Golf";
   }
 
   return getMarketKind(market);

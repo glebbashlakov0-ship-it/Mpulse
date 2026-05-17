@@ -28,7 +28,7 @@ import {
   formatShortDate,
   formatUsdt,
 } from "../lib/format";
-import { getMarketKind, getOutcomeActionLabel } from "../lib/market";
+import { getMarketEyebrowParts, getMarketKind, getOutcomeActionLabel } from "../lib/market";
 import type { Market } from "../lib/types";
 import type { ComplianceEligibilityPayload } from "../lib/types";
 import { usePortfolio } from "../hooks/usePortfolio";
@@ -101,6 +101,7 @@ export function MarketDetail({
   const secondaryOutcome = tradeMarket.outcomes[1];
   const selectedVariantLabel =
     selectedGroupMarket?.label ?? tradeMarket.groupItemTitle ?? tradeMarket.title;
+  const eyebrowParts = getMarketEyebrowParts(market);
   const selectedOutcomeLabel =
     isGroupedEvent
       ? `${selectedVariantLabel} ${side === "yes" ? "Yes" : "No"}`
@@ -263,9 +264,9 @@ export function MarketDetail({
     const marketEndDate = selectedGroupMarket?.ends_at ?? market.ends_at;
 
     return (
-      <section className="mx-auto w-full max-w-[1326px] overflow-x-hidden px-4 py-4 md:px-6 xl:px-0">
-        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,938px)_340px] xl:items-start">
-          <article className="min-w-0 overflow-hidden xl:max-w-[938px]">
+      <section className="mx-auto w-full max-w-[1500px] overflow-x-hidden px-4 py-4 md:px-6 xl:px-8">
+        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
+          <article className="min-w-0 overflow-hidden">
             {detailStatus === "error" ? (
               <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-200">
                 <AlertCircle className="mt-0.5 shrink-0" size={18} />
@@ -280,13 +281,12 @@ export function MarketDetail({
                 <MarketImage market={market} className="h-16 w-16 min-w-16 rounded-sm" />
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex max-h-6 flex-wrap items-center gap-1.5 overflow-hidden text-sm font-semibold text-[#8f9aa8]">
-                    <span>{getMarketKind(market)}</span>
-                    {market.topics[0] ? (
-                      <>
-                        <span>·</span>
-                        <span className="capitalize">{market.topics[0]}</span>
-                      </>
-                    ) : null}
+                    {eyebrowParts.map((part, index) => (
+                      <React.Fragment key={`${part}-${index}`}>
+                        {index > 0 ? <span>·</span> : null}
+                        <span>{part}</span>
+                      </React.Fragment>
+                    ))}
                   </div>
                   <h1 className="break-words text-[28px] font-semibold leading-tight tracking-normal text-[#edf1f5]">
                     {market.title}
@@ -658,9 +658,12 @@ export function MarketDetail({
               <MarketImage market={market} className="h-14 w-14 sm:h-16 sm:w-16" />
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#8f9aa8]">
-                  <span>{getMarketKind(market)}</span>
-                  <span>·</span>
-                  <span>{market.dates?.status ?? "Pulse Market"}</span>
+                  {eyebrowParts.map((part, index) => (
+                    <React.Fragment key={`${part}-${index}`}>
+                      {index > 0 ? <span>·</span> : null}
+                      <span>{part}</span>
+                    </React.Fragment>
+                  ))}
                   <span>·</span>
                   <span>{detailStatus === "ready" ? "Live detail" : "Market preview"}</span>
                 </div>

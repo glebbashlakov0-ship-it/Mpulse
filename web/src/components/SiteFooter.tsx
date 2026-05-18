@@ -67,7 +67,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_220px_180px]">
-          <section>
+          <section id="markets">
             <h2 className="text-sm font-semibold text-[#8f9aa8]">
               Markets by category and topics
             </h2>
@@ -81,13 +81,13 @@ export function SiteFooter() {
                 </a>
               ))}
             </div>
-            <button className="mt-7 flex items-center gap-1 text-sm font-semibold text-[#8f9aa8] transition hover:text-[#edf1f5]">
+            <button className="home-soft-button mt-7 flex items-center gap-1 text-sm font-semibold text-[#8f9aa8] transition hover:text-[#edf1f5]">
               View more
               <ChevronRight size={15} />
             </button>
           </section>
 
-          <FooterColumn title="Support & Social">
+          <FooterColumn title="Support & Social" id="help">
             {supportLinks.map((link) => (
               <a href="#support" key={link}>
                 {link}
@@ -95,7 +95,7 @@ export function SiteFooter() {
             ))}
           </FooterColumn>
 
-          <FooterColumn title="Pulse Market">
+          <FooterColumn title="Pulse Market" id="docs">
             {companyLinks.map((link) => (
               <a href="#company" key={link}>
                 {link}
@@ -126,13 +126,13 @@ export function SiteFooter() {
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-semibold text-[#8f9aa8]" aria-label="Legal links">
             <span className="text-[#edf1f5]">Pulse Market Inc. © 2026</span>
             <a className="transition hover:text-[#edf1f5]" href="#privacy">Privacy</a>
-            <a className="transition hover:text-[#edf1f5]" href="#terms">Terms of Use</a>
+            <a className="transition hover:text-[#edf1f5]" href="#terms" id="terms">Terms of Use</a>
             <a className="transition hover:text-[#edf1f5]" href="#integrity">Market Integrity</a>
             <a className="transition hover:text-[#edf1f5]" href="#help">Help Center</a>
             <a className="transition hover:text-[#edf1f5]" href="#docs">Docs</a>
           </nav>
 
-          <button className="flex items-center gap-2 justify-self-start rounded-2xl px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#171d24] lg:justify-self-end">
+          <button className="home-soft-button flex items-center gap-2 justify-self-start rounded-2xl px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#171d24] lg:justify-self-end">
             <Globe2 size={18} />
             English
             <ChevronRight size={15} />
@@ -150,9 +150,9 @@ export function SiteFooter() {
   );
 }
 
-function FooterColumn({ title, children }: { title: string; children: ReactNode }) {
+function FooterColumn({ title, children, id }: { title: string; children: ReactNode; id?: string }) {
   return (
-    <section>
+    <section id={id}>
       <h2 className="text-sm font-semibold text-[#8f9aa8]">{title}</h2>
       <div className="mt-5 grid gap-4 text-sm font-semibold text-[#edf1f5] [&_a]:transition [&_a:hover]:text-[#3b91f6]">
         {children}

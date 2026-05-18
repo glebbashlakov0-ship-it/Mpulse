@@ -85,7 +85,7 @@ export function MarketCard({
 
   return (
     <article
-      className="group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
+      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
       onClick={onOpen}
       onKeyDown={handleKeyDown}
       role="button"
@@ -159,7 +159,7 @@ function HeadToHeadCard({
 
   return (
     <article
-      className="group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
+      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
       onClick={onOpen}
       onKeyDown={onKeyDown}
       role="button"
@@ -227,7 +227,7 @@ function SportsMatchCard({
 
   return (
     <article
-      className="group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
+      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
       onClick={onOpen}
       onKeyDown={onKeyDown}
       role="button"
@@ -709,7 +709,7 @@ function CardActionIcons({
       ) : null}
       {onWatchlistToggle ? (
         <button
-          className={`relative z-40 grid h-7 w-7 place-items-center rounded-full transition ${
+          className={`relative z-[1] grid h-7 w-7 place-items-center rounded-full transition ${
             isWatched
               ? "bg-[#3b91f6]/20 text-[#3b91f6]"
               : "text-[#8f9aa8] hover:bg-white/5 hover:text-[#edf1f5]"

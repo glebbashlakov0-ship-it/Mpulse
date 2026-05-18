@@ -250,7 +250,8 @@ export function buildMarketSearchParams(
     sort: filters.sort,
   });
   const backendCategory = filters.category || getBackendCategory(filters.topic);
-  const backendSearch = filters.search.trim();
+  const backendTopic = filters.topic === "social" ? "all" : filters.topic;
+  const backendSearch = filters.search.trim() || (filters.topic === "social" ? "during" : "");
 
   if (backendCategory) {
     params.set("category", backendCategory);
@@ -260,8 +261,8 @@ export function buildMarketSearchParams(
     params.set("search", backendSearch);
   }
 
-  if (filters.topic !== "all") {
-    params.set("topic", filters.topic);
+  if (backendTopic !== "all") {
+    params.set("topic", backendTopic);
   }
 
   if (filters.status !== "all") {

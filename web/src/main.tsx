@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { useTranslation } from "react-i18next";
+import { AuthModal } from "./components/AuthModal";
 import { SiteHeader } from "./components/SiteHeader";
 import { SiteFooter } from "./components/SiteFooter";
 import { HomePage } from "./pages/HomePage";
@@ -38,9 +39,10 @@ declare global {
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, status, logout } = useAuth();
+  const { user, status, login, register } = useAuth();
   const watchlist = useWatchlist(user);
   const { i18n } = useTranslation();
+  const [authModalMode, setAuthModalMode] = React.useState<"login" | "register" | null>(null);
   const headerFilters = React.useMemo(() => {
     const categoryMatch = location.pathname.match(/^\/markets\/category\/([^/]+)/);
     const topicMatch = location.pathname.match(/^\/markets\/topic\/([^/]+)/);
@@ -61,13 +63,39 @@ function App() {
 
   const openAuth = React.useCallback(
     (mode: "login" | "register") => {
-      const currentPath = `${location.pathname}${location.search}${location.hash}`;
-      const redirect = currentPath === "/auth" ? "/" : currentPath;
-      const params = new URLSearchParams({ mode, redirect });
-      navigate(`/auth?${params.toString()}`);
+      setAuthModalMode(mode);
     },
-    [location.hash, location.pathname, location.search, navigate],
+    [],
   );
+  const closeAuth = React.useCallback(() => setAuthModalMode(null), []);
+  const promptSignup = React.useCallback(() => setAuthModalMode("register"), []);
+  const navigateFromHeader = React.useCallback(
+    (to: string) => {
+      navigate(to);
+    },
+    [navigate],
+  );
+
+  React.useEffect(() => {
+    if (user && authModalMode) {
+      setAuthModalMode(null);
+    }
+  }, [authModalMode, user]);
+
+  React.useEffect(() => {
+    if (!location.hash) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [location.hash]);
+
+  useGlobalButtonMotion();
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -86,10 +114,10 @@ function App() {
         onSignupOpen={() => openAuth("register")}
         onProfileOpen={() => navigate("/profile")}
         onAdminOpen={() => navigate("/admin")}
+        onMenuNavigate={navigateFromHeader}
         onPrimaryNavSelect={(item) =>
           navigate(getDiscoveryUrl(mergeDiscoveryFilters(defaultMarketFilters, item.filter)))
         }
-        onMoreMarketsOpen={() => navigate("/markets")}
       />
       
       <main className="flex-1">
@@ -101,6 +129,7 @@ function App() {
                 user={user}
                 watchlistIds={watchlist.ids}
                 onWatchlistToggle={watchlist.toggle}
+                onSignupPrompt={promptSignup}
               />
             }
           />
@@ -111,6 +140,7 @@ function App() {
                 user={user}
                 watchlistIds={watchlist.ids}
                 onWatchlistToggle={watchlist.toggle}
+                onSignupPrompt={promptSignup}
               />
             }
           />
@@ -121,6 +151,7 @@ function App() {
                 user={user}
                 watchlistIds={watchlist.ids}
                 onWatchlistToggle={watchlist.toggle}
+                onSignupPrompt={promptSignup}
               />
             }
           />
@@ -131,6 +162,7 @@ function App() {
                 user={user}
                 watchlistIds={watchlist.ids}
                 onWatchlistToggle={watchlist.toggle}
+                onSignupPrompt={promptSignup}
               />
             }
           />
@@ -161,6 +193,16 @@ function App() {
 
       <SiteFooter />
       <Toaster position="top-right" />
+      {authModalMode ? (
+        <AuthModal
+          mode={authModalMode}
+          onModeChange={setAuthModalMode}
+          onClose={closeAuth}
+          onLogin={login}
+          onRegister={register}
+          onAuthenticated={closeAuth}
+        />
+      ) : null}
     </div>
   );
 }
@@ -182,3 +224,79 @@ appRoot.render(
     </AuthProvider>
   </StrictMode>,
 );
+
+function useGlobalButtonMotion() {
+  React.useEffect(() => {
+    const interactiveSelector = "button, [role='button'], a[href]";
+
+    function restorePosition(target: HTMLElement) {
+      if (target.dataset.motionPositioned !== "true") {
+        return;
+      }
+
+      if (!target.querySelector(".app-button-ripple")) {
+        target.style.position = "";
+        delete target.dataset.motionPositioned;
+      }
+    }
+
+    function onPointerDown(event: PointerEvent) {
+      if (event.button !== 0 || !(event.target instanceof Element)) {
+        return;
+      }
+
+      const target = event.target.closest<HTMLElement>(interactiveSelector);
+      if (!target || target.dataset.noButtonMotion === "true") {
+        return;
+      }
+
+      if (target instanceof HTMLButtonElement && target.disabled) {
+        return;
+      }
+
+      if (target.getAttribute("aria-disabled") === "true") {
+        return;
+      }
+
+      const bounds = target.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) {
+        return;
+      }
+
+      if (window.getComputedStyle(target).position === "static") {
+        target.dataset.motionPositioned = "true";
+        target.style.position = "relative";
+      }
+
+      const ripple = document.createElement("span");
+      const size = Math.max(bounds.width, bounds.height) * 2.35;
+
+      ripple.className = "app-button-ripple";
+      ripple.style.height = `${size}px`;
+      ripple.style.left = `${event.clientX - bounds.left}px`;
+      ripple.style.top = `${event.clientY - bounds.top}px`;
+      ripple.style.width = `${size}px`;
+
+      target.classList.remove("app-button-pop");
+      void target.offsetWidth;
+      target.classList.add("app-button-pop");
+      target.appendChild(ripple);
+
+      ripple.addEventListener(
+        "animationend",
+        () => {
+          ripple.remove();
+          target.classList.remove("app-button-pop");
+          restorePosition(target);
+        },
+        { once: true },
+      );
+    }
+
+    document.addEventListener("pointerdown", onPointerDown, { capture: true });
+
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, { capture: true });
+    };
+  }, []);
+}

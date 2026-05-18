@@ -12,6 +12,8 @@ export function AuthPage({
   onLogin,
   onRegister,
   onAuthenticated,
+  showBackButton = true,
+  surface = "page",
 }: {
   mode: "login" | "register";
   onModeChange: (mode: "login" | "register") => void;
@@ -27,6 +29,8 @@ export function AuthPage({
     displayName: string;
   }) => Promise<AuthUser>;
   onAuthenticated: () => void;
+  showBackButton?: boolean;
+  surface?: "page" | "modal";
 }) {
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -40,6 +44,10 @@ export function AuthPage({
     text: string;
   } | null>(null);
   const isRegister = mode === "register";
+  const sectionClass =
+    surface === "modal"
+      ? "w-full"
+      : "mx-auto max-w-[920px] px-4 py-8 md:px-6 xl:px-8";
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,17 +77,19 @@ export function AuthPage({
   }
 
   return (
-    <section className="mx-auto max-w-[920px] px-4 py-8 md:px-6 xl:px-8">
-      <button
-        className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
-        onClick={onBack}
-        type="button"
-      >
-        <ArrowLeft size={18} />
-        All markets
-      </button>
+    <section className={sectionClass}>
+      {showBackButton ? (
+        <button
+          className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+          onClick={onBack}
+          type="button"
+        >
+          <ArrowLeft size={18} />
+          All markets
+        </button>
+      ) : null}
 
-      <div className={`${panel} mt-6 overflow-hidden`}>
+      <div className={`${panel} ${showBackButton ? "mt-6" : ""} overflow-hidden`}>
         <div className="grid gap-6 p-5 md:grid-cols-[0.9fr_1.1fr] md:p-7">
           <div className="flex flex-col justify-between rounded-2xl border border-[#293440] bg-[#0f1318] p-5">
             <div>

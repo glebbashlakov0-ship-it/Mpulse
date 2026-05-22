@@ -1,10 +1,19 @@
-import { getFallbackImage, getLastResortImage, getRelatedMarketDisplayImage } from "../lib/market";
+import {
+  getFallbackImage,
+  getLastResortImage,
+  getRelatedMarketDisplayImage,
+  getSourceImage,
+} from "../lib/market";
 import type { Market, Outcome, RelatedMarket } from "../lib/types";
 
 export function MarketImage({
+  fetchPriority = "auto",
+  loading = "lazy",
   market,
   className = "",
 }: {
+  fetchPriority?: "auto" | "high" | "low";
+  loading?: "eager" | "lazy";
   market: Market;
   className?: string;
 }) {
@@ -12,8 +21,10 @@ export function MarketImage({
     <img
       alt=""
       className={`h-12 w-12 shrink-0 rounded-2xl object-cover ${className}`}
-      loading="lazy"
-      src={market.displayImage ?? getFallbackImage(market)}
+      decoding="async"
+      fetchPriority={fetchPriority}
+      loading={loading}
+      src={market.displayImage ?? getSourceImage(market) ?? getFallbackImage(market)}
       onError={(event) => {
         const image = event.currentTarget;
 

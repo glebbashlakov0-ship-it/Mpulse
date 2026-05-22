@@ -27,6 +27,7 @@ const migrations = [
   "010_auth_verification_tokens.sql",
   "011_account_security_and_watchlist.sql",
   "012_wallet_provider_alignment.sql",
+  "013_market_activity_comments.sql",
 ];
 
 try {

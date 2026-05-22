@@ -28,11 +28,15 @@ type SportsTeam = {
 };
 
 export function MarketCard({
+  imagePriority = "auto",
+  imageLoading = "lazy",
   market,
   onOpen,
   isWatched = false,
   onWatchlistToggle,
 }: {
+  imagePriority?: "auto" | "high" | "low";
+  imageLoading?: "eager" | "lazy";
   market: Market;
   onOpen: () => void;
   isWatched?: boolean;
@@ -85,7 +89,7 @@ export function MarketCard({
 
   return (
     <article
-      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
+      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#242b32] bg-[#1e2428] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#0093fd]/45 hover:bg-[#242b32] hover:shadow-black/20 focus-visible:border-[#0093fd] focus-visible:ring-2 focus-visible:ring-[#0093fd]/35"
       onClick={onOpen}
       onKeyDown={handleKeyDown}
       role="button"
@@ -93,11 +97,16 @@ export function MarketCard({
       aria-label={`Open ${market.title}`}
     >
       <div className="relative flex h-[42px] w-full items-start gap-2 px-3">
-        <MarketImage market={market} className="h-[38px] w-[38px] min-w-[38px] rounded-md" />
+        <MarketImage
+          market={market}
+          className="h-[38px] w-[38px] min-w-[38px] rounded-md"
+          fetchPriority={imagePriority}
+          loading={imageLoading}
+        />
         <div className="flex min-w-0 flex-1 cursor-default justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex min-h-[36px] flex-col justify-center">
-              <h2 className="line-clamp-3 w-fit min-w-0 text-[15px] font-semibold leading-[1.18] text-[#edf1f5] decoration-2 group-hover/card:underline">
+              <h2 className="line-clamp-3 w-fit min-w-0 text-[15px] font-semibold leading-[1.18] text-[#dee3e7] decoration-2 group-hover/card:underline">
                 {market.title}
               </h2>
             </div>
@@ -124,7 +133,7 @@ export function MarketCard({
           <FloatingAmount side="right" values={["+ $5"]} />
         ) : null}
 
-        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#8f9aa8]">
+        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#7b8996]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
             {isUpDownCard ? <LiveFooterLabel label={getFooterLabel(market)} /> : <MarketFooterMeta market={market} />}
             <CardActionIcons
@@ -159,7 +168,7 @@ function HeadToHeadCard({
 
   return (
     <article
-      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
+      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#242b32] bg-[#1e2428] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#0093fd]/45 hover:bg-[#242b32] hover:shadow-black/20 focus-visible:border-[#0093fd] focus-visible:ring-2 focus-visible:ring-[#0093fd]/35"
       onClick={onOpen}
       onKeyDown={onKeyDown}
       role="button"
@@ -177,7 +186,7 @@ function HeadToHeadCard({
           <TeamChoiceButton label={second.label} color={getTeamColor(second.label, 1)} />
         </div>
 
-        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#8f9aa8]">
+        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#7b8996]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
             <MarketFooterMeta market={market} />
             <CardActionIcons
@@ -197,11 +206,11 @@ function HeadToHeadTeamRow({ team }: { team: SportsTeam }) {
     <div className="group flex h-9 w-full items-center justify-between">
       <div className="flex min-w-0 items-center gap-2">
         <TeamMark image={team.image} label={team.label} market={team.market} />
-        <p className="truncate text-[16px] font-medium text-[#edf1f5] decoration-2 group-hover:underline">
+        <p className="truncate text-[16px] font-medium text-[#dee3e7] decoration-2 group-hover:underline">
           {team.label}
         </p>
       </div>
-      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold text-[#edf1f5]">
+      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold text-[#dee3e7]">
         {formatPercent(team.price)}
       </p>
     </div>
@@ -227,7 +236,7 @@ function SportsMatchCard({
 
   return (
     <article
-      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#293440] bg-[#1b2027] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#3b91f6]/45 hover:bg-[#20272f] hover:shadow-black/20 focus-visible:border-[#3b91f6] focus-visible:ring-2 focus-visible:ring-[#3b91f6]/35"
+      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#242b32] bg-[#1e2428] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#0093fd]/45 hover:bg-[#242b32] hover:shadow-black/20 focus-visible:border-[#0093fd] focus-visible:ring-2 focus-visible:ring-[#0093fd]/35"
       onClick={onOpen}
       onKeyDown={onKeyDown}
       role="button"
@@ -243,7 +252,7 @@ function SportsMatchCard({
         <div className="flex h-fit items-center justify-center gap-2">
           <SportsSideButton label={first.label} side="home" />
           <button
-            className="flex h-10 w-18 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[#293440] px-4 py-2 text-sm font-bold text-[#8f9aa8] transition hover:border-[#8f9aa8]/60 hover:bg-[#20272f] hover:text-[#edf1f5]"
+            className="flex h-10 w-18 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[#242b32] px-4 py-2 text-sm font-bold text-[#7b8996] transition hover:border-[#7b8996]/60 hover:bg-[#242b32] hover:text-[#dee3e7]"
             onClick={(event) => event.stopPropagation()}
             type="button"
           >
@@ -252,7 +261,7 @@ function SportsMatchCard({
           <SportsSideButton label={second.label} side="away" />
         </div>
 
-        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#8f9aa8]">
+        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#7b8996]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
             <MarketFooterMeta market={market} />
             <CardActionIcons
@@ -276,13 +285,13 @@ function SportsTeamRow({
     <div className="group flex h-9 w-full items-center justify-between">
       <div className="flex min-w-0 items-center gap-2">
         <TeamMark image={team.image} label={team.label} market={team.market} />
-        <span className="w-4 text-center text-[16px] font-medium text-[#edf1f5]">0</span>
-        <span className="h-3 w-0.5 shrink-0 rounded-full bg-[#293440]" />
-        <p className="truncate text-[16px] font-medium text-[#edf1f5] decoration-2 group-hover:underline">
+        <span className="w-4 text-center text-[16px] font-medium text-[#dee3e7]">0</span>
+        <span className="h-3 w-0.5 shrink-0 rounded-full bg-[#242b32]" />
+        <p className="truncate text-[16px] font-medium text-[#dee3e7] decoration-2 group-hover:underline">
           {team.label}
         </p>
       </div>
-      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold text-[#edf1f5]">
+      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold text-[#dee3e7]">
         {formatPercent(team.price)}
       </p>
     </div>
@@ -316,7 +325,7 @@ function TeamMark({
   }
 
   return (
-    <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#0f1318] text-[11px] font-bold text-[#8f9aa8]">
+    <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#15191d] text-[11px] font-bold text-[#7b8996]">
       {label.slice(0, 2).toUpperCase()}
     </span>
   );
@@ -341,7 +350,7 @@ function TeamChoiceButton({ color, label }: { color: string; label: string }) {
 }
 
 function SportsSideButton({ label, side }: { label: string; side: "home" | "away" }) {
-  const color = side === "home" ? "rgb(196, 149, 28)" : "rgb(36, 106, 255)";
+  const color = side === "home" ? "rgb(247, 208, 34)" : "rgb(0, 147, 253)";
 
   return (
     <button
@@ -398,13 +407,13 @@ function OutcomeRow({ row }: { row: CardRow }) {
   return (
     <div className="mb-2 flex w-full shrink-0 items-center justify-between gap-4">
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <p className="line-clamp-1 break-all text-[15px] font-medium leading-5 text-[#d8dde3] group-hover/card:underline">
+        <p className="line-clamp-1 break-all text-[15px] font-medium leading-5 text-[#d2d8df] group-hover/card:underline">
           {row.label}
         </p>
       </div>
       <div className="shrink-0">
         <div className="flex items-center justify-end gap-1">
-          <p className="mr-1 text-[15px] font-semibold text-[#edf1f5]">
+          <p className="mr-1 text-[15px] font-semibold text-[#dee3e7]">
             {formatPercent(row.yesPrice)}
           </p>
           <MiniTradeButton label="Yes" tone="yes" />
@@ -430,8 +439,8 @@ function TradeSide({
     <button
       className={`h-[46px] min-w-0 rounded-lg px-3 text-center text-[15px] font-bold transition hover:brightness-110 ${
         tone === "yes"
-          ? "bg-green-500/15 text-green-400 hover:bg-green-600 hover:text-white"
-          : "bg-red-500/15 text-red-400 hover:bg-red-500 hover:text-white"
+          ? "bg-[#3db468]/15 text-[#5fbe82] hover:bg-[#30a159] hover:text-white"
+          : "bg-[#cb3131]/15 text-[#d05959] hover:bg-[#cb3131] hover:text-white"
       }`}
       onClick={(event) => event.stopPropagation()}
       type="button"
@@ -454,8 +463,8 @@ function DirectionalTradeButton({
     <button
       className={`relative h-10 min-w-0 flex-1 overflow-hidden rounded-md px-2 text-center text-[16px] font-bold transition hover:text-white ${
         tone === "up"
-          ? "bg-green-500/15 text-green-400 hover:bg-green-600"
-          : "bg-red-500/15 text-red-400 hover:bg-red-500"
+          ? "bg-[#3db468]/15 text-[#5fbe82] hover:bg-[#30a159]"
+          : "bg-[#cb3131]/15 text-[#d05959] hover:bg-[#cb3131]"
       }`}
       onClick={(event) => event.stopPropagation()}
       type="button"
@@ -477,8 +486,8 @@ function MiniTradeButton({ label, tone }: { label: "Yes" | "No"; tone: "yes" | "
     <button
       className={`${tradeButton} ${
         tone === "yes"
-          ? "bg-green-500/15 text-green-400 hover:bg-green-600"
-          : "bg-red-500/15 text-red-400 hover:bg-red-500"
+          ? "bg-[#3db468]/15 text-[#5fbe82] hover:bg-[#30a159]"
+          : "bg-[#cb3131]/15 text-[#d05959] hover:bg-[#cb3131]"
       }`}
       onClick={(event) => event.stopPropagation()}
       type="button"
@@ -508,7 +517,7 @@ function MarketProbabilityGauge({ market, variant }: { market: Market; variant: 
           <path
             d={paths.track}
             fill="none"
-            stroke="#293440"
+            stroke="#242b32"
             strokeLinecap="round"
             strokeWidth="4.5"
           />
@@ -523,10 +532,10 @@ function MarketProbabilityGauge({ market, variant }: { market: Market; variant: 
         </svg>
       </div>
       <div className="flex w-full -translate-y-[28px] flex-col items-center">
-        <p className="text-center text-[22px] font-medium leading-none text-[#edf1f5]">
+        <p className="text-center text-[22px] font-medium leading-none text-[#dee3e7]">
           {display.value === null ? "--" : `${percent}%`}
         </p>
-        <p className="line-clamp-2 text-center text-[13px] font-semibold leading-tight text-[#8f9aa8]">
+        <p className="line-clamp-2 text-center text-[13px] font-semibold leading-tight text-[#7b8996]">
           {display.label}
         </p>
       </div>
@@ -560,14 +569,14 @@ export function getGaugeStroke(value: number | null) {
   const percent = getGaugePercent(value);
 
   if (percent < 30) {
-    return "#e23939";
+    return "#cb3131";
   }
 
   if (percent < 50) {
-    return "#fe9a00";
+    return "#f7d022";
   }
 
-  return "#30a159";
+  return "#3db468";
 }
 
 export function getGaugeStrokeOpacity(value: number | null) {
@@ -629,7 +638,7 @@ function FloatingAmount({ side, values }: { side: "left" | "right"; values: stri
       {values.map((value, index) => (
         <span
           className={`absolute whitespace-nowrap text-[12px] font-semibold ${
-            side === "left" ? "text-green-400" : "text-red-400"
+            side === "left" ? "text-[#5fbe82]" : "text-[#d05959]"
           }`}
           key={`${side}-${value}-${index}`}
           style={{
@@ -650,10 +659,10 @@ function LiveFooterLabel({ label }: { label: string }) {
     <div className="flex min-w-0 flex-row items-center gap-1">
       <div className="relative ml-1 flex h-5 items-center gap-1.5">
         <div className="relative flex items-center justify-center">
-          <span className="relative z-10 size-[7px] rounded-full bg-red-500" />
-          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-red-500 opacity-75" />
+          <span className="relative z-10 size-[7px] rounded-full bg-[#cb3131]" />
+          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#cb3131] opacity-75" />
         </div>
-        <p className="text-[13px] font-semibold uppercase leading-none text-red-500">Live</p>
+        <p className="text-[13px] font-semibold uppercase leading-none text-[#cb3131]">Live</p>
       </div>
       <span className="mx-px opacity-50">·</span>
       <span className="truncate">{label}</span>
@@ -686,7 +695,7 @@ function getFooterItemClassName(index: number) {
     return `${base} hidden xl:inline`;
   }
 
-  return `${base} before:mx-1 before:text-[#566272] before:content-['•']`;
+  return `${base} before:mx-1 before:text-[#586879] before:content-['•']`;
 }
 
 function CardActionIcons({
@@ -711,8 +720,8 @@ function CardActionIcons({
         <button
           className={`relative z-[1] grid h-7 w-7 place-items-center rounded-full transition ${
             isWatched
-              ? "bg-[#3b91f6]/20 text-[#3b91f6]"
-              : "text-[#8f9aa8] hover:bg-white/5 hover:text-[#edf1f5]"
+              ? "bg-[#0093fd]/20 text-[#0093fd]"
+              : "text-[#7b8996] hover:bg-white/5 hover:text-[#dee3e7]"
           }`}
           aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
           aria-pressed={isWatched}
@@ -738,13 +747,13 @@ function SportsFooterLabel({ market }: { market: Market }) {
     <div className="flex min-w-0 flex-row items-center gap-1">
       <div className="relative ml-1 flex h-5 min-w-0 items-center gap-1.5">
         <div className="relative flex shrink-0 items-center justify-center">
-          <span className="relative z-10 size-[7px] rounded-full bg-red-500" />
-          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-red-500 opacity-75" />
+          <span className="relative z-10 size-[7px] rounded-full bg-[#cb3131]" />
+          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#cb3131] opacity-75" />
         </div>
-        <p className="shrink-0 text-[14px] font-semibold leading-none text-[#edf1f5]">
+        <p className="shrink-0 text-[14px] font-semibold leading-none text-[#dee3e7]">
           {getSportsClockLabel(market)}
         </p>
-        <p className="ml-1 truncate text-[#8f9aa8]">
+        <p className="ml-1 truncate text-[#7b8996]">
           <span>{formatMoney(market.volume)} </span>Vol.
         </p>
       </div>
@@ -775,7 +784,7 @@ function HeadToHeadFooterLabel({ market }: { market: Market }) {
 function IconBadge({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <span
-      className="grid h-7 w-7 place-items-center rounded-full text-[#8f9aa8] transition hover:bg-white/5 hover:text-[#edf1f5]"
+      className="grid h-7 w-7 place-items-center rounded-full text-[#7b8996] transition hover:bg-white/5 hover:text-[#dee3e7]"
       aria-label={label}
       title={label}
     >
@@ -975,7 +984,7 @@ function getTeamColor(label: string, index: number) {
   const normalized = label.toLowerCase();
 
   if (normalized.includes("drx") || normalized.includes("oviedo") || normalized.includes("mumbai")) {
-    return "rgb(62, 127, 224)";
+    return "rgb(0, 147, 253)";
   }
 
   if (
@@ -984,10 +993,10 @@ function getTeamColor(label: string, index: number) {
     normalized.includes("jd gaming") ||
     normalized.includes("punjab")
   ) {
-    return "rgb(255, 66, 82)";
+    return "rgb(203, 49, 49)";
   }
 
-  return index === 0 ? "rgb(62, 127, 224)" : "rgb(196, 28, 28)";
+  return index === 0 ? "rgb(0, 147, 253)" : "rgb(203, 49, 49)";
 }
 
 function shortTeamLabel(label: string) {

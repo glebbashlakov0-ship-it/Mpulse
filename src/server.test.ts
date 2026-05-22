@@ -103,10 +103,135 @@ test("GET /api/markets returns normalized data and meta without raw upstream sha
   }
 });
 
+test("market activity comments can be posted and listed", async () => {
+  const app = buildApp(testConfig());
+
+  try {
+    const emptyResponse = await app.inject({
+      method: "GET",
+      url: "/api/markets/comment-market/activity",
+    });
+    const emptyBody = JSON.parse(emptyResponse.body) as {
+      data: { comments: unknown[]; topHolders: unknown[]; positions: unknown[]; activity: unknown[] };
+    };
+
+    assert.equal(emptyResponse.statusCode, 200);
+    assert.deepEqual(emptyBody.data.comments, []);
+    assert.deepEqual(emptyBody.data.activity, []);
+
+    const postResponse = await app.inject({
+      method: "POST",
+      url: "/api/markets/comment-market/comments",
+      payload: {
+        body: "This market finally has a real comment thread.",
+        positionLabel: "Yes",
+      },
+    });
+    const postBody = JSON.parse(postResponse.body) as {
+      data: {
+        comments: Array<{ body: string; displayName: string; positionLabel: string | null }>;
+        activity: Array<{ type: string; body?: string }>;
+      };
+    };
+
+    assert.equal(postResponse.statusCode, 200);
+    assert.equal(postBody.data.comments.length, 1);
+    assert.equal(postBody.data.comments[0]?.body, "This market finally has a real comment thread.");
+    assert.equal(postBody.data.comments[0]?.displayName, "Guest Trader");
+    assert.equal(postBody.data.comments[0]?.positionLabel, "Yes");
+    assert.equal(postBody.data.activity[0]?.type, "comment");
+
+    const listResponse = await app.inject({
+      method: "GET",
+      url: "/api/markets/comment-market/activity",
+    });
+    const listBody = JSON.parse(listResponse.body) as {
+      data: { comments: Array<{ body: string }>; activity: Array<{ type: string }> };
+    };
+
+    assert.equal(listResponse.statusCode, 200);
+    assert.equal(listBody.data.comments.length, 1);
+    assert.equal(listBody.data.comments[0]?.body, "This market finally has a real comment thread.");
+    assert.equal(listBody.data.activity[0]?.type, "comment");
+  } finally {
+    await app.close();
+  }
+});
+
+test("market comments validate empty payloads", async () => {
+  const app = buildApp(testConfig());
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/markets/comment-market/comments",
+      payload: { body: "   " },
+    });
+    const body = JSON.parse(response.body) as { error: { code: string } };
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(body.error.code, "INVALID_COMMENT");
+  } finally {
+    await app.close();
+  }
+});
+
+test("market activity routes list and publish comments", async () => {
+  const app = buildApp(testConfig());
+
+  try {
+    const emptyResponse = await app.inject({
+      method: "GET",
+      url: "/api/markets/demo-market/activity",
+    });
+    const emptyBody = JSON.parse(emptyResponse.body) as {
+      data: { comments: unknown[]; topHolders: unknown[]; positions: unknown[]; activity: unknown[] };
+    };
+
+    assert.equal(emptyResponse.statusCode, 200);
+    assert.deepEqual(emptyBody.data.comments, []);
+    assert.deepEqual(emptyBody.data.topHolders, []);
+    assert.deepEqual(emptyBody.data.positions, []);
+    assert.deepEqual(emptyBody.data.activity, []);
+
+    const postResponse = await app.inject({
+      method: "POST",
+      url: "/api/markets/demo-market/comments",
+      payload: {
+        body: "This market finally has a working comments tab.",
+        positionLabel: "Demo Yes",
+      },
+    });
+    const postBody = JSON.parse(postResponse.body) as {
+      data: {
+        comments: Array<{ body: string; displayName: string; positionLabel: string | null }>;
+        activity: Array<{ type: string; body?: string }>;
+      };
+    };
+
+    assert.equal(postResponse.statusCode, 200);
+    assert.equal(postBody.data.comments.length, 1);
+    assert.equal(postBody.data.comments[0]?.body, "This market finally has a working comments tab.");
+    assert.equal(postBody.data.comments[0]?.displayName, "Guest Trader");
+    assert.equal(postBody.data.comments[0]?.positionLabel, "Demo Yes");
+    assert.equal(postBody.data.activity[0]?.type, "comment");
+    assert.equal(postBody.data.activity[0]?.body, "This market finally has a working comments tab.");
+
+    const invalidResponse = await app.inject({
+      method: "POST",
+      url: "/api/markets/demo-market/comments",
+      payload: { body: "" },
+    });
+
+    assert.equal(invalidResponse.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
 test("GET /api/markets filters by topic on the backend", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () =>
-    Response.json([
+  const markets = [
       marketFixture({
         id: "crypto",
         question: "Will Bitcoin be above $100k?",
@@ -123,7 +248,34 @@ test("GET /api/markets filters by topic on the backend", async () => {
         description: "A basketball market.",
         category: "Sports",
       }),
-    ]);
+    ];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+
+    if (url.pathname === "/events") {
+      return Response.json([
+        {
+          id: "crypto-event",
+          title: "Crypto markets",
+          active: true,
+          closed: false,
+          archived: false,
+          restricted: false,
+          volume: 500000,
+          volume24hr: 50000,
+          liquidity: 10000,
+          tags: [{ slug: "crypto", label: "Crypto" }],
+          markets,
+        },
+      ]);
+    }
+
+    if (url.pathname === "/public-search") {
+      return Response.json({ events: [] });
+    }
+
+    return Response.json(markets);
+  };
   const app = buildApp(testConfig());
 
   try {
@@ -153,8 +305,40 @@ test("GET /api/markets keeps esports topic strict", async () => {
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
 
-    if (url.pathname === "/events" || url.pathname === "/public-search") {
-      return Response.json(url.pathname === "/events" ? [] : { events: [] });
+    if (url.pathname === "/events") {
+      return Response.json([]);
+    }
+
+    if (url.pathname === "/public-search") {
+      return Response.json({
+        events: [
+          {
+            id: "esports-search",
+            title: "Search results",
+            active: true,
+            closed: false,
+            archived: false,
+            restricted: false,
+            volume: 100000,
+            volume24hr: 10000,
+            liquidity: 10000,
+            tags: [],
+            markets: [
+              marketFixture({
+                id: "apple-tech",
+                question: "Will Apple release a new product line before 2027?",
+                description: "Apple may release a gaming device or another technology product line.",
+                category: undefined,
+              }),
+              marketFixture({
+                id: "valorant",
+                question: "Will the Valorant final go five maps?",
+                category: undefined,
+              }),
+            ],
+          },
+        ],
+      });
     }
 
     return Response.json([

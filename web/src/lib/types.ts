@@ -210,6 +210,66 @@ export type LocalPosition = {
   lastTradeAt: string;
 };
 
+export type MarketComment = {
+  id: string;
+  marketId: string;
+  userId: string | null;
+  displayName: string;
+  body: string;
+  positionLabel: string | null;
+  createdAt: string;
+};
+
+export type MarketHolder = {
+  id: string;
+  userId: string;
+  displayName: string;
+  yesShares: number;
+  noShares: number;
+  shares: number;
+  value: number;
+  updatedAt: string;
+};
+
+export type MarketPublicPosition = {
+  id: string;
+  userId: string;
+  displayName: string;
+  side: "yes" | "no";
+  shares: number;
+  totalCost: number;
+  averagePrice: number | null;
+  lastPrice: number | null;
+  value: number;
+  pnl: number;
+  updatedAt: string;
+};
+
+export type MarketActivityItem =
+  | {
+      type: "trade";
+      id: string;
+      marketId: string;
+      userId: string;
+      displayName: string;
+      side: "yes" | "no";
+      action: "buy" | "sell";
+      amount: number;
+      price: number;
+      shares: number;
+      createdAt: string;
+    }
+  | (MarketComment & {
+      type: "comment";
+    });
+
+export type MarketActivityPayload = {
+  comments: MarketComment[];
+  topHolders: MarketHolder[];
+  positions: MarketPublicPosition[];
+  activity: MarketActivityItem[];
+};
+
 export type LocalUser = {
   id: string;
   displayName: string;

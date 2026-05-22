@@ -111,13 +111,13 @@ export function AdminPage({
   if (!isAdmin) {
     return (
       <AdminShell title="Access denied">
-        <div className="rounded-2xl border border-[#293440] bg-[#171d24] p-6">
-          <p className="text-sm font-medium text-[#8f9aa8]">
+        <div className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-6">
+          <p className="text-sm font-medium text-[#7b8996]">
             Admin access requires an assigned admin role.
           </p>
           {authStatus !== "authenticated" ? (
             <button
-              className="mt-4 rounded-2xl bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white"
+              className="mt-4 rounded-2xl bg-[#0093fd] px-4 py-3 text-sm font-semibold text-white"
               onClick={onOpenLogin}
               type="button"
             >
@@ -131,14 +131,14 @@ export function AdminPage({
 
   return (
     <AdminShell title="Admin">
-      <div className="mb-5 flex flex-wrap items-center gap-3 text-sm font-semibold text-[#8f9aa8]">
-        <span className="flex items-center gap-2 text-[#edf1f5]">
+      <div className="mb-5 flex flex-wrap items-center gap-3 text-sm font-semibold text-[#7b8996]">
+        <span className="flex items-center gap-2 text-[#dee3e7]">
           <ShieldCheck size={18} />
           {user?.role}
         </span>
         <span>Transfers are not available yet.</span>
         {status === "loading" ? <span>Loading...</span> : null}
-        {message ? <span className="text-[#ffb4b4]">{message}</span> : null}
+        {message ? <span className="text-[#d78282]">{message}</span> : null}
       </div>
 
       <section className="grid gap-4 lg:grid-cols-5">
@@ -156,30 +156,30 @@ export function AdminPage({
             ) : (
               withdrawals?.withdrawalRequests.map((request) => (
                 <div
-                  className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4"
+                  className="rounded-2xl border border-[#242b32] bg-[#15191d] p-4"
                   key={request.id}
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <strong className="block text-sm text-[#edf1f5]">
+                      <strong className="block text-sm text-[#dee3e7]">
                         {request.amount} {request.asset} on {request.network}
                       </strong>
-                      <span className="mt-1 block break-all text-xs font-medium text-[#8f9aa8]">
+                      <span className="mt-1 block break-all text-xs font-medium text-[#7b8996]">
                         {request.destinationAddress}
                       </span>
                     </div>
-                    <span className="rounded-full bg-[#171d24] px-3 py-1 text-xs font-bold text-[#edf1f5]">
+                    <span className="rounded-full bg-[#1e2428] px-3 py-1 text-xs font-bold text-[#dee3e7]">
                       {request.status}
                     </span>
                   </div>
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-[#8f9aa8]">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-[#7b8996]">
                     <span>
                       {request.realTransferBlocked
                         ? "Transfer unavailable"
                         : "Ready for review"}
                     </span>
                     <button
-                      className="flex items-center gap-2 rounded-2xl border border-[#293440] px-3 py-2 text-[#ffb4b4] transition hover:border-[#ffb4b4]/70"
+                      className="flex items-center gap-2 rounded-2xl border border-[#242b32] px-3 py-2 text-[#d78282] transition hover:border-[#d78282]/70"
                       disabled={request.status === "rejected"}
                       onClick={() => void rejectWithdrawal(request.id)}
                       type="button"
@@ -197,13 +197,13 @@ export function AdminPage({
         <Panel title="Market moderation">
           <div className="grid gap-3 sm:grid-cols-[1fr_180px_auto]">
             <input
-              className="h-12 min-w-0 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
+              className="h-12 min-w-0 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 text-sm font-semibold text-[#dee3e7] outline-none"
               placeholder="Market id"
               value={marketId}
               onChange={(event) => setMarketId(event.target.value)}
             />
             <select
-              className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
+              className="h-12 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 text-sm font-semibold text-[#dee3e7] outline-none"
               value={reason}
               onChange={(event) => setReason(event.target.value as HiddenMarketRule["reason"])}
             >
@@ -214,7 +214,7 @@ export function AdminPage({
               ))}
             </select>
             <button
-              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#3b91f6] px-4 text-sm font-semibold text-white"
+              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#0093fd] px-4 text-sm font-semibold text-white"
               onClick={() => void hideMarket()}
               type="button"
             >
@@ -229,17 +229,17 @@ export function AdminPage({
             ) : (
               audit?.hiddenMarkets.map((rule) => (
                 <div
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] p-4"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] p-4"
                   key={rule.id}
                 >
                   <div>
-                    <strong className="block text-sm text-[#edf1f5]">{rule.marketId}</strong>
-                    <span className="mt-1 block text-xs font-semibold text-[#8f9aa8]">
+                    <strong className="block text-sm text-[#dee3e7]">{rule.marketId}</strong>
+                    <span className="mt-1 block text-xs font-semibold text-[#7b8996]">
                       {rule.reason}
                     </span>
                   </div>
                   <button
-                    className="flex items-center gap-2 rounded-2xl border border-[#293440] px-3 py-2 text-sm font-semibold text-[#edf1f5] transition hover:border-[#3b91f6]/70"
+                    className="flex items-center gap-2 rounded-2xl border border-[#242b32] px-3 py-2 text-sm font-semibold text-[#dee3e7] transition hover:border-[#0093fd]/70"
                     onClick={() => void unhideMarket(rule.marketId)}
                     type="button"
                   >
@@ -260,16 +260,16 @@ export function AdminPage({
           ) : (
             audit?.auditLogs.slice(0, 40).map((event) => (
               <div
-                className="grid gap-1 rounded-2xl border border-[#293440] bg-[#0f1318] p-3 text-xs"
+                className="grid gap-1 rounded-2xl border border-[#242b32] bg-[#15191d] p-3 text-xs"
                 key={event.id}
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <strong className="text-sm text-[#edf1f5]">{event.eventType}</strong>
-                  <span className="font-semibold text-[#8f9aa8]">
+                  <strong className="text-sm text-[#dee3e7]">{event.eventType}</strong>
+                  <span className="font-semibold text-[#7b8996]">
                     {new Date(event.createdAt).toLocaleString()}
                   </span>
                 </div>
-                <span className="break-all font-medium text-[#8f9aa8]">
+                <span className="break-all font-medium text-[#7b8996]">
                   user: {event.userId ?? "system"}
                 </span>
               </div>
@@ -284,7 +284,7 @@ export function AdminPage({
 function AdminShell({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mx-auto w-full max-w-[1500px] overflow-x-hidden px-4 py-8 md:px-6 xl:px-8">
-      <h1 className="text-3xl font-semibold tracking-normal text-[#edf1f5]">{title}</h1>
+      <h1 className="text-3xl font-semibold tracking-normal text-[#dee3e7]">{title}</h1>
       <div className="mt-6">{children}</div>
     </section>
   );
@@ -292,9 +292,9 @@ function AdminShell({ title, children }: { title: string; children: React.ReactN
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-[#293440] bg-[#171d24] p-4">
-      <span className="text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">{label}</span>
-      <strong className="mt-2 block text-2xl font-semibold text-[#edf1f5]">{value}</strong>
+    <div className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-4">
+      <span className="text-xs font-bold uppercase tracking-wide text-[#7b8996]">{label}</span>
+      <strong className="mt-2 block text-2xl font-semibold text-[#dee3e7]">{value}</strong>
     </div>
   );
 }
@@ -309,8 +309,8 @@ function Panel({
   className?: string;
 }) {
   return (
-    <section className={`min-w-0 rounded-2xl border border-[#293440] bg-[#171d24] p-4 ${className}`}>
-      <h2 className="mb-4 text-lg font-semibold text-[#edf1f5]">{title}</h2>
+    <section className={`min-w-0 rounded-2xl border border-[#242b32] bg-[#1e2428] p-4 ${className}`}>
+      <h2 className="mb-4 text-lg font-semibold text-[#dee3e7]">{title}</h2>
       {children}
     </section>
   );
@@ -318,7 +318,7 @@ function Panel({
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-[#293440] p-5 text-center text-sm font-semibold text-[#8f9aa8]">
+    <div className="rounded-2xl border border-dashed border-[#242b32] p-5 text-center text-sm font-semibold text-[#7b8996]">
       {text}
     </div>
   );

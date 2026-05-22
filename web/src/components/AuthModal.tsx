@@ -51,16 +51,16 @@ export function AuthModal({
       role="dialog"
     >
       <div
-        className="app-modal-panel relative max-h-[calc(100vh-48px)] w-full max-w-[920px] overflow-y-auto"
+        className="app-modal-panel relative max-h-[calc(100vh-48px)] w-full max-w-[540px] overflow-y-auto"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <button
           aria-label="Close"
-          className="home-soft-button absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-full border border-[#293440] bg-[#0f1318] text-[#8f9aa8] transition hover:border-[#3b91f6]/60 hover:text-[#edf1f5]"
+          className="home-soft-button absolute right-3 top-3 z-10 grid size-8 place-items-center rounded-full border border-[#242b32] bg-[#15191d] text-[#7b8996] transition hover:border-[#0093fd]/60 hover:text-[#dee3e7]"
           onClick={onClose}
           type="button"
         >
-          <X size={18} />
+          <X size={16} />
         </button>
         <AuthForm
           mode={mode}

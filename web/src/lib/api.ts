@@ -15,6 +15,7 @@ import type {
   LedgerBalancePayload,
   LedgerEntriesPayload,
   Market,
+  MarketActivityPayload,
   MarketCategory,
   MarketTag,
   Portfolio,
@@ -163,11 +164,13 @@ export async function placeTradeApi({
   side,
   action,
   amount,
+  shares,
 }: {
   marketId: string;
   side: "yes" | "no";
   action?: "buy" | "sell";
-  amount: number;
+  amount?: number;
+  shares?: number;
 }) {
   const idempotencyKey =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -180,7 +183,7 @@ export async function placeTradeApi({
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
     },
-    body: JSON.stringify({ marketId, side, action: action ?? "buy", amount }),
+    body: JSON.stringify({ marketId, side, action: action ?? "buy", amount, shares }),
   });
   const payload = (await response.json()) as
     | ApiResponse<{
@@ -212,6 +215,24 @@ export async function loadCurrentUser() {
 
   const payload = (await response.json()) as ApiResponse<{ user: AuthUser | null }>;
   return payload.data.user;
+}
+
+export async function lookupAuthEmail(email: string) {
+  const response = await fetchWithTimeout("/api/auth/lookup", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not check email"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<{ exists: boolean }>;
+  return payload.data.exists;
 }
 
 export async function registerUser(input: {
@@ -463,6 +484,43 @@ export async function loadMarketDetail(marketId: string, signal: AbortSignal) {
   }
 
   const payload = (await response.json()) as ApiResponse<Market>;
+  return payload.data;
+}
+
+export async function loadMarketActivity(marketId: string, signal: AbortSignal) {
+  const response = await apiFetch(`/api/markets/${encodeURIComponent(marketId)}/activity`, {
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error("Market activity request failed");
+  }
+
+  const payload = (await response.json()) as ApiResponse<MarketActivityPayload>;
+  return payload.data;
+}
+
+export async function postMarketComment({
+  body,
+  marketId,
+  positionLabel,
+}: {
+  body: string;
+  marketId: string;
+  positionLabel?: string | null;
+}) {
+  const response = await apiFetch(`/api/markets/${encodeURIComponent(marketId)}/comments`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body, positionLabel }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not post comment"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<MarketActivityPayload>;
   return payload.data;
 }
 

@@ -69,7 +69,18 @@ test("filters, searches, sorts, and paginates market lists on the backend", asyn
   const service = buildMarketDataService({
     config: testConfig(),
     cache: new MemoryCacheStore(false),
-    polymarket: localClient(markets),
+    polymarket: localClient(
+      markets,
+      markets[0],
+      [
+        eventFixture({
+          id: "crypto-event",
+          title: "Crypto markets",
+          tags: [{ slug: "crypto", label: "Crypto" }],
+          markets,
+        }),
+      ],
+    ),
   });
   const result = await service.listMarkets({
     category: "sports",
@@ -231,7 +242,7 @@ test("paginates upstream market discovery beyond Polymarket's single page cap", 
     },
   });
 
-  const result = await service.listMarkets({ limit: 10, sort: "trending", status: "live" });
+  const result = await service.listMarkets({ limit: 120, sort: "trending", status: "live" });
 
   assert.deepEqual(
     marketQueries.map((query) => [query.limit, query.offset]),
@@ -276,7 +287,7 @@ test("paginates event discovery because Polymarket cards are event-first", async
     },
   });
 
-  const result = await service.listMarkets({ limit: 10, sort: "trending", status: "live" });
+  const result = await service.listMarkets({ limit: 120, sort: "trending", status: "live" });
 
   assert.deepEqual(
     eventQueries
@@ -453,6 +464,7 @@ test("normalizes event-backed markets with event tags, media, and 24h volume", a
               id: "bitcoin-event-market-2",
               question: "Will Bitcoin be above $200k?",
               category: undefined,
+              image: "https://example.com/bitcoin-200.png",
               volumeNum: 10,
             }),
           ],
@@ -470,7 +482,8 @@ test("normalizes event-backed markets with event tags, media, and 24h volume", a
   assert.equal(result.data[0]?.image, "https://example.com/bitcoin.png");
   assert.equal(result.data[0]?.volume_24h, 12345);
   assert.equal(result.data[0]?.group_markets?.length, 2);
-  assert.equal(result.data[0]?.group_markets?.[1]?.image, "https://example.com/bitcoin.png");
+  assert.equal(result.data[0]?.group_markets?.[0]?.image, "https://example.com/bitcoin.png");
+  assert.equal(result.data[0]?.group_markets?.[1]?.image, "https://example.com/bitcoin-200.png");
 });
 
 test("suppresses individual child cards when an event-backed grouped card is available", async () => {
@@ -730,7 +743,18 @@ test("esports topic does not include generic gaming tech markets", async () => {
   const service = buildMarketDataService({
     config: testConfig(),
     cache: new MemoryCacheStore(false),
-    polymarket: localClient(markets),
+    polymarket: localClient(
+      markets,
+      markets[0],
+      [
+        eventFixture({
+          id: "crypto-event",
+          title: "Crypto markets",
+          tags: [{ slug: "crypto", label: "Crypto" }],
+          markets,
+        }),
+      ],
+    ),
   });
 
   const result = await service.listMarkets({ topic: "esports", sort: "volume" });
@@ -956,7 +980,18 @@ test("filters market lists by topic while treating all as no-op", async () => {
   const service = buildMarketDataService({
     config: testConfig(),
     cache: new MemoryCacheStore(false),
-    polymarket: localClient(markets),
+    polymarket: localClient(
+      markets,
+      markets[0],
+      [
+        eventFixture({
+          id: "crypto-event",
+          title: "Crypto markets",
+          tags: [{ slug: "crypto", label: "Crypto" }],
+          markets,
+        }),
+      ],
+    ),
   });
 
   const crypto = await service.listMarkets({ topic: "crypto", sort: "volume" });
@@ -970,44 +1005,142 @@ test("filters market lists by topic while treating all as no-op", async () => {
 });
 
 test("filters Polymarket topic slugs without widening AI into every tech market", async () => {
+  const aiMarket = marketFixture({
+    id: "ai-market",
+    question: "Will OpenAI release a new model?",
+    category: "Tech",
+  });
+  const aiTaggedEventMarket = marketFixture({
+    id: "ai-tagged-event-market",
+    question: "Will this model win benchmark?",
+    category: "Tech",
+  });
+  const plainTechMarket = marketFixture({
+    id: "plain-tech-market",
+    question: "Will Apple release a new device?",
+    category: "Tech",
+  });
+  const cryptoMarket = marketFixture({
+    id: "crypto-market",
+    question: "Will Bitcoin rise?",
+    category: "Crypto",
+  });
   const service = buildMarketDataService({
     config: testConfig(),
     cache: new MemoryCacheStore(false),
-    polymarket: localClient([
-      marketFixture({
-        id: "ai-market",
-        question: "Will OpenAI release a new model?",
-        category: "Tech",
-      }),
-      marketFixture({
-        id: "ai-tagged-event-market",
-        question: "Will this model win benchmark?",
-        category: "Tech",
-        events: [
+    polymarket: {
+      getEvents: async <T>() =>
+        [
           eventFixture({
-            id: "ai-event",
+            id: "ai-tagged-event",
+            title: "AI benchmark",
             tags: [{ slug: "ai", label: "AI" }],
+            markets: [aiTaggedEventMarket],
           }),
-        ],
-      }),
-      marketFixture({
-        id: "plain-tech-market",
-        question: "Will Apple release a new device?",
-        category: "Tech",
-      }),
-      marketFixture({
-        id: "crypto-market",
-        question: "Will Bitcoin rise?",
-        category: "Crypto",
-      }),
-    ]),
+        ] as T,
+      getMarkets: async <T>() => [] as T,
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>() =>
+        ({
+          events: [
+            eventFixture({
+              id: "ai-search",
+              title: "Search results",
+              markets: [aiMarket, plainTechMarket, cryptoMarket],
+            }),
+          ],
+        }) as T,
+    },
   });
 
   const result = await service.listMarkets({ topic: "ai" });
 
   assert.deepEqual(
-    result.data.map((market) => market.id),
+    result.data.map((market) => market.id).sort(),
     ["ai-market", "ai-tagged-event-market"],
+  );
+});
+
+test("uses culture search fallback when Polymarket category queries are not useful", async () => {
+  const searchQueries: string[] = [];
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>() => [] as T,
+      getMarkets: async <T>() => [] as T,
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>(query: Record<string, unknown>) => {
+        searchQueries.push(String(query.q ?? ""));
+
+        return {
+          events:
+            query.q === "movies"
+              ? [
+                  eventFixture({
+                    id: "movie-event",
+                    title: "Movie box office",
+                    tags: [
+                      { slug: "movies", label: "Movies" },
+                      { slug: "pop-culture", label: "Pop Culture" },
+                    ],
+                    markets: [
+                      marketFixture({
+                        id: "movie-market",
+                        question: "Will a movie top the box office?",
+                        category: undefined,
+                      }),
+                    ],
+                  }),
+                ]
+              : [],
+        } as T;
+      },
+    },
+  });
+
+  const result = await service.listMarkets({ category: "culture", sort: "trending", status: "live" });
+
+  assert.equal(searchQueries.includes("movies"), true);
+  assert.deepEqual(
+    result.data.map((market) => market.id),
+    ["movie-market"],
+  );
+});
+
+test("focused market query failures do not fail category pages with event-backed data", async () => {
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>() =>
+        [
+          eventFixture({
+            id: "politics-event",
+            title: "Election market",
+            tags: [{ slug: "politics", label: "Politics" }],
+            markets: [
+              marketFixture({
+                id: "politics-event-market",
+                question: "Will the election market stay active?",
+                category: undefined,
+              }),
+            ],
+          }),
+        ] as T,
+      getMarkets: async <T>() => {
+        throw new UpstreamError("Focused market query timed out", 0);
+      },
+      getMarket: async <T>() => marketFixture() as T,
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  const result = await service.listMarkets({ category: "politics", sort: "trending", status: "live" });
+
+  assert.deepEqual(
+    result.data.map((market) => market.id),
+    ["politics-event-market"],
   );
 });
 

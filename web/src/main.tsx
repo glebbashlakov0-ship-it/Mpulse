@@ -12,6 +12,7 @@ import { WatchlistPage } from "./pages/WatchlistPage";
 import { MarketDetailPage } from "./pages/MarketDetailPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { WalletPage } from "./pages/WalletPage";
+import { RewardsPage } from "./pages/RewardsPage";
 import { KYCPage } from "./pages/KYCPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { AdminPage } from "./pages/AdminPage";
@@ -95,8 +96,6 @@ function App() {
     });
   }, [location.hash]);
 
-  useGlobalButtonMotion();
-
   return (
     <div className="flex min-h-screen flex-col">
       <SiteHeader
@@ -104,12 +103,10 @@ function App() {
         filters={headerFilters}
         authStatus={status}
         user={user}
-        watchlistCount={watchlist.count}
         onQueryChange={(query) =>
           navigate(getDiscoveryUrl(mergeDiscoveryFilters(headerFilters, { search: query })))
         }
         onPortfolioOpen={() => navigate("/portfolio")}
-        onWatchlistOpen={() => navigate("/watchlist")}
         onLoginOpen={() => openAuth("login")}
         onSignupOpen={() => openAuth("register")}
         onProfileOpen={() => navigate("/profile")}
@@ -128,6 +125,7 @@ function App() {
               <HomePage
                 user={user}
                 watchlistIds={watchlist.ids}
+                watchlistMarkets={watchlist.items}
                 onWatchlistToggle={watchlist.toggle}
                 onSignupPrompt={promptSignup}
               />
@@ -139,6 +137,7 @@ function App() {
               <HomePage
                 user={user}
                 watchlistIds={watchlist.ids}
+                watchlistMarkets={watchlist.items}
                 onWatchlistToggle={watchlist.toggle}
                 onSignupPrompt={promptSignup}
               />
@@ -150,6 +149,7 @@ function App() {
               <HomePage
                 user={user}
                 watchlistIds={watchlist.ids}
+                watchlistMarkets={watchlist.items}
                 onWatchlistToggle={watchlist.toggle}
                 onSignupPrompt={promptSignup}
               />
@@ -161,6 +161,7 @@ function App() {
               <HomePage
                 user={user}
                 watchlistIds={watchlist.ids}
+                watchlistMarkets={watchlist.items}
                 onWatchlistToggle={watchlist.toggle}
                 onSignupPrompt={promptSignup}
               />
@@ -180,6 +181,7 @@ function App() {
           <Route path="/markets/:id" element={<MarketDetailPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/wallet" element={<WalletPage />} />
+          <Route path="/rewards" element={<RewardsPage />} />
           <Route path="/kyc" element={<KYCPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/admin" element={<AdminPage />} />
@@ -224,79 +226,3 @@ appRoot.render(
     </AuthProvider>
   </StrictMode>,
 );
-
-function useGlobalButtonMotion() {
-  React.useEffect(() => {
-    const interactiveSelector = "button, [role='button'], a[href]";
-
-    function restorePosition(target: HTMLElement) {
-      if (target.dataset.motionPositioned !== "true") {
-        return;
-      }
-
-      if (!target.querySelector(".app-button-ripple")) {
-        target.style.position = "";
-        delete target.dataset.motionPositioned;
-      }
-    }
-
-    function onPointerDown(event: PointerEvent) {
-      if (event.button !== 0 || !(event.target instanceof Element)) {
-        return;
-      }
-
-      const target = event.target.closest<HTMLElement>(interactiveSelector);
-      if (!target || target.dataset.noButtonMotion === "true") {
-        return;
-      }
-
-      if (target instanceof HTMLButtonElement && target.disabled) {
-        return;
-      }
-
-      if (target.getAttribute("aria-disabled") === "true") {
-        return;
-      }
-
-      const bounds = target.getBoundingClientRect();
-      if (bounds.width <= 0 || bounds.height <= 0) {
-        return;
-      }
-
-      if (window.getComputedStyle(target).position === "static") {
-        target.dataset.motionPositioned = "true";
-        target.style.position = "relative";
-      }
-
-      const ripple = document.createElement("span");
-      const size = Math.max(bounds.width, bounds.height) * 2.35;
-
-      ripple.className = "app-button-ripple";
-      ripple.style.height = `${size}px`;
-      ripple.style.left = `${event.clientX - bounds.left}px`;
-      ripple.style.top = `${event.clientY - bounds.top}px`;
-      ripple.style.width = `${size}px`;
-
-      target.classList.remove("app-button-pop");
-      void target.offsetWidth;
-      target.classList.add("app-button-pop");
-      target.appendChild(ripple);
-
-      ripple.addEventListener(
-        "animationend",
-        () => {
-          ripple.remove();
-          target.classList.remove("app-button-pop");
-          restorePosition(target);
-        },
-        { once: true },
-      );
-    }
-
-    document.addEventListener("pointerdown", onPointerDown, { capture: true });
-
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, { capture: true });
-    };
-  }, []);
-}

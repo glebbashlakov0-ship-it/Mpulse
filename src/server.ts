@@ -41,6 +41,10 @@ import {
   PostgresLedgerRepository,
 } from "./ledger.js";
 import { MemoryPortfolioRepository, PostgresPortfolioRepository } from "./portfolioRepository.js";
+import {
+  MemoryMarketActivityRepository,
+  PostgresMarketActivityRepository,
+} from "./marketActivityRepository.js";
 import { buildMarketDataService, MarketDataError } from "./marketDataService.js";
 import { MemoryMarketRepository, PostgresMarketRepository } from "./marketRepository.js";
 import { buildPolymarketClient, UpstreamError } from "./polymarketClient.js";
@@ -60,6 +64,7 @@ import { registerComplianceRoutes } from "./routes/complianceRoutes.js";
 import { registerWalletRoutes } from "./routes/walletRoutes.js";
 import { registerLedgerRoutes } from "./routes/ledgerRoutes.js";
 import { registerTradingRoutes } from "./routes/tradingRoutes.js";
+import { registerMarketActivityRoutes } from "./routes/marketActivityRoutes.js";
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerWatchlistRoutes } from "./routes/watchlistRoutes.js";
 import { MemoryWatchlistRepository, PostgresWatchlistRepository } from "./watchlistRepository.js";
@@ -107,6 +112,9 @@ export function buildApp(config: AppConfig = getConfig()) {
   const portfolioRepository = db.enabled
     ? new PostgresPortfolioRepository(db)
     : new MemoryPortfolioRepository();
+  const marketActivityRepository = db.enabled
+    ? new PostgresMarketActivityRepository(db)
+    : new MemoryMarketActivityRepository();
   const watchlistRepository = db.enabled
     ? new PostgresWatchlistRepository(db)
     : new MemoryWatchlistRepository();
@@ -262,6 +270,7 @@ export function buildApp(config: AppConfig = getConfig()) {
   registerHealthRoutes(app, config, db, marketData);
   registerEventRoutes(app, polymarket, marketData);
   registerMarketRoutes(app, marketData);
+  registerMarketActivityRoutes(app, audit, marketActivityRepository);
   registerAuthRoutes(app, auth, audit, config, authRateLimiter, verification, twoFactor);
   registerComplianceRoutes(app, auth, compliance, config);
   registerWalletRoutes(app, auth, audit, wallets, config);

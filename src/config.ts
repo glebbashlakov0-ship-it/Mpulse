@@ -221,12 +221,12 @@ export function getConfig(): AppConfig {
     emailFromAddress: stringFromEnv("EMAIL_FROM_ADDRESS") ?? "Pulse Market <noreply@pulsemarket.app>",
     appBaseUrl: urlFromEnv("APP_BASE_URL", nodeEnv === "production" ? "https://pulsemarket.app" : "http://localhost:5173"),
     cacheTtlMs: {
-      activeMarkets: numberFromEnv("CACHE_TTL_ACTIVE_MARKETS_MS", 20_000),
+      activeMarkets: numberFromEnv("CACHE_TTL_ACTIVE_MARKETS_MS", 60_000),
       closedMarkets: numberFromEnv("CACHE_TTL_CLOSED_MARKETS_MS", 180_000),
-      marketDetail: numberFromEnv("CACHE_TTL_MARKET_DETAIL_MS", 20_000),
+      marketDetail: numberFromEnv("CACHE_TTL_MARKET_DETAIL_MS", 30_000),
       categories: numberFromEnv("CACHE_TTL_CATEGORIES_MS", 900_000),
-      relatedMarkets: numberFromEnv("CACHE_TTL_RELATED_MARKETS_MS", 60_000),
-      searchResults: numberFromEnv("CACHE_TTL_SEARCH_RESULTS_MS", 20_000),
+      relatedMarkets: numberFromEnv("CACHE_TTL_RELATED_MARKETS_MS", 120_000),
+      searchResults: numberFromEnv("CACHE_TTL_SEARCH_RESULTS_MS", 60_000),
     },
     blockedMarketTerms: listFromEnv("BLOCKED_MARKET_TERMS", [
       "christ",

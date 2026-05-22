@@ -1,9 +1,10 @@
 import * as React from "react";
-import { AlertCircle, ArrowLeft, CheckCircle2, LogIn, UserPlus } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { AlertCircle, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { lookupAuthEmail } from "../lib/api";
 import type { AuthUser } from "../lib/types";
 
-const panel = "rounded-3xl border border-[#293440] bg-[#171d24]";
+const panel = "rounded-[28px] border border-[#242b32] bg-[#181d21] shadow-[0_28px_90px_rgba(0,0,0,0.46)]";
+type EmailAuthStep = "email" | "login" | "register";
 
 export function AuthPage({
   mode,
@@ -37,27 +38,98 @@ export function AuthPage({
   const [twoFactorCode, setTwoFactorCode] = React.useState("");
   const [needsTwoFactor, setNeedsTwoFactor] = React.useState(false);
   const [displayName, setDisplayName] = React.useState("");
+  const [emailAuthStep, setEmailAuthStep] = React.useState<EmailAuthStep>("email");
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const navigate = useNavigate();
   const [message, setMessage] = React.useState<{
     tone: "success" | "error";
     text: string;
   } | null>(null);
-  const isRegister = mode === "register";
+  const isLoginStep = emailAuthStep === "login";
+  const isRegisterStep = emailAuthStep === "register";
   const sectionClass =
     surface === "modal"
       ? "w-full"
       : "mx-auto max-w-[920px] px-4 py-8 md:px-6 xl:px-8";
 
+  React.useEffect(() => {
+    setEmailAuthStep("email");
+    setMessage(null);
+    setNeedsTwoFactor(false);
+    setPassword("");
+    setTwoFactorCode("");
+  }, [mode]);
+
+  function getDefaultDisplayName(nextEmail: string) {
+    return nextEmail.split("@")[0]?.trim() || "Market Trader";
+  }
+
+  function updateEmail(nextEmail: string) {
+    setEmail(nextEmail);
+
+    if (emailAuthStep !== "email") {
+      setEmailAuthStep("email");
+      setPassword("");
+      setDisplayName("");
+      setTwoFactorCode("");
+      setNeedsTwoFactor(false);
+      setMessage(null);
+    }
+  }
+
+  function focusNextStep(nextStep: EmailAuthStep) {
+    window.requestAnimationFrame(() => {
+      const selector =
+        nextStep === "register"
+          ? 'input[autocomplete="name"]'
+          : 'input[autocomplete="current-password"]';
+      document.querySelector<HTMLInputElement>(selector)?.focus();
+    });
+  }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const nextEmail = email.trim().toLowerCase();
+    if (!nextEmail) {
+      setMessage({ tone: "error", text: "Enter your email to continue." });
+      return;
+    }
+
+    if (emailAuthStep === "email") {
+      setIsSubmitting(true);
+      setMessage(null);
+
+      try {
+        const exists = await lookupAuthEmail(nextEmail);
+        const nextStep = exists ? "login" : "register";
+        setEmailAuthStep(nextStep);
+        focusNextStep(nextStep);
+      } catch (error) {
+        setMessage({
+          tone: "error",
+          text: error instanceof Error ? error.message : "Could not check email.",
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    if (!password.trim()) {
+      setMessage({ tone: "error", text: "Enter your password to continue." });
+      return;
+    }
+
     setIsSubmitting(true);
     setMessage(null);
 
     try {
-      const user = isRegister
-        ? await onRegister({ email, password, displayName })
-        : await onLogin({ email, password, twoFactorCode: twoFactorCode.trim() || undefined });
+      const user = isRegisterStep
+        ? await onRegister({
+            email: nextEmail,
+            password,
+            displayName: displayName.trim() || getDefaultDisplayName(nextEmail),
+          })
+        : await onLogin({ email: nextEmail, password, twoFactorCode: twoFactorCode.trim() || undefined });
       setMessage({
         tone: "success",
         text: `Signed in as ${user.displayName}.`,
@@ -76,11 +148,18 @@ export function AuthPage({
     }
   }
 
+  function showProviderPlaceholder(label: string) {
+    setMessage({
+      tone: "success",
+      text: `${label} sign-in will be connected soon.`,
+    });
+  }
+
   return (
     <section className={sectionClass}>
       {showBackButton ? (
         <button
-          className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+          className="flex w-fit items-center gap-2 rounded-2xl border border-[#242b32] px-4 py-2 text-sm font-semibold text-[#7b8996] transition hover:border-[#0093fd]/50 hover:text-[#dee3e7]"
           onClick={onBack}
           type="button"
         >
@@ -89,106 +168,109 @@ export function AuthPage({
         </button>
       ) : null}
 
-      <div className={`${panel} ${showBackButton ? "mt-6" : ""} overflow-hidden`}>
-        <div className="grid gap-6 p-5 md:grid-cols-[0.9fr_1.1fr] md:p-7">
-          <div className="flex flex-col justify-between rounded-2xl border border-[#293440] bg-[#0f1318] p-5">
-            <div>
-              <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#3b91f6]">
-                Pulse Market
-              </span>
-              <h1 className="mt-2 text-3xl font-semibold tracking-normal text-[#edf1f5]">
-                {isRegister ? "Create account" : "Log in"}
-              </h1>
-              <p className="mt-3 text-sm font-medium leading-6 text-[#8f9aa8]">
-                Keep your profile and settings ready across market sessions.
-              </p>
-            </div>
+      <div className={`${panel} ${showBackButton ? "mt-6" : ""} overflow-hidden px-7 py-7`}>
+        <h1 className="text-center text-2xl font-semibold tracking-normal text-[#dee3e7]">
+          Welcome to Pulse Market
+        </h1>
 
-            <div className="mt-6 grid grid-cols-2 gap-2">
-              <button
-                className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${
-                  !isRegister
-                    ? "bg-[#edf1f5] text-[#0f1318]"
-                    : "bg-[#171d24] text-[#8f9aa8] hover:text-[#edf1f5]"
-                }`}
-                onClick={() => onModeChange("login")}
-                type="button"
-              >
-                Log In
-              </button>
-              <button
-                className={`rounded-2xl px-3 py-2 text-sm font-semibold transition ${
-                  isRegister
-                    ? "bg-[#edf1f5] text-[#0f1318]"
-                    : "bg-[#171d24] text-[#8f9aa8] hover:text-[#edf1f5]"
-                }`}
-                onClick={() => onModeChange("register")}
-                type="button"
-              >
-                Sign Up
-              </button>
-            </div>
-          </div>
+        <button
+          className="mt-6 flex h-[62px] w-full items-center justify-center gap-4 rounded-lg bg-[#0093fd] px-5 text-base font-semibold text-white transition hover:bg-[#26a3fd]"
+          onClick={() => showProviderPlaceholder("Google")}
+          type="button"
+        >
+          <span className="text-2xl font-black leading-none">G</span>
+          Continue with Google
+        </button>
 
-          <form className="grid gap-4" onSubmit={submit}>
-            {isRegister ? (
-              <TextField
-                label="Display name"
-                value={displayName}
-                onChange={setDisplayName}
-                autoComplete="name"
-                placeholder="Market Trader"
-              />
-            ) : null}
-            <TextField
-              label="Email"
-              type="email"
+        <div className="my-6 grid grid-cols-[1fr_auto_1fr] items-center gap-5 text-lg font-semibold uppercase text-[#7b8996]">
+          <span className="h-px bg-[#242b32]" />
+          OR
+          <span className="h-px bg-[#242b32]" />
+        </div>
+
+        <form className="grid gap-4" onSubmit={submit}>
+          <div className="flex h-[58px] items-center gap-2 rounded-xl border border-[#242b32] bg-[#181d21] px-3 transition focus-within:border-[#0093fd]/70">
+            <input
+              className="min-w-0 flex-1 bg-transparent text-base font-medium text-[#dee3e7] outline-none placeholder:text-[#7b8996]"
               value={email}
-              onChange={setEmail}
+              onChange={(event) => updateEmail(event.target.value)}
+              type="email"
               autoComplete="email"
-              placeholder="you@example.com"
+              placeholder="Email address"
             />
-            <TextField
-              label="Password"
-              type="password"
-              value={password}
-              onChange={setPassword}
-              autoComplete={isRegister ? "new-password" : "current-password"}
-              placeholder="At least 10 characters"
-            />
-            {!isRegister && needsTwoFactor ? (
-              <TextField
-                label="2FA code"
-                value={twoFactorCode}
-                onChange={setTwoFactorCode}
-                autoComplete="one-time-code"
-                placeholder="123456"
-              />
-            ) : null}
-
-            {message ? <InlineMessage tone={message.tone} text={message.text} /> : null}
-
             <button
-              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#3b91f6] px-4 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:opacity-60"
+              className="h-10 shrink-0 rounded-lg bg-[#0093fd] px-3 text-sm font-semibold text-white transition hover:bg-[#26a3fd] disabled:opacity-60"
               disabled={isSubmitting}
               type="submit"
             >
-              {isRegister ? <UserPlus size={18} /> : <LogIn size={18} />}
-              {isSubmitting ? "Submitting..." : isRegister ? "Create account" : "Log in"}
+              {isSubmitting
+                ? "..."
+                : emailAuthStep === "email"
+                  ? "Continue"
+                  : isRegisterStep
+                    ? "Create"
+                    : "Log in"}
             </button>
+          </div>
 
-            {!isRegister && (
-              <div className="text-center">
-                <button
-                  type="button"
-                  onClick={() => navigate("/request-password-reset")}
-                  className="text-sm text-[#3b91f6] hover:text-[#3b91f6]/80 transition"
-                >
-                  Forgot password?
-                </button>
-              </div>
-            )}
-          </form>
+          {emailAuthStep !== "email" ? (
+            <div className="grid gap-3">
+              <p className="text-sm font-semibold text-[#7b8996]">
+                {isRegisterStep
+                  ? "New account. Add your name and create a password."
+                  : "Account found. Enter your password."}
+              </p>
+              {isRegisterStep ? (
+                <TextField
+                  label="Display name"
+                  value={displayName}
+                  onChange={setDisplayName}
+                  autoComplete="name"
+                  placeholder={getDefaultDisplayName(email)}
+                />
+              ) : null}
+              <TextField
+                label="Password"
+                type="password"
+                value={password}
+                onChange={setPassword}
+                autoComplete={isRegisterStep ? "new-password" : "current-password"}
+                placeholder={isRegisterStep ? "At least 10 characters" : "Password"}
+              />
+              {isLoginStep && needsTwoFactor ? (
+                <TextField
+                  label="2FA code"
+                  value={twoFactorCode}
+                  onChange={setTwoFactorCode}
+                  autoComplete="one-time-code"
+                  placeholder="123456"
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {message ? <InlineMessage tone={message.tone} text={message.text} /> : null}
+        </form>
+
+        <div className="mt-5 flex justify-center">
+          <button
+            aria-label="More sign-in options"
+            className="grid h-14 w-24 place-items-center rounded-lg bg-[#242b32] text-2xl font-bold tracking-[0.12em] text-[#dee3e7] transition hover:bg-[#2c3540]"
+            onClick={() => showProviderPlaceholder("More options")}
+            type="button"
+          >
+            ...
+          </button>
+        </div>
+
+        <div className="mt-6 flex justify-center gap-3 text-sm font-semibold text-[#7b8996]">
+          <button className="transition hover:text-[#dee3e7]" type="button">
+            Terms
+          </button>
+          <span>•</span>
+          <button className="transition hover:text-[#dee3e7]" type="button">
+            Privacy
+          </button>
         </div>
       </div>
     </section>
@@ -212,9 +294,9 @@ function TextField({
 }) {
   return (
     <label className="grid gap-1">
-      <span className="text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">{label}</span>
+      <span className="text-xs font-bold uppercase tracking-wide text-[#7b8996]">{label}</span>
       <input
-        className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none placeholder:text-[#8f9aa8] transition focus:border-[#3b91f6]/70"
+        className="h-[52px] rounded-2xl border border-[#242b32] bg-[#181d21] px-4 text-sm font-semibold text-[#dee3e7] outline-none placeholder:text-[#7b8996] transition focus:border-[#0093fd]/70"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         type={type}
@@ -229,7 +311,7 @@ function InlineMessage({ tone, text }: { tone: "success" | "error"; text: string
   return (
     <div
       className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
-        tone === "success" ? "bg-green-500/10 text-green-200" : "bg-red-500/10 text-red-200"
+        tone === "success" ? "bg-[#3db468]/10 text-[#a6d2b6]" : "bg-[#cb3131]/10 text-[#daa]"
       }`}
     >
       {tone === "success" ? (

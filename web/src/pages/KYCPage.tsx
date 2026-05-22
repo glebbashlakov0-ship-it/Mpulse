@@ -38,10 +38,10 @@ const countryOptions = [
   { value: "GB", label: "United Kingdom" },
 ];
 
-const cardClass = "rounded-3xl border border-[#293440] bg-[#171d24] p-5 sm:p-6";
-const mutedText = "text-[#8f9aa8]";
+const cardClass = "rounded-3xl border border-[#242b32] bg-[#1e2428] p-5 sm:p-6";
+const mutedText = "text-[#7b8996]";
 const inputClass =
-  "mt-2 w-full rounded-2xl border border-[#293440] bg-[#0f1318] px-4 py-3 text-sm font-semibold text-[#edf1f5] outline-none transition focus:border-[#3b91f6] focus:ring-2 focus:ring-[#3b91f6]/20 disabled:opacity-50";
+  "mt-2 w-full rounded-2xl border border-[#242b32] bg-[#15191d] px-4 py-3 text-sm font-semibold text-[#dee3e7] outline-none transition focus:border-[#0093fd] focus:ring-2 focus:ring-[#0093fd]/20 disabled:opacity-50";
 
 export function KYCPage() {
   const { t } = useTranslation();
@@ -268,10 +268,10 @@ export function KYCPage() {
           <section className={cardClass}>
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
-                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#3b91f6]">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#0093fd]">
                   {t("kyc.overline")}
                 </p>
-                <h1 className="mt-3 text-3xl font-semibold tracking-normal text-[#edf1f5] sm:text-4xl">
+                <h1 className="mt-3 text-3xl font-semibold tracking-normal text-[#dee3e7] sm:text-4xl">
                   {t("kyc.title")}
                 </h1>
                 <p className={`mt-3 max-w-2xl text-sm leading-6 ${mutedText}`}>
@@ -285,7 +285,7 @@ export function KYCPage() {
             </div>
 
             {successMessage ? (
-              <div className="mt-5 flex items-start gap-2 rounded-2xl border border-green-500/25 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-200">
+              <div className="mt-5 flex items-start gap-2 rounded-2xl border border-[#3db468]/25 bg-[#3db468]/10 px-4 py-3 text-sm font-semibold text-[#a6d2b6]">
                 <CheckCircle2 className="mt-0.5 shrink-0" size={17} />
                 {successMessage}
               </div>
@@ -295,14 +295,14 @@ export function KYCPage() {
           <section className={cardClass}>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-[#edf1f5]">{t("kyc.profileTitle")}</h2>
+                <h2 className="text-xl font-semibold text-[#dee3e7]">{t("kyc.profileTitle")}</h2>
                 <p className={`mt-1 text-sm ${mutedText}`}>{t("kyc.profileText")}</p>
               </div>
-              <FileCheck2 className="shrink-0 text-[#3b91f6]" size={24} />
+              <FileCheck2 className="shrink-0 text-[#0093fd]" size={24} />
             </div>
 
             <form className="mt-6 grid gap-5 md:grid-cols-2" onSubmit={handleUpdateProfile}>
-              <label className="block text-sm font-semibold text-[#edf1f5]">
+              <label className="block text-sm font-semibold text-[#dee3e7]">
                 {t("kyc.country")}
                 <select
                   className={inputClass}
@@ -317,7 +317,7 @@ export function KYCPage() {
                 </select>
               </label>
 
-              <label className="block text-sm font-semibold text-[#edf1f5]">
+              <label className="block text-sm font-semibold text-[#dee3e7]">
                 {t("kyc.dateOfBirth")}
                 <input
                   className={inputClass}
@@ -330,7 +330,7 @@ export function KYCPage() {
 
               <div className="md:col-span-2">
                 {formError ? (
-                  <p className="mb-3 rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
+                  <p className="mb-3 rounded-2xl border border-[#cb3131]/25 bg-[#cb3131]/10 px-4 py-3 text-sm font-semibold text-[#daa]">
                     {formError}
                   </p>
                 ) : null}
@@ -344,10 +344,10 @@ export function KYCPage() {
           <section className={cardClass}>
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-[#edf1f5]">{t("kyc.legalTitle")}</h2>
+                <h2 className="text-xl font-semibold text-[#dee3e7]">{t("kyc.legalTitle")}</h2>
                 <p className={`mt-1 text-sm ${mutedText}`}>{t("kyc.legalText")}</p>
               </div>
-              <Clock3 className="shrink-0 text-[#8f9aa8]" size={24} />
+              <Clock3 className="shrink-0 text-[#7b8996]" size={24} />
             </div>
 
             <div className="mt-5 grid gap-3">
@@ -374,10 +374,10 @@ export function KYCPage() {
               />
             </div>
 
-            <label className="mt-5 flex items-start gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] p-4 text-sm font-medium leading-6 text-[#edf1f5]">
+            <label className="mt-5 flex items-start gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] p-4 text-sm font-medium leading-6 text-[#dee3e7]">
               <input
                 checked={legalChecked}
-                className="mt-1 h-4 w-4 accent-[#3b91f6]"
+                className="mt-1 h-4 w-4 accent-[#0093fd]"
                 disabled={legalAccepted || legalSaving}
                 onChange={(event) => setLegalChecked(event.target.checked)}
                 type="checkbox"
@@ -398,7 +398,7 @@ export function KYCPage() {
 
         <aside className="grid h-fit gap-5 xl:sticky xl:top-32">
           <section className={cardClass}>
-            <h2 className="text-xl font-semibold text-[#edf1f5]">{t("kyc.statusTitle")}</h2>
+            <h2 className="text-xl font-semibold text-[#dee3e7]">{t("kyc.statusTitle")}</h2>
             <div className="mt-5 grid gap-3">
               <StatusMetric label={t("kyc.kycStatus")} value={formatVerificationStatus(profile?.kycStatus)} />
               <StatusMetric label={t("kyc.amlStatus")} value={formatAmlStatus(profile?.amlStatus)} />
@@ -408,7 +408,7 @@ export function KYCPage() {
           </section>
 
           <section className={cardClass}>
-            <h2 className="text-xl font-semibold text-[#edf1f5]">{t("kyc.eligibility")}</h2>
+            <h2 className="text-xl font-semibold text-[#dee3e7]">{t("kyc.eligibility")}</h2>
             <p className={`mt-2 text-sm leading-6 ${mutedText}`}>
               {canTrade ? t("kyc.eligibleText") : t("kyc.ineligibleText")}
             </p>
@@ -417,7 +417,7 @@ export function KYCPage() {
               <div className="mt-5 grid gap-2">
                 {blockerReasons.map((reason) => (
                   <div
-                    className="rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm font-semibold text-amber-100"
+                    className="rounded-2xl border border-[#f7d022]/25 bg-[#f7d022]/10 px-4 py-3 text-sm font-semibold text-[#f8da52]"
                     key={reason}
                   >
                     {formatEligibilityReason(reason)}
@@ -425,7 +425,7 @@ export function KYCPage() {
                 ))}
               </div>
             ) : (
-              <div className="mt-5 rounded-2xl border border-green-500/25 bg-green-500/10 px-4 py-3 text-sm font-semibold text-green-200">
+              <div className="mt-5 rounded-2xl border border-[#3db468]/25 bg-[#3db468]/10 px-4 py-3 text-sm font-semibold text-[#a6d2b6]">
                 {t("kyc.noBlockers")}
               </div>
             )}
@@ -441,11 +441,11 @@ export function KYCPage() {
 }
 
 const primaryButtonClass =
-  "inline-flex items-center justify-center rounded-2xl bg-[#3b91f6] px-5 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-2xl bg-[#0093fd] px-5 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(0,0,0,0.28)] transition hover:bg-[#26a3fd] disabled:cursor-not-allowed disabled:opacity-50";
 
 function VerificationShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#0f1318]">
+    <div className="min-h-screen bg-[#15191d]">
       <div className="mx-auto w-full max-w-[1500px] px-4 py-6 md:px-6 md:py-8 xl:px-8">
         {children}
       </div>
@@ -466,10 +466,10 @@ function StateCard({
 }) {
   return (
     <section className={`${cardClass} mx-auto max-w-2xl text-center`}>
-      <div className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-[#293440] bg-[#0f1318] text-[#3b91f6]">
+      <div className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-[#242b32] bg-[#15191d] text-[#0093fd]">
         {icon}
       </div>
-      <h1 className="mt-5 text-2xl font-semibold text-[#edf1f5]">{title}</h1>
+      <h1 className="mt-5 text-2xl font-semibold text-[#dee3e7]">{title}</h1>
       <p className={`mx-auto mt-2 max-w-md text-sm leading-6 ${mutedText}`}>{text}</p>
       {action ? <div className="mt-5">{action}</div> : null}
     </section>
@@ -481,8 +481,8 @@ function StatusPill({ label, tone }: { label: string; tone: "success" | "warning
     <span
       className={`inline-flex w-fit items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold ${
         tone === "success"
-          ? "bg-green-500/15 text-green-200"
-          : "bg-amber-500/15 text-amber-100"
+          ? "bg-[#3db468]/15 text-[#a6d2b6]"
+          : "bg-[#f7d022]/15 text-[#f8da52]"
       }`}
     >
       {tone === "success" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
@@ -493,9 +493,9 @@ function StatusPill({ label, tone }: { label: string; tone: "success" | "warning
 
 function StatusMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8f9aa8]">{label}</p>
-      <p className="mt-2 text-base font-semibold text-[#edf1f5]">{value}</p>
+    <div className="rounded-2xl border border-[#242b32] bg-[#15191d] p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#7b8996]">{label}</p>
+      <p className="mt-2 text-base font-semibold text-[#dee3e7]">{value}</p>
     </div>
   );
 }
@@ -514,11 +514,11 @@ function LegalRow({
   version: string | null | undefined;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] px-4 py-3">
-      <span className="text-sm font-semibold text-[#edf1f5]">{label}</span>
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] px-4 py-3">
+      <span className="text-sm font-semibold text-[#dee3e7]">{label}</span>
       <span
         className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
-          accepted ? "bg-green-500/15 text-green-200" : "bg-[#1d252e] text-[#8f9aa8]"
+          accepted ? "bg-[#3db468]/15 text-[#a6d2b6]" : "bg-[#2e3841] text-[#7b8996]"
         }`}
       >
         {accepted ? `${acceptedLabel} ${version}` : requiredLabel}

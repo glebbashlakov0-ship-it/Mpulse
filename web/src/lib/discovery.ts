@@ -96,7 +96,7 @@ export function buildTopicTabsFromTags(tags: MarketTag[]): TopicTab[] {
     .map((tag) => ({
       label: tag.label,
       value: tag.slug,
-      filter: { category: "", topic: tag.slug, search: "" },
+      filter: { category: "", topic: tag.slug, search: "", status: "all" as const },
     }))
     .filter((tab) => {
       if (!tab.label.trim() || seen.has(tab.value)) {

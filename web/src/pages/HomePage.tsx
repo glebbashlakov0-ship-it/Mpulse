@@ -72,11 +72,13 @@ type MiniOutcomeRow = {
 export function HomePage({
   user,
   watchlistIds,
+  watchlistMarkets,
   onWatchlistToggle,
   onSignupPrompt,
 }: {
   user: AuthUser | null;
   watchlistIds: Set<string>;
+  watchlistMarkets: Market[];
   onWatchlistToggle: (market: Market) => void;
   onSignupPrompt: () => void;
 }) {
@@ -94,9 +96,16 @@ export function HomePage({
     [params.category, params.topic, searchParams],
   );
   const surface = React.useMemo(() => getDiscoverySurface(filters), [filters]);
+  const [isInlineSearchOpen, setIsInlineSearchOpen] = React.useState(false);
+  const [showWatchlist, setShowWatchlist] = React.useState(false);
   const [showFilters, setShowFilters] = React.useState(false);
-  const [topicRailCanScrollRight, setTopicRailCanScrollRight] = React.useState(false);
+  const [topicRailScroll, setTopicRailScroll] = React.useState({
+    canScrollLeft: false,
+    canScrollRight: false,
+  });
   const topicTabsRef = React.useRef<HTMLDivElement | null>(null);
+  const inlineSearchRef = React.useRef<HTMLDivElement | null>(null);
+  const inlineSearchInputRef = React.useRef<HTMLInputElement | null>(null);
   const [hiddenMarketFilters, setHiddenMarketFilters] = React.useState<
     Record<HiddenMarketFilter, boolean>
   >({
@@ -136,6 +145,16 @@ export function HomePage({
     () => markets.filter((market) => !isHiddenByCompactFilter(market, hiddenMarketFilters)),
     [hiddenMarketFilters, markets],
   );
+  const visibleWatchlistMarkets = React.useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+
+    return watchlistMarkets.filter(
+      (market) =>
+        !isHiddenByCompactFilter(market, hiddenMarketFilters) &&
+        marketMatchesSearch(market, search),
+    );
+  }, [filters.search, hiddenMarketFilters, watchlistMarkets]);
+  const displayedMarkets = showWatchlist ? visibleWatchlistMarkets : visibleMarkets;
 
   const activeFilterCount = Object.entries(filters).filter(
     ([key, value]) =>
@@ -150,12 +169,15 @@ export function HomePage({
     const rail = topicTabsRef.current;
 
     if (!rail) {
-      setTopicRailCanScrollRight(false);
+      setTopicRailScroll({ canScrollLeft: false, canScrollRight: false });
       return;
     }
 
     const remainingScroll = rail.scrollWidth - rail.clientWidth - rail.scrollLeft;
-    setTopicRailCanScrollRight(remainingScroll > 2);
+    setTopicRailScroll({
+      canScrollLeft: rail.scrollLeft > 2,
+      canScrollRight: remainingScroll > 2,
+    });
   }, []);
   const handleLoadMore = React.useCallback(() => {
     if (!user) {
@@ -165,9 +187,42 @@ export function HomePage({
 
     void loadMore();
   }, [loadMore, onSignupPrompt, user]);
+  const openInlineSearch = React.useCallback(() => {
+    setIsInlineSearchOpen(true);
+    window.requestAnimationFrame(() => inlineSearchInputRef.current?.focus());
+  }, []);
+  React.useEffect(() => {
+    if (user) {
+      return;
+    }
+
+    setShowWatchlist(false);
+  }, [user]);
+  React.useEffect(() => {
+    if (!isInlineSearchOpen) {
+      return undefined;
+    }
+
+    function closeSearchOnOutsidePointer(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        inlineSearchRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+
+      setIsInlineSearchOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeSearchOnOutsidePointer);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeSearchOnOutsidePointer);
+    };
+  }, [isInlineSearchOpen]);
   React.useEffect(() => {
     if (!showTopicRail) {
-      setTopicRailCanScrollRight(false);
+      setTopicRailScroll({ canScrollLeft: false, canScrollRight: false });
       return undefined;
     }
 
@@ -187,34 +242,74 @@ export function HomePage({
     };
   }, [discoveryTopicTabs.length, showTopicRail, updateTopicRailScrollState]);
   const scrollTopicTabs = () => {
-    topicTabsRef.current?.scrollBy({
-      left: Math.round(topicTabsRef.current.clientWidth * 0.82),
+    const rail = topicTabsRef.current;
+
+    if (!rail) {
+      return;
+    }
+
+    if (topicRailScroll.canScrollRight) {
+      rail.scrollBy({
+        left: Math.round(rail.clientWidth * 0.5),
+        behavior: "smooth",
+      });
+      return;
+    }
+
+    rail.scrollTo({
+      left: 0,
       behavior: "smooth",
     });
   };
 
   return (
-    <div className="home-page-shell min-h-screen bg-[#0f1318] text-[#edf1f5]">
+    <div className="home-page-shell min-h-screen bg-[#15191d] text-[#dee3e7]">
       <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
         {showPageHeader ? (
           <section className="home-reveal space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h1 className="text-2xl font-semibold tracking-normal text-[#edf1f5]">
+                <h1 className="text-2xl font-semibold tracking-normal text-[#dee3e7]">
                   {getSurfaceTitle(surface)}
                 </h1>
               </div>
               <div className="flex items-center gap-2">
-                <IconButton
-                  label="Search markets"
-                  onClick={() =>
-                    document
-                      .querySelector<HTMLInputElement>('input[aria-label="Search markets"]')
-                      ?.focus()
-                  }
+                <div
+                  ref={inlineSearchRef}
+                  className={`relative h-10 shrink-0 overflow-hidden rounded-full transition-[width] duration-300 ease-out ${
+                    isInlineSearchOpen ? "w-[min(240px,calc(100vw-150px))]" : "w-10"
+                  }`}
                 >
-                  <Search size={21} />
-                </IconButton>
+                  <button
+                    className={`absolute inset-0 z-10 grid place-items-center rounded-full bg-transparent text-[#7b8996] transition-opacity duration-150 hover:text-[#26a3fd] ${
+                      isInlineSearchOpen ? "pointer-events-none opacity-0" : "opacity-100"
+                    }`}
+                    aria-label="Search markets"
+                    onClick={openInlineSearch}
+                    type="button"
+                  >
+                    <Search size={21} />
+                  </button>
+                  <div
+                    className={`flex h-10 items-center gap-2 rounded-full border border-[#242b32] bg-[#1e2428] px-3 text-[#7b8996] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-[opacity,transform] duration-200 ease-out ${
+                      isInlineSearchOpen
+                        ? "pointer-events-auto translate-x-0 opacity-100"
+                        : "pointer-events-none translate-x-2 opacity-0"
+                    }`}
+                  >
+                    <Search size={19} />
+                    <input
+                      ref={inlineSearchInputRef}
+                      aria-label="Search current markets"
+                      className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-[#dee3e7] outline-none placeholder:text-[#7b8996]"
+                      disabled={!isInlineSearchOpen}
+                      placeholder="Search..."
+                      type="search"
+                      value={filters.search}
+                      onChange={(event) => updateFilter("search", event.target.value)}
+                    />
+                  </div>
+                </div>
                 <IconButton
                   label={t("markets.filters")}
                   pressed={showFilters}
@@ -222,59 +317,76 @@ export function HomePage({
                 >
                   <SlidersHorizontal size={21} />
                   {activeFilterCount > 0 ? (
-                    <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-20 grid h-3.5 min-w-3.5 place-items-center rounded-full border border-[#0f1318] bg-[#3b91f6] px-0.5 text-[9px] font-black leading-none text-white shadow-[0_0_8px_rgba(59,145,246,0.6)]">
+                    <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-20 grid h-3.5 min-w-3.5 place-items-center rounded-full border border-[#15191d] bg-[#0093fd] px-0.5 text-[9px] font-black leading-none text-white shadow-[0_0_8px_rgba(0,147,253,0.55)]">
                       {activeFilterCount > 9 ? "9+" : activeFilterCount}
                     </span>
                   ) : null}
                 </IconButton>
-                {user ? (
-                  <IconButton label="Watchlist" onClick={() => navigate("/watchlist")}>
-                    <Bookmark size={21} />
-                  </IconButton>
-                ) : null}
+                <IconButton
+                  label="Watchlist"
+                  pressed={Boolean(user && showWatchlist)}
+                  onClick={() => {
+                    if (!user) {
+                      onSignupPrompt();
+                      return;
+                    }
+
+                    setShowWatchlist((current) => !current);
+                  }}
+                >
+                  <Bookmark size={21} />
+                </IconButton>
               </div>
             </div>
 
             {showTopicRail ? (
-              <div className="home-reveal relative isolate">
+              <div className="home-reveal flex items-center gap-3">
                 <div
-                  className="relative z-20 flex gap-5 overflow-x-auto pb-2 pr-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                   ref={topicTabsRef}
                 >
-                  {discoveryTopicTabs.map((tab) => {
-                    const isActive = isTopicTabActive(filters, tab);
+                  <div className="flex w-max gap-2 py-1.5 pl-1 text-sm font-semibold">
+                    {discoveryTopicTabs.map((tab) => {
+                      const isActive = isTopicTabActive(filters, tab);
 
-                    return (
-                      <button
-                        key={tab.value}
-                        onClick={() =>
-                          navigate(getDiscoveryUrl(mergeDiscoveryFilters(filters, tab.filter)))
-                        }
-                        aria-current={isActive ? "page" : undefined}
-                        aria-pressed={isActive}
-                        className={`relative min-w-fit whitespace-nowrap bg-transparent p-0 pb-1 text-sm font-semibold transition-colors duration-150 after:absolute after:bottom-0 after:left-0 after:h-0.5 after:w-full after:rounded-full after:bg-[#3b91f6] after:transition-opacity after:duration-150 hover:text-[#edf1f5] focus-visible:outline-none focus-visible:text-[#56a3ff] ${
-                          isActive
-                            ? "home-topic-active after:opacity-100"
-                            : "text-[#8f9aa8] after:opacity-0"
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    );
-                  })}
+                      return (
+                        <button
+                          key={tab.value}
+                          onClick={() =>
+                            navigate(getDiscoveryUrl(mergeDiscoveryFilters(filters, tab.filter)))
+                          }
+                          aria-current={isActive ? "page" : undefined}
+                          aria-pressed={isActive}
+                          className={`relative flex min-w-fit items-center whitespace-nowrap rounded-lg px-3 py-1.5 leading-5 transition-colors duration-150 focus-visible:outline-none ${
+                            isActive
+                              ? "bg-[#112f45] text-[#0093fd]"
+                              : "bg-transparent text-[#7b8996] hover:text-[#dee3e7]"
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                {topicRailCanScrollRight ? (
-                  <>
-                    <div className="pointer-events-none absolute right-0 top-0 z-10 h-6 w-16 bg-gradient-to-l from-[#0f1318] via-[#0f1318]/90 to-transparent" />
-                    <button
-                      aria-label="Scroll market topics"
-                      className="home-soft-button absolute right-0 top-0 z-30 grid h-6 w-6 place-items-center rounded-full bg-transparent text-[#8f9aa8] transition hover:text-[#56a3ff]"
-                      onClick={scrollTopicTabs}
-                      type="button"
-                    >
-                      <ChevronRight size={21} />
-                    </button>
-                  </>
+                {topicRailScroll.canScrollRight || topicRailScroll.canScrollLeft ? (
+                  <button
+                    aria-label={
+                      topicRailScroll.canScrollRight
+                        ? "Scroll market topics"
+                        : "Back to first market topic"
+                    }
+                    className="grid h-8 w-6 shrink-0 place-items-center bg-transparent text-[#7b8996] transition-colors duration-150 hover:text-[#26a3fd] focus-visible:outline-none focus-visible:text-[#26a3fd]"
+                    onClick={scrollTopicTabs}
+                    type="button"
+                  >
+                    <ChevronRight
+                      className={`transition-transform duration-200 ease-out ${
+                        topicRailScroll.canScrollRight ? "rotate-0" : "rotate-180"
+                      }`}
+                      size={21}
+                    />
+                  </button>
                 ) : null}
               </div>
             ) : null}
@@ -351,35 +463,58 @@ export function HomePage({
         ) : null}
 
         {error && (
-          <div className="home-reveal mt-5 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-200">
+          <div className="home-reveal mt-5 rounded-2xl border border-[#cb3131]/30 bg-[#cb3131]/10 p-4 text-[#daa]">
             {error}
           </div>
         )}
 
-        {loading && markets.length === 0 ? (
+        {loading && markets.length === 0 && !showWatchlist ? (
           <div className="home-reveal mt-5">
             <MarketSkeleton />
           </div>
-        ) : visibleMarkets.length === 0 ? (
-          <div className="home-reveal mt-5 rounded-2xl border border-[#293440] bg-[#11161c] p-12 text-center">
-            <p className="text-[#8f9aa8]">
-              {t("markets.noResults")}
-            </p>
-          </div>
+        ) : displayedMarkets.length === 0 ? (
+          showWatchlist ? (
+            <div className="home-reveal flex min-h-[280px] items-start justify-center pt-20 text-center">
+              <p className="text-base font-semibold text-[#7b8996]">
+                {watchlistMarkets.length === 0
+                  ? "No saved markets yet"
+                  : "No saved markets match this search"}
+              </p>
+            </div>
+          ) : (
+            <div className="home-reveal mt-5 rounded-2xl border border-[#242b32] bg-[#181d21] p-12 text-center">
+              <p className="text-[#7b8996]">
+                {t("markets.noResults")}
+              </p>
+            </div>
+          )
         ) : (
-          <div className="home-surface-enter" key={getHomeSurfaceMotionKey(surface, filters)}>
-            <MarketSurface
-              filters={filters}
-              hasMore={hasMore}
-              isLoadingMore={marketsState.isLoadingMore}
-              markets={visibleMarkets}
-              onLoadMore={handleLoadMore}
-              onOpenMarket={(market) => navigate(`/markets/${market.id}`)}
-              onWatchlistToggle={user ? onWatchlistToggle : undefined}
-              surface={surface}
-              total={marketsState.total}
-              watchlistIds={watchlistIds}
-            />
+          <div
+            className="home-surface-enter"
+            key={showWatchlist ? `watchlist-${filters.search}` : getHomeSurfaceMotionKey(surface, filters)}
+          >
+            {showWatchlist ? (
+              <MarketGrid
+                columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+                markets={displayedMarkets}
+                onOpenMarket={(market) => navigate(`/markets/${market.id}`)}
+                onWatchlistToggle={onWatchlistToggle}
+                watchlistIds={watchlistIds}
+              />
+            ) : (
+              <MarketSurface
+                filters={filters}
+                hasMore={hasMore}
+                isLoadingMore={marketsState.isLoadingMore}
+                markets={displayedMarkets}
+                onLoadMore={handleLoadMore}
+                onOpenMarket={(market) => navigate(`/markets/${market.id}`)}
+                onWatchlistToggle={user ? onWatchlistToggle : undefined}
+                surface={surface}
+                total={marketsState.total}
+                watchlistIds={watchlistIds}
+              />
+            )}
           </div>
         )}
       </div>
@@ -474,8 +609,8 @@ function MarketSurface({
               <button
                 className={`home-soft-button min-w-fit rounded-xl px-4 py-2 text-sm font-bold transition ${
                   index === 0
-                    ? "bg-[#153458] text-[#58a6ff]"
-                    : "text-[#8f9aa8] hover:bg-[#171d24] hover:text-[#edf1f5]"
+                    ? "bg-[#112f45] text-[#26a3fd]"
+                    : "text-[#7b8996] hover:bg-[#1e2428] hover:text-[#dee3e7]"
                 }`}
                 key={label}
                 type="button"
@@ -625,14 +760,14 @@ function BreakingSurface({
   return (
     <div className="mt-5 grid gap-8 xl:grid-cols-[minmax(0,1fr)_360px]">
       <section className="min-w-0">
-        <div className="home-reveal relative mb-6 overflow-hidden rounded-2xl border border-[#293440] bg-[#1b2027] px-7 py-8">
-          <div className="absolute right-6 top-1/2 hidden h-48 w-72 -translate-y-1/2 rounded-full border border-[#1b5fb6]/35 md:block" />
-          <div className="absolute right-28 top-12 hidden h-20 w-20 rotate-12 rounded-[28px] bg-[#3b91f6] md:grid md:place-items-center">
+        <div className="home-reveal relative mb-6 overflow-hidden rounded-2xl border border-[#242b32] bg-[#1e2428] px-7 py-8">
+          <div className="absolute right-6 top-1/2 hidden h-48 w-72 -translate-y-1/2 rounded-full border border-[#0b568d]/35 md:block" />
+          <div className="absolute right-28 top-12 hidden h-20 w-20 rotate-12 rounded-[28px] bg-[#0093fd] md:grid md:place-items-center">
             <TrendingUp size={44} className="text-white" />
           </div>
-          <p className="text-sm font-semibold text-[#8f9aa8]">{dateLabel}</p>
-          <h2 className="mt-4 text-3xl font-bold text-[#edf1f5]">Breaking News</h2>
-          <p className="mt-3 max-w-xl text-base font-medium text-[#8f9aa8]">
+          <p className="text-sm font-semibold text-[#7b8996]">{dateLabel}</p>
+          <h2 className="mt-4 text-3xl font-bold text-[#dee3e7]">Breaking News</h2>
+          <p className="mt-3 max-w-xl text-base font-medium text-[#7b8996]">
             The markets that moved the most in the last 24 hours.
           </p>
         </div>
@@ -643,68 +778,73 @@ function BreakingSurface({
           onSelect={() => undefined}
         />
 
-        <div className="mt-6 divide-y divide-[#293440]">
+        <div className="mt-6 divide-y divide-[#242b32]">
           {rows.map((market, index) => (
             <button
-              className="home-stagger-item grid w-full grid-cols-[28px_54px_minmax(0,1fr)_92px_96px_20px] items-center gap-4 py-5 text-left transition hover:bg-[#171d24]/65 max-md:grid-cols-[24px_48px_minmax(0,1fr)_72px_20px] max-md:[&_.spark]:hidden"
+              className="home-stagger-item grid w-full grid-cols-[28px_54px_minmax(0,1fr)_92px_96px_20px] items-center gap-4 py-5 text-left transition hover:bg-[#1e2428]/65 max-md:grid-cols-[24px_48px_minmax(0,1fr)_72px_20px] max-md:[&_.spark]:hidden"
               key={market.id}
               onClick={() => onOpenMarket(market)}
               style={getMotionDelayStyle(index)}
               type="button"
             >
-              <span className="text-center text-sm font-semibold text-[#8f9aa8]">{index + 1}</span>
-              <MarketImage market={market} className="size-12 rounded-lg" />
+              <span className="text-center text-sm font-semibold text-[#7b8996]">{index + 1}</span>
+              <MarketImage
+                market={market}
+                className="size-12 rounded-lg"
+                fetchPriority={index < 5 ? "high" : "auto"}
+                loading={index < 5 ? "eager" : "lazy"}
+              />
               <span className="min-w-0">
-                <span className="line-clamp-2 text-[17px] font-semibold text-[#edf1f5]">{market.title}</span>
-                <span className="mt-1 flex items-center gap-1 text-sm font-bold text-[#48b36a]">
+                <span className="line-clamp-2 text-[17px] font-semibold text-[#dee3e7]">{market.title}</span>
+                <span className="mt-1 flex items-center gap-1 text-sm font-bold text-[#3db468]">
                   {getPrimaryMarketPercent(market)} <span>{getMovementLabel(market)}</span>
                 </span>
               </span>
               <Sparkline market={market} />
-              <span className="text-right text-2xl font-semibold text-[#edf1f5] max-md:text-lg">
+              <span className="text-right text-2xl font-semibold text-[#dee3e7] max-md:text-lg">
                 {getPrimaryMarketPercent(market)}
               </span>
-              <ChevronRight className="text-[#8f9aa8]" size={20} />
+              <ChevronRight className="text-[#7b8996]" size={20} />
             </button>
           ))}
         </div>
       </section>
 
       <aside className="home-reveal space-y-6">
-        <div className="home-soft-card rounded-2xl border border-[#293440] bg-[#11161c] p-5">
+        <div className="home-soft-card rounded-2xl border border-[#242b32] bg-[#181d21] p-5">
           <div className="mb-4 flex items-start gap-3">
-            <Bell className="mt-1 text-[#8f9aa8]" size={24} />
+            <Bell className="mt-1 text-[#7b8996]" size={24} />
             <div>
-              <h3 className="text-base font-bold text-[#edf1f5]">Get daily updates</h3>
-              <p className="text-sm font-medium text-[#8f9aa8]">
+              <h3 className="text-base font-bold text-[#dee3e7]">Get daily updates</h3>
+              <p className="text-sm font-medium text-[#7b8996]">
                 We'll send you an email every day with what's moving.
               </p>
             </div>
           </div>
           <input
-            className="mb-3 h-11 w-full rounded-xl border border-[#293440] bg-[#1b2027] px-4 text-sm font-semibold text-[#edf1f5] outline-none"
+            className="mb-3 h-11 w-full rounded-xl border border-[#242b32] bg-[#1e2428] px-4 text-sm font-semibold text-[#dee3e7] outline-none"
             readOnly
             value="john.amerema@gmail.com"
           />
-          <button className="home-soft-button h-11 w-full rounded-xl bg-[#3b91f6] text-sm font-bold text-white" type="button">
+          <button className="home-soft-button h-11 w-full rounded-xl bg-[#0093fd] text-sm font-bold text-white" type="button">
             Get updates
           </button>
         </div>
 
-        <div className="home-soft-card rounded-2xl border border-[#293440] bg-[#11161c] p-5">
+        <div className="home-soft-card rounded-2xl border border-[#242b32] bg-[#181d21] p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="font-bold text-[#8f9aa8]">Live from @Polymarket</h3>
-            <button className="home-soft-button rounded-full bg-white px-4 py-2 text-sm font-bold text-[#11161c]" type="button">
+            <h3 className="font-bold text-[#7b8996]">Live from @Polymarket</h3>
+            <button className="home-soft-button rounded-full bg-white px-4 py-2 text-sm font-bold text-[#181d21]" type="button">
               Follow on X
             </button>
           </div>
           {getNewsItems(markets).map((item) => (
-            <div className="border-t border-[#293440] py-4" key={`${item.time}-${item.title}`}>
-              <div className="mb-2 flex items-center justify-between gap-4 text-sm font-semibold text-[#8f9aa8]">
+            <div className="border-t border-[#242b32] py-4" key={`${item.time}-${item.title}`}>
+              <div className="mb-2 flex items-center justify-between gap-4 text-sm font-semibold text-[#7b8996]">
                 <span>{item.kind}</span>
                 <span>{item.time}</span>
               </div>
-              <p className="text-sm font-medium leading-6 text-[#b8c1cc]">{item.title}</p>
+              <p className="text-sm font-medium leading-6 text-[#97a5b4]">{item.title}</p>
             </div>
           ))}
         </div>
@@ -728,7 +868,7 @@ function SportsbookSurface({
 
   const sidebarItems = esport
     ? [
-        { label: "Live", count: 6, icon: <Radio size={18} className="text-red-500" /> },
+        { label: "Live", count: 6, icon: <Radio size={18} className="text-[#cb3131]" /> },
         { label: "Upcoming", count: 37, icon: <CalendarDays size={18} /> },
         { label: "Dota 2", count: 12 },
         { label: "LoL", count: 8 },
@@ -737,7 +877,7 @@ function SportsbookSurface({
         { label: "Rocket League", count: 4 },
       ]
     : [
-        { label: "Live", icon: <Radio size={18} className="text-red-500" /> },
+        { label: "Live", icon: <Radio size={18} className="text-[#cb3131]" /> },
         { label: "Futures", icon: <CalendarDays size={18} /> },
         { label: "NBA", count: 7 },
         { label: "MLB", count: 98 },
@@ -753,8 +893,8 @@ function SportsbookSurface({
       <SectionSidebar activeLabel="Live" items={sidebarItems} onSelect={() => undefined} />
       <section className="home-reveal min-w-0 space-y-6">
         <div className="flex items-center justify-between">
-          <h2 className="text-4xl font-bold text-[#edf1f5]">{esport ? "Esports Live" : "Sports Live"}</h2>
-          <div className="flex items-center gap-2 text-[#d8dde3]">
+          <h2 className="text-4xl font-bold text-[#dee3e7]">{esport ? "Esports Live" : "Sports Live"}</h2>
+          <div className="flex items-center gap-2 text-[#d2d8df]">
             <Search size={22} />
             <SlidersHorizontal size={22} />
           </div>
@@ -795,8 +935,8 @@ function SportsLeagueTable({
 
         return (
           <div className="home-reveal space-y-3" key={section}>
-            <div className="grid grid-cols-[minmax(0,1fr)_140px_140px_140px] px-2 text-xs font-bold uppercase tracking-wide text-[#6f7d8d] max-lg:hidden">
-              <h3 className="text-xl font-bold normal-case text-[#edf1f5]">{section}</h3>
+            <div className="grid grid-cols-[minmax(0,1fr)_140px_140px_140px] px-2 text-xs font-bold uppercase tracking-wide text-[#697d91] max-lg:hidden">
+              <h3 className="text-xl font-bold normal-case text-[#dee3e7]">{section}</h3>
               <span>Moneyline</span>
               <span>Spread</span>
               <span>Total</span>
@@ -837,8 +977,8 @@ function SportsMarketRow({
 
   return (
     <article
-      className={`home-soft-card rounded-2xl border bg-[#11161c] p-4 transition ${
-        active ? "border-[#3b91f6]/70" : "border-[#293440] hover:border-[#3b91f6]/35"
+      className={`home-soft-card rounded-2xl border bg-[#181d21] p-4 transition ${
+        active ? "border-[#0093fd]/70" : "border-[#242b32] hover:border-[#0093fd]/35"
       }`}
     >
       <button
@@ -846,13 +986,13 @@ function SportsMarketRow({
         onClick={() => onSelect(market)}
         type="button"
       >
-        <div className="min-w-0 text-sm font-bold text-[#8f9aa8]">
-          <span className="mr-2 text-red-500">● LIVE</span>
+        <div className="min-w-0 text-sm font-bold text-[#7b8996]">
+          <span className="mr-2 text-[#cb3131]">● LIVE</span>
           <span>{index % 2 === 0 ? "Today" : "Final"}</span>
           <span className="mx-1">·</span>
           <span>{formatMoney(market.volume)} Vol.</span>
         </div>
-        <span className="rounded-xl bg-[#20272f] px-3 py-1.5 text-sm font-bold text-[#d8dde3]">
+        <span className="rounded-xl bg-[#242b32] px-3 py-1.5 text-sm font-bold text-[#d2d8df]">
           Game View <ChevronRight className="inline" size={14} />
         </span>
       </button>
@@ -860,11 +1000,16 @@ function SportsMarketRow({
         <div className="space-y-3">
           {[first, second].map((team, teamIndex) => (
             <div className="flex items-center gap-3" key={`${market.id}-${team}-${teamIndex}`}>
-              <span className="grid size-8 place-items-center rounded-lg bg-[#20272f] text-sm font-bold text-[#8f9aa8]">
+              <span className="grid size-8 place-items-center rounded-lg bg-[#242b32] text-sm font-bold text-[#7b8996]">
                 {teamIndex === 0 ? (index % 3 === 0 ? "6" : "1") : index % 3 === 0 ? "3" : "0"}
               </span>
-              <MarketImage market={market} className="size-8 rounded-md" />
-              <span className="min-w-0 truncate text-base font-bold text-[#d8dde3]">{team}</span>
+              <MarketImage
+                market={market}
+                className="size-8 rounded-md"
+                fetchPriority={index < 4 ? "high" : "auto"}
+                loading={index < 4 ? "eager" : "lazy"}
+              />
+              <span className="min-w-0 truncate text-base font-bold text-[#d2d8df]">{team}</span>
             </div>
           ))}
         </div>
@@ -887,10 +1032,10 @@ function SportsbookButtons({
 }) {
   const toneClass =
     tone === "blue"
-      ? "bg-[#3b91f6] text-white shadow-[0_4px_0_rgba(36,98,174,0.85)]"
+      ? "bg-[#0093fd] text-white shadow-[0_4px_0_rgba(0,0,0,0.28)]"
       : tone === "red"
-        ? "bg-[#ab342e] text-white shadow-[0_4px_0_rgba(103,33,30,0.85)]"
-        : "bg-[#20272f] text-[#b8c1cc]";
+        ? "bg-[#cb3131] text-white shadow-[0_4px_0_rgba(0,0,0,0.28)]"
+        : "bg-[#242b32] text-[#97a5b4]";
 
   return (
     <div className="grid grid-rows-2 gap-2">
@@ -919,52 +1064,57 @@ function TradeTicket({ esport, market }: { esport: boolean; market?: Market }) {
   const second = rows[1]?.label ?? "Opponent";
 
   return (
-    <aside className="home-reveal sticky top-36 h-fit rounded-2xl border border-[#293440] bg-[#11161c]">
-      <div className="flex items-center gap-3 border-b border-[#293440] p-5">
-        <MarketImage market={market} className="size-10 rounded-lg" />
+    <aside className="home-reveal sticky top-36 h-fit rounded-2xl border border-[#242b32] bg-[#181d21]">
+      <div className="flex items-center gap-3 border-b border-[#242b32] p-5">
+        <MarketImage
+          market={market}
+          className="size-10 rounded-lg"
+          fetchPriority="high"
+          loading="eager"
+        />
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-[#8f9aa8]">{market.title}</p>
-          <h3 className="truncate text-lg font-bold text-[#edf1f5]">{first}</h3>
+          <p className="truncate text-sm font-bold text-[#7b8996]">{market.title}</p>
+          <h3 className="truncate text-lg font-bold text-[#dee3e7]">{first}</h3>
         </div>
       </div>
       <div className="p-5">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex gap-4 text-lg font-bold">
-            <span className="border-b-2 border-[#d8dde3] pb-2 text-[#edf1f5]">Buy</span>
-            <span className="pb-2 text-[#8f9aa8]">Sell</span>
+            <span className="border-b-2 border-[#d2d8df] pb-2 text-[#dee3e7]">Buy</span>
+            <span className="pb-2 text-[#7b8996]">Sell</span>
           </div>
-          <button className="flex items-center gap-1 text-sm font-bold text-[#d8dde3]" type="button">
+          <button className="flex items-center gap-1 text-sm font-bold text-[#d2d8df]" type="button">
             Market <ChevronDown size={16} />
           </button>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <button
             className={`home-soft-button h-14 rounded-xl text-base font-bold ${
-              esport ? "bg-[#3b91f6] text-white" : "bg-[#ab342e] text-white"
+              esport ? "bg-[#0093fd] text-white" : "bg-[#cb3131] text-white"
             }`}
             type="button"
           >
             {shortLabel(first)} {formatCents(rows[0]?.yesPrice ?? null)}
           </button>
-          <button className="home-soft-button h-14 rounded-xl bg-[#20272f] text-base font-bold text-[#8f9aa8]" type="button">
+          <button className="home-soft-button h-14 rounded-xl bg-[#242b32] text-base font-bold text-[#7b8996]" type="button">
             {shortLabel(second)} {formatCents(rows[1]?.yesPrice ?? null)}
           </button>
         </div>
         <div className="mt-8 flex items-end justify-between">
           <div>
-            <p className="text-lg font-bold text-[#d8dde3]">Amount</p>
-            <p className="text-sm font-semibold text-[#8f9aa8]">$0.00 cash</p>
+            <p className="text-lg font-bold text-[#d2d8df]">Amount</p>
+            <p className="text-sm font-semibold text-[#7b8996]">$0.00 cash</p>
           </div>
-          <p className="text-5xl font-bold text-[#6f7d8d]">$0</p>
+          <p className="text-5xl font-bold text-[#697d91]">$0</p>
         </div>
         <div className="mt-6 flex justify-end gap-2">
           {["+$1", "+$5", "+$10", "+$100"].map((amount) => (
-            <button className="home-soft-button rounded-lg bg-[#20272f] px-3 py-2 text-sm font-bold text-[#8f9aa8]" key={amount} type="button">
+            <button className="home-soft-button rounded-lg bg-[#242b32] px-3 py-2 text-sm font-bold text-[#7b8996]" key={amount} type="button">
               {amount}
             </button>
           ))}
         </div>
-        <button className="home-soft-button mt-6 h-12 w-full rounded-xl bg-[#1b2027] text-sm font-bold text-[#566272]" type="button">
+        <button className="home-soft-button mt-6 h-12 w-full rounded-xl bg-[#1e2428] text-sm font-bold text-[#586879]" type="button">
           Restricted region
         </button>
       </div>
@@ -981,37 +1131,42 @@ function MentionsSurface({
 }) {
   return (
     <section className="home-reveal mx-auto mt-8 max-w-[1100px]">
-      <h2 className="text-3xl font-bold text-[#edf1f5]">Mention polymarkets</h2>
-      <p className="mt-3 text-base font-medium text-[#8f9aa8]">
+      <h2 className="text-3xl font-bold text-[#dee3e7]">Mention polymarkets</h2>
+      <p className="mt-3 text-base font-medium text-[#7b8996]">
         Live events where you can predict the words and phrases that will be said.
       </p>
       <div className="mt-8 space-y-4">
         {markets.slice(0, 8).map((market, index) => (
           <button
-            className="home-stagger-item grid w-full grid-cols-[64px_76px_minmax(0,1fr)_minmax(180px,360px)_86px] items-center gap-5 rounded-xl border border-[#293440] bg-[#11161c] p-5 text-left transition hover:border-[#3b91f6]/45 hover:bg-[#171d24] max-lg:grid-cols-[54px_64px_minmax(0,1fr)_80px] max-lg:[&_.mention-tags]:hidden"
+            className="home-stagger-item grid w-full grid-cols-[64px_76px_minmax(0,1fr)_minmax(180px,360px)_86px] items-center gap-5 rounded-xl border border-[#242b32] bg-[#181d21] p-5 text-left transition hover:border-[#0093fd]/45 hover:bg-[#1e2428] max-lg:grid-cols-[54px_64px_minmax(0,1fr)_80px] max-lg:[&_.mention-tags]:hidden"
             key={market.id}
             onClick={() => onOpenMarket(market)}
             style={getMotionDelayStyle(index)}
             type="button"
           >
             <DateBadge market={market} index={index} />
-            <MarketImage market={market} className="size-[70px] rounded-lg max-lg:size-14" />
+            <MarketImage
+              market={market}
+              className="size-[70px] rounded-lg max-lg:size-14"
+              fetchPriority={index < 4 ? "high" : "auto"}
+              loading={index < 4 ? "eager" : "lazy"}
+            />
             <span className="min-w-0">
-              <span className="line-clamp-2 text-lg font-bold text-[#edf1f5]">{market.title}</span>
-              <span className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#8f9aa8]">
-                <span className="rounded-md bg-[#2a313a] px-2 py-1">{getMentionTime(index)}</span>
-                {market.status === "live" ? <span className="text-red-500">LIVE</span> : null}
+              <span className="line-clamp-2 text-lg font-bold text-[#dee3e7]">{market.title}</span>
+              <span className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#7b8996]">
+                <span className="rounded-md bg-[#2e3841] px-2 py-1">{getMentionTime(index)}</span>
+                {market.status === "live" ? <span className="text-[#cb3131]">LIVE</span> : null}
                 <span>{formatMoney(market.volume)} Vol.</span>
               </span>
             </span>
             <span className="mention-tags flex min-w-0 justify-end gap-2">
               {getMentionTags(market).map((tag) => (
-                <span className="truncate rounded-lg border border-[#293440] px-3 py-2 text-sm font-bold text-[#d8dde3]" key={tag}>
+                <span className="truncate rounded-lg border border-[#242b32] px-3 py-2 text-sm font-bold text-[#d2d8df]" key={tag}>
                   {tag}
                 </span>
               ))}
             </span>
-            <span className="grid h-11 place-items-center rounded-lg bg-[#3b91f6] text-sm font-bold text-white">
+            <span className="grid h-11 place-items-center rounded-lg bg-[#0093fd] text-sm font-bold text-white">
               Trade
             </span>
           </button>
@@ -1043,7 +1198,7 @@ function WeatherSurface({
       />
       <section className="home-reveal min-w-0">
         <div className="mb-5 flex flex-wrap items-center gap-4">
-          <h2 className="text-3xl font-bold text-[#edf1f5]">Weather</h2>
+          <h2 className="text-3xl font-bold text-[#dee3e7]">Weather</h2>
           <SegmentRail
             active={activeDate}
             labels={["Globe", "May 17", "May 18", "May 19", "May 20", "May 21", "May 22"]}
@@ -1084,7 +1239,7 @@ function GroupedWeatherCards({
       {groups.map((group) =>
         group.markets.length > 0 ? (
           <section className="home-reveal space-y-4" key={group.title}>
-            <h3 className="text-xl font-bold text-[#edf1f5]">{group.title}</h3>
+            <h3 className="text-xl font-bold text-[#dee3e7]">{group.title}</h3>
             <MarketGrid
               columns="grid-cols-1 lg:grid-cols-2"
               markets={group.markets}
@@ -1108,35 +1263,40 @@ function WeatherTicket({ market }: { market?: Market }) {
   const first = rows[0]?.label ?? "Yes";
 
   return (
-    <aside className="home-reveal sticky top-36 h-fit rounded-2xl border border-[#293440] bg-[#11161c] p-5">
+    <aside className="home-reveal sticky top-36 h-fit rounded-2xl border border-[#242b32] bg-[#181d21] p-5">
       <div className="mb-6 flex items-center gap-3">
-        <MarketImage market={market} className="size-12 rounded-lg" />
+        <MarketImage
+          market={market}
+          className="size-12 rounded-lg"
+          fetchPriority="high"
+          loading="eager"
+        />
         <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-[#8f9aa8]">{market.title}</p>
-          <p className="truncate text-lg font-bold text-[#edf1f5]">{first} · Yes</p>
+          <p className="truncate text-sm font-bold text-[#7b8996]">{market.title}</p>
+          <p className="truncate text-lg font-bold text-[#dee3e7]">{first} · Yes</p>
         </div>
       </div>
       <div className="mb-5 flex gap-5 text-lg font-bold">
-        <span className="border-b-2 border-[#d8dde3] pb-2 text-[#edf1f5]">Buy</span>
-        <span className="pb-2 text-[#8f9aa8]">Sell</span>
-        <span className="ml-auto flex items-center gap-1 text-sm text-[#d8dde3]">Market <ChevronDown size={16} /></span>
+        <span className="border-b-2 border-[#d2d8df] pb-2 text-[#dee3e7]">Buy</span>
+        <span className="pb-2 text-[#7b8996]">Sell</span>
+        <span className="ml-auto flex items-center gap-1 text-sm text-[#d2d8df]">Market <ChevronDown size={16} /></span>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <button className="home-soft-button h-14 rounded-xl bg-green-500/70 text-base font-bold text-white" type="button">
+        <button className="home-soft-button h-14 rounded-xl bg-[#3db468]/70 text-base font-bold text-white" type="button">
           Yes {formatCents(rows[0]?.yesPrice ?? null)}
         </button>
-        <button className="home-soft-button h-14 rounded-xl bg-[#20272f] text-base font-bold text-[#8f9aa8]" type="button">
+        <button className="home-soft-button h-14 rounded-xl bg-[#242b32] text-base font-bold text-[#7b8996]" type="button">
           No {formatCents(rows[0]?.noPrice ?? null)}
         </button>
       </div>
       <div className="mt-8 flex items-end justify-between">
         <div>
-          <p className="text-lg font-bold text-[#d8dde3]">Amount</p>
-          <p className="text-sm font-semibold text-[#8f9aa8]">$0.00 cash</p>
+          <p className="text-lg font-bold text-[#d2d8df]">Amount</p>
+          <p className="text-sm font-semibold text-[#7b8996]">$0.00 cash</p>
         </div>
-        <p className="text-5xl font-bold text-[#6f7d8d]">$0</p>
+        <p className="text-5xl font-bold text-[#697d91]">$0</p>
       </div>
-      <button className="home-soft-button mt-8 h-12 w-full rounded-xl bg-[#1b2027] text-sm font-bold text-[#566272]" type="button">
+      <button className="home-soft-button mt-8 h-12 w-full rounded-xl bg-[#1e2428] text-sm font-bold text-[#586879]" type="button">
         Restricted region
       </button>
     </aside>
@@ -1164,6 +1324,8 @@ function MarketGrid({
             market={market}
             onOpen={() => onOpenMarket(market)}
             isWatched={watchlistIds.has(market.id)}
+            imageLoading={index < 8 ? "eager" : "lazy"}
+            imagePriority={index < 8 ? "high" : "auto"}
             onWatchlistToggle={onWatchlistToggle ? () => onWatchlistToggle(market) : undefined}
           />
         </div>
@@ -1174,7 +1336,7 @@ function MarketGrid({
 
 function getMotionDelayStyle(index: number): React.CSSProperties {
   return {
-    "--motion-delay": `${Math.min(index, 16) * 32}ms`,
+    "--motion-delay": `${Math.min(index, 8) * 10}ms`,
   } as React.CSSProperties;
 }
 
@@ -1195,7 +1357,7 @@ function LoadMoreControl({
     <div className="mt-8 flex justify-center">
       {hasMore ? (
         <button
-          className="home-soft-button rounded-2xl border border-[#293440] bg-[#171d24] px-5 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#3b91f6]/50 hover:bg-[#1d252e] disabled:opacity-60"
+          className="home-soft-button rounded-2xl border border-[#242b32] bg-[#1e2428] px-5 py-3 text-sm font-semibold text-[#dee3e7] transition hover:border-[#0093fd]/50 hover:bg-[#2e3841] disabled:opacity-60"
           onClick={onLoadMore}
           disabled={isLoadingMore}
           type="button"
@@ -1203,7 +1365,7 @@ function LoadMoreControl({
           {isLoadingMore ? "Loading..." : "Load more"}
         </button>
       ) : total !== null ? (
-        <span className="text-sm font-medium text-[#8f9aa8]">
+        <span className="text-sm font-medium text-[#7b8996]">
           Showing {shown} of {total} markets
         </span>
       ) : null}
@@ -1226,17 +1388,17 @@ function SectionSidebar({
         <button
           className={`home-soft-button flex h-11 w-full items-center gap-3 rounded-xl px-4 text-left text-sm font-bold transition ${
             item.label === activeLabel
-              ? "bg-[#20272f] text-[#edf1f5]"
-              : "text-[#b8c1cc] hover:bg-[#171d24] hover:text-[#edf1f5]"
+              ? "bg-[#242b32] text-[#dee3e7]"
+              : "text-[#97a5b4] hover:bg-[#1e2428] hover:text-[#dee3e7]"
           }`}
           key={item.label}
           onClick={() => onSelect(item.label)}
           type="button"
         >
-          {item.icon ? <span className="grid size-5 place-items-center text-[#8f9aa8]">{item.icon}</span> : null}
+          {item.icon ? <span className="grid size-5 place-items-center text-[#7b8996]">{item.icon}</span> : null}
           <span className="min-w-0 flex-1 truncate">{item.label}</span>
           {item.count !== undefined ? (
-            <span className="text-xs font-bold text-[#566272]">{item.count}</span>
+            <span className="text-xs font-bold text-[#586879]">{item.count}</span>
           ) : null}
         </button>
       ))}
@@ -1259,8 +1421,8 @@ function SegmentRail({
         <button
           className={`home-soft-button min-w-fit rounded-xl px-4 py-2 text-sm font-bold transition ${
             label === active
-              ? "bg-[#153458] text-[#58a6ff]"
-              : "text-[#8f9aa8] hover:bg-[#171d24] hover:text-[#edf1f5]"
+              ? "bg-[#112f45] text-[#26a3fd]"
+              : "text-[#7b8996] hover:bg-[#1e2428] hover:text-[#dee3e7]"
           }`}
           key={label}
           onClick={() => onSelect(label)}
@@ -1577,7 +1739,7 @@ function Sparkline({ market }: { market: Market }) {
       <polyline
         fill="none"
         points={points}
-        stroke={up ? "#48b36a" : "#d94b45"}
+        stroke={up ? "#3db468" : "#cb3131"}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="3"
@@ -1635,8 +1797,8 @@ function DateBadge({ index, market }: { index: number; market: Market }) {
 
   return (
     <span className="text-center">
-      <span className="block text-2xl font-bold leading-none text-[#edf1f5]">{day}</span>
-      <span className="mt-1 block text-base font-bold text-[#d8dde3]">{month}</span>
+      <span className="block text-2xl font-bold leading-none text-[#dee3e7]">{day}</span>
+      <span className="mt-1 block text-base font-bold text-[#d2d8df]">{month}</span>
     </span>
   );
 }
@@ -1680,27 +1842,21 @@ function CompactSelect({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const rootRef = React.useRef<HTMLLabelElement | null>(null);
-  const { ripples, addRipple, removeRipple } = useTapRipples(rootRef);
-
   return (
     <label
-      ref={rootRef}
-      className="home-soft-button relative inline-flex h-11 min-w-fit cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-[#20272f] pl-4 pr-9 text-sm font-bold text-[#d8dde3] transition hover:bg-[#29313a] focus-within:bg-[#29313a]"
+      className="home-soft-button relative inline-flex h-11 min-w-fit cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-[#242b32] pl-4 pr-9 text-sm font-bold text-[#d2d8df] transition hover:bg-[#2e3841] focus-within:bg-[#2e3841]"
     >
-      <RippleLayer ripples={ripples} onRippleEnd={removeRipple} />
-      {icon ? <span className="pointer-events-none relative z-10 text-[#d8dde3]">{icon}</span> : null}
+      {icon ? <span className="pointer-events-none relative z-10 text-[#d2d8df]">{icon}</span> : null}
       <span className="pointer-events-none relative z-10 max-w-[180px] truncate pr-1">{displayValue}</span>
       <select
         aria-label={ariaLabel}
         className="absolute inset-0 z-20 h-full w-full cursor-pointer appearance-none rounded-full border-0 bg-transparent opacity-0 outline-none"
-        onPointerDown={addRipple}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
         {children}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-3 z-10 size-4 text-[#8f9aa8]" />
+      <ChevronDown className="pointer-events-none absolute right-3 z-10 size-4 text-[#7b8996]" />
     </label>
   );
 }
@@ -1750,10 +1906,10 @@ function HideToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="home-soft-button inline-flex h-11 min-w-fit items-center gap-2 rounded-full px-1 pr-3 text-sm font-semibold text-[#d8dde3]">
+    <label className="home-soft-button inline-flex h-11 min-w-fit items-center gap-2 rounded-full px-1 pr-3 text-sm font-semibold text-[#d2d8df]">
       <span
         className={`grid size-6 place-items-center rounded-xl border transition ${
-          checked ? "border-[#3b91f6] bg-[#3b91f6]" : "border-[#384452] bg-[#11161c]"
+          checked ? "border-[#0093fd] bg-[#0093fd]" : "border-[#2e3841] bg-[#181d21]"
         }`}
       >
         <input
@@ -1790,6 +1946,16 @@ function isHiddenByCompactFilter(
   return false;
 }
 
+function marketMatchesSearch(market: Market, search: string) {
+  if (!search) {
+    return true;
+  }
+
+  const text = `${market.title} ${market.category ?? ""} ${market.category_label ?? ""} ${market.topics.join(" ")}`.toLowerCase();
+
+  return text.includes(search);
+}
+
 function IconButton({
   label,
   children,
@@ -1805,8 +1971,8 @@ function IconButton({
     <button
       className={`home-soft-button relative grid h-10 w-10 place-items-center overflow-visible rounded-full border border-transparent bg-transparent transition ${
         pressed
-          ? "text-[#56a3ff] drop-shadow-[0_0_10px_rgba(59,145,246,0.45)]"
-          : "text-[#8f9aa8] hover:text-[#56a3ff]"
+          ? "text-[#26a3fd] drop-shadow-[0_0_10px_rgba(0,147,253,0.42)]"
+          : "text-[#7b8996] hover:text-[#26a3fd]"
       }`}
       aria-label={label}
       aria-pressed={pressed}
@@ -1818,72 +1984,6 @@ function IconButton({
   );
 }
 
-type TapRipple = {
-  id: number;
-  size: number;
-  x: number;
-  y: number;
-};
-
-function useTapRipples<T extends HTMLElement>(rootRef: React.RefObject<T | null>) {
-  const [ripples, setRipples] = React.useState<TapRipple[]>([]);
-
-  const addRipple = React.useCallback(
-    (event: React.PointerEvent<HTMLElement>) => {
-      const root = rootRef.current;
-      if (!root) {
-        return;
-      }
-
-      const bounds = root.getBoundingClientRect();
-      const size = Math.max(bounds.width, bounds.height) * 2.25;
-      const id = window.performance.now();
-
-      setRipples((current) => [
-        ...current.slice(-3),
-        {
-          id,
-          size,
-          x: event.clientX - bounds.left,
-          y: event.clientY - bounds.top,
-        },
-      ]);
-    },
-    [rootRef],
-  );
-
-  const removeRipple = React.useCallback((id: number) => {
-    setRipples((current) => current.filter((ripple) => ripple.id !== id));
-  }, []);
-
-  return { ripples, addRipple, removeRipple };
-}
-
-function RippleLayer({
-  ripples,
-  onRippleEnd,
-}: {
-  ripples: TapRipple[];
-  onRippleEnd: (id: number) => void;
-}) {
-  return (
-    <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
-      {ripples.map((ripple) => (
-        <span
-          key={ripple.id}
-          className="tap-ripple absolute rounded-full bg-[#3b91f6]/45"
-          onAnimationEnd={() => onRippleEnd(ripple.id)}
-          style={{
-            height: ripple.size,
-            left: ripple.x,
-            top: ripple.y,
-            width: ripple.size,
-          }}
-        />
-      ))}
-    </span>
-  );
-}
 
 function isTopicTabActive(filters: MarketFilters, tab: TopicTab) {
   return Object.entries(tab.filter).every(([key, value]) => {

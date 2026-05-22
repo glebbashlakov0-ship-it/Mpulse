@@ -111,6 +111,7 @@ test("normalizes grouped event context and child market labels", () => {
     question: "Will Roy Cooper win the 2028 Democratic presidential nomination?",
     groupItemTitle: "Roy Cooper",
     groupItemThreshold: "12",
+    image: "https://example.com/roy-cooper.png",
     events: [event],
   });
   const otherChildMarket = marketFixture({
@@ -118,6 +119,7 @@ test("normalizes grouped event context and child market labels", () => {
     groupItemTitle: "Oprah Winfrey",
     groupItemThreshold: "35",
     outcomePrices: JSON.stringify(["0.08", "0.92"]),
+    image: "https://example.com/oprah.png",
     events: [event],
   });
   const detail = normalizeMarketDetail(
@@ -137,6 +139,13 @@ test("normalizes grouped event context and child market labels", () => {
     [
       ["roy-cooper", "Roy Cooper", 0.61],
       ["oprah", "Oprah Winfrey", 0.08],
+    ],
+  );
+  assert.deepEqual(
+    detail.group_markets.map((market) => [market.id, market.image]),
+    [
+      ["roy-cooper", "https://example.com/roy-cooper.png"],
+      ["oprah", "https://example.com/oprah.png"],
     ],
   );
   assert.deepEqual(normalizeGroupMarkets([childMarket])[0]?.clobTokenIds, [

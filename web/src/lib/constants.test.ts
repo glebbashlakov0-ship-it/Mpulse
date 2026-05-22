@@ -89,9 +89,9 @@ describe("market discovery filters", () => {
     assert.deepEqual(tabs[1], {
       label: "AI",
       value: "ai",
-      filter: { category: "", topic: "ai", search: "" },
+      filter: { category: "", topic: "ai", search: "", status: "all" },
     });
-    assert.equal(getDiscoveryUrl(mergeDiscoveryFilters(defaultMarketFilters, tabs[1].filter)), "/markets/topic/ai");
+    assert.equal(getDiscoveryUrl(mergeDiscoveryFilters(defaultMarketFilters, tabs[1].filter)), "/markets/topic/ai?status=all");
   });
 
   it("uses category params for broad chips so crypto and sports stay strict", () => {

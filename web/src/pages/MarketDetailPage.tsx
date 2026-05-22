@@ -12,9 +12,9 @@ export function MarketDetailPage() {
 
   if (!id) {
     return (
-      <div className="min-h-screen bg-[#0f1318] text-[#edf1f5]">
+      <div className="min-h-screen bg-[#15191d] text-[#dee3e7]">
         <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
-          <div className="rounded-2xl border border-red-500/35 bg-red-950/35 p-4 text-red-200">
+          <div className="rounded-2xl border border-[#cb3131]/35 bg-[#330707]/35 p-4 text-[#daa]">
             {t("errors.notFound")}
           </div>
         </div>
@@ -23,18 +23,18 @@ export function MarketDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0f1318] text-[#edf1f5]">
+    <div className="min-h-screen bg-[#15191d] text-[#dee3e7]">
       {state.status === "loading" && (
         <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
-          <div className="rounded-2xl border border-[#293440] bg-[#171d24] p-12 text-center">
-            <p className="text-[#8f9aa8]">{t("common.loading")}</p>
+          <div className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-12 text-center">
+            <p className="text-[#7b8996]">{t("common.loading")}</p>
           </div>
         </div>
       )}
 
       {state.status === "error" && (
         <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
-          <div className="rounded-2xl border border-red-500/35 bg-red-950/35 p-4 text-red-200">
+          <div className="rounded-2xl border border-[#cb3131]/35 bg-[#330707]/35 p-4 text-[#daa]">
             {t("errors.generic")}
           </div>
         </div>

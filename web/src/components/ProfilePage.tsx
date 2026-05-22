@@ -25,7 +25,7 @@ import {
 } from "../lib/api";
 import type { AuthSessionInfo, AuthUser, TwoFactorSetup, TwoFactorStatus, UserSettings } from "../lib/types";
 
-const panel = "rounded-3xl border border-[#293440] bg-[#171d24]";
+const panel = "rounded-3xl border border-[#242b32] bg-[#1e2428]";
 
 export function ProfilePage({
   user,
@@ -249,7 +249,7 @@ export function ProfilePage({
   return (
     <section className="mx-auto w-full max-w-[1100px] overflow-x-hidden px-4 py-8 md:px-6 xl:px-8">
       <button
-        className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+        className="flex w-fit items-center gap-2 rounded-2xl border border-[#242b32] px-4 py-2 text-sm font-semibold text-[#7b8996] transition hover:border-[#0093fd]/50 hover:text-[#dee3e7]"
         onClick={onBack}
         type="button"
       >
@@ -260,20 +260,20 @@ export function ProfilePage({
       <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
         <aside className={`${panel} h-fit min-w-0 p-5`}>
           <div className="flex items-center gap-3">
-            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
+            <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#2e3841] text-[#0093fd]">
               <UserCircle size={28} />
             </span>
             <div className="min-w-0">
-              <strong className="block truncate text-base font-semibold text-[#edf1f5]">
+              <strong className="block truncate text-base font-semibold text-[#dee3e7]">
                 {user?.displayName ?? "Guest"}
               </strong>
-              <span className="block truncate text-sm font-medium text-[#8f9aa8]">
+              <span className="block truncate text-sm font-medium text-[#7b8996]">
                 {user?.email ?? "Not signed in"}
               </span>
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 text-sm font-semibold text-[#8f9aa8]">
+          <div className="mt-5 grid gap-3 text-sm font-semibold text-[#7b8996]">
             <ProfileStat label="Email" value={user?.emailVerified ? "Verified" : "Unverified"} />
             <ProfileStat label="Currency" value={user?.settings.currency ?? "USDT"} />
             <ProfileStat
@@ -284,7 +284,7 @@ export function ProfilePage({
 
           {user ? (
             <button
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#293440] px-4 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#d34c45]/60 hover:text-red-300 disabled:opacity-50"
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#242b32] px-4 py-3 text-sm font-semibold text-[#dee3e7] transition hover:border-[#cb3131]/60 hover:text-[#d78282] disabled:opacity-50"
               onClick={logout}
               disabled={isLoggingOut}
               type="button"
@@ -294,7 +294,7 @@ export function ProfilePage({
             </button>
           ) : (
             <button
-              className="mt-5 w-full rounded-2xl bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none"
+              className="mt-5 w-full rounded-2xl bg-[#0093fd] px-4 py-3 text-sm font-semibold text-white shadow-[0_4px_0_rgba(0,0,0,0.28)] transition hover:bg-[#26a3fd]"
               onClick={onOpenLogin}
               type="button"
             >
@@ -305,10 +305,10 @@ export function ProfilePage({
 
         <section className={`${panel} min-w-0 p-5`}>
           <div>
-            <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#3b91f6]">
+            <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#0093fd]">
               Profile
             </span>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal text-[#edf1f5]">
+            <h1 className="mt-2 text-3xl font-semibold tracking-normal text-[#dee3e7]">
               Settings
             </h1>
           </div>
@@ -326,11 +326,11 @@ export function ProfilePage({
           {user ? (
             <form className="mt-5 grid gap-4" onSubmit={saveSettings}>
               <label className="grid gap-1">
-                <span className="text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">
+                <span className="text-xs font-bold uppercase tracking-wide text-[#7b8996]">
                   Language
                 </span>
                 <select
-                  className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none transition focus:border-[#3b91f6]/70"
+                  className="h-12 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 text-sm font-semibold text-[#dee3e7] outline-none transition focus:border-[#0093fd]/70"
                   value={language}
                   onChange={(event) =>
                     setLanguage(event.target.value as UserSettings["language"])
@@ -342,11 +342,11 @@ export function ProfilePage({
               </label>
 
               <label className="grid gap-1">
-                <span className="text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">
+                <span className="text-xs font-bold uppercase tracking-wide text-[#7b8996]">
                   Country
                 </span>
                 <input
-                  className="h-12 rounded-2xl border border-[#293440] bg-[#0f1318] px-3 text-sm font-semibold text-[#edf1f5] outline-none placeholder:text-[#8f9aa8] transition focus:border-[#3b91f6]/70"
+                  className="h-12 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 text-sm font-semibold text-[#dee3e7] outline-none placeholder:text-[#7b8996] transition focus:border-[#0093fd]/70"
                   value={country}
                   onChange={(event) => setCountry(event.target.value)}
                   placeholder="Optional"
@@ -365,7 +365,7 @@ export function ProfilePage({
               />
 
               <button
-                className="flex h-12 w-fit items-center justify-center gap-2 rounded-2xl bg-[#3b91f6] px-5 text-sm font-semibold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none disabled:opacity-60"
+                className="flex h-12 w-fit items-center justify-center gap-2 rounded-2xl bg-[#0093fd] px-5 text-sm font-semibold text-white shadow-[0_4px_0_rgba(0,0,0,0.28)] transition hover:bg-[#26a3fd] disabled:opacity-60"
                 disabled={isSaving}
                 type="submit"
               >
@@ -374,12 +374,12 @@ export function ProfilePage({
               </button>
             </form>
           ) : (
-            <div className="mt-5 rounded-2xl border border-dashed border-[#293440] bg-[#0f1318] p-8 text-center">
-              <strong className="block text-base font-semibold text-[#edf1f5]">
+            <div className="mt-5 rounded-2xl border border-dashed border-[#242b32] bg-[#15191d] p-8 text-center">
+              <strong className="block text-base font-semibold text-[#dee3e7]">
                 Sign in required
               </strong>
               <button
-                className="mt-4 rounded-2xl bg-[#3b91f6] px-4 py-3 text-sm font-semibold text-white"
+                className="mt-4 rounded-2xl bg-[#0093fd] px-4 py-3 text-sm font-semibold text-white"
                 onClick={onOpenLogin}
                 type="button"
               >
@@ -391,7 +391,7 @@ export function ProfilePage({
 
         {user ? (
           <section className={`${panel} min-w-0 p-5 lg:col-start-2`}>
-            <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#3b91f6]">
+            <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#0093fd]">
               Security
             </span>
             <div className="mt-5 grid gap-5">
@@ -411,66 +411,66 @@ export function ProfilePage({
                 />
               )}
 
-              <div className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
+              <div className="rounded-2xl border border-[#242b32] bg-[#15191d] p-4">
                 <div className="flex items-start gap-3">
-                  <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
+                  <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#2e3841] text-[#0093fd]">
                     <ShieldCheck size={21} />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <strong className="block text-sm font-semibold text-[#edf1f5]">
+                    <strong className="block text-sm font-semibold text-[#dee3e7]">
                       Two-factor authentication
                     </strong>
-                    <p className="mt-1 text-sm font-medium text-[#8f9aa8]">
+                    <p className="mt-1 text-sm font-medium text-[#7b8996]">
                       {twoFactorStatus?.enabled
                         ? "Enabled for this account."
                         : "Use an authenticator app or backup code during login."}
                     </p>
                     {twoFactorSetup ? (
                       <div className="mt-4 grid gap-3">
-                        <div className="w-fit rounded-2xl border border-[#293440] bg-white p-2">
+                        <div className="w-fit rounded-2xl border border-[#242b32] bg-white p-2">
                           <img
                             alt="Two-factor setup QR code"
                             className="h-40 w-40"
                             src={twoFactorSetup.qrCodeDataUrl}
                           />
                         </div>
-                        <code className="break-all rounded-2xl bg-[#171d24] p-3 text-xs text-[#edf1f5]">
+                        <code className="break-all rounded-2xl bg-[#1e2428] p-3 text-xs text-[#dee3e7]">
                           {twoFactorSetup.otpauthUrl}
                         </code>
-                        <p className="text-xs font-semibold text-[#8f9aa8]">
+                        <p className="text-xs font-semibold text-[#7b8996]">
                           Backup codes: {twoFactorSetup.backupCodes.join(", ")}
                         </p>
                       </div>
                     ) : null}
                     {regeneratedBackupCodes.length > 0 ? (
-                      <p className="mt-4 rounded-2xl bg-[#171d24] p-3 text-xs font-semibold text-[#edf1f5]">
+                      <p className="mt-4 rounded-2xl bg-[#1e2428] p-3 text-xs font-semibold text-[#dee3e7]">
                         New backup codes: {regeneratedBackupCodes.join(", ")}
                       </p>
                     ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       {(twoFactorSetup || twoFactorStatus?.enabled) ? (
                         <input
-                          className="h-10 rounded-2xl border border-[#293440] bg-[#171d24] px-3 text-sm font-semibold text-[#edf1f5] outline-none"
+                          className="h-10 rounded-2xl border border-[#242b32] bg-[#1e2428] px-3 text-sm font-semibold text-[#dee3e7] outline-none"
                           value={twoFactorCode}
                           onChange={(event) => setTwoFactorCode(event.target.value)}
                           placeholder="123456"
                         />
                       ) : null}
                       {twoFactorSetup ? (
-                        <button className="rounded-2xl bg-[#3b91f6] px-4 py-2 text-sm font-semibold text-white" onClick={confirmTwoFactor} type="button">
+                        <button className="rounded-2xl bg-[#0093fd] px-4 py-2 text-sm font-semibold text-white" onClick={confirmTwoFactor} type="button">
                           Confirm
                         </button>
                       ) : twoFactorStatus?.enabled ? (
                         <>
-                          <button className="rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#edf1f5]" onClick={regenerateBackupCodes} type="button">
+                          <button className="rounded-2xl border border-[#242b32] px-4 py-2 text-sm font-semibold text-[#dee3e7]" onClick={regenerateBackupCodes} type="button">
                             Regenerate backup codes
                           </button>
-                          <button className="rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#edf1f5]" onClick={turnOffTwoFactor} type="button">
+                          <button className="rounded-2xl border border-[#242b32] px-4 py-2 text-sm font-semibold text-[#dee3e7]" onClick={turnOffTwoFactor} type="button">
                             Disable
                           </button>
                         </>
                       ) : (
-                        <button className="rounded-2xl bg-[#3b91f6] px-4 py-2 text-sm font-semibold text-white" onClick={startTwoFactor} type="button">
+                        <button className="rounded-2xl bg-[#0093fd] px-4 py-2 text-sm font-semibold text-white" onClick={startTwoFactor} type="button">
                           Set up 2FA
                         </button>
                       )}
@@ -479,42 +479,42 @@ export function ProfilePage({
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
+              <div className="rounded-2xl border border-[#242b32] bg-[#15191d] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
+                    <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#2e3841] text-[#0093fd]">
                       <Laptop size={21} />
                     </span>
                     <div>
-                      <strong className="block text-sm font-semibold text-[#edf1f5]">
+                      <strong className="block text-sm font-semibold text-[#dee3e7]">
                         Sessions and devices
                       </strong>
-                      <span className="text-sm font-medium text-[#8f9aa8]">
+                      <span className="text-sm font-medium text-[#7b8996]">
                         {sessions.length} active session{sessions.length === 1 ? "" : "s"}
                       </span>
                     </div>
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <button className="rounded-2xl border border-[#293440] px-3 py-2 text-xs font-semibold text-[#edf1f5]" onClick={revokeOthers} type="button">
+                    <button className="rounded-2xl border border-[#242b32] px-3 py-2 text-xs font-semibold text-[#dee3e7]" onClick={revokeOthers} type="button">
                       Revoke others
                     </button>
-                    <button className="rounded-2xl border border-red-500/40 px-3 py-2 text-xs font-semibold text-red-200" onClick={revokeAllSessions} type="button">
+                    <button className="rounded-2xl border border-[#cb3131]/40 px-3 py-2 text-xs font-semibold text-[#daa]" onClick={revokeAllSessions} type="button">
                       Log out all devices
                     </button>
                   </div>
                 </div>
                 <div className="mt-4 grid gap-2">
                   {sessions.map((session) => (
-                    <div className="grid gap-2 rounded-2xl bg-[#171d24] p-3 text-sm font-semibold text-[#8f9aa8] md:grid-cols-[1fr_auto] md:items-center" key={session.id}>
+                    <div className="grid gap-2 rounded-2xl bg-[#1e2428] p-3 text-sm font-semibold text-[#7b8996] md:grid-cols-[1fr_auto] md:items-center" key={session.id}>
                       <div className="min-w-0">
-                        <span className="block truncate text-[#edf1f5]">
+                        <span className="block truncate text-[#dee3e7]">
                           {session.userAgent ?? "Unknown device"} {session.current ? "(current)" : ""}
                         </span>
                         <span className="block text-xs">
                           Last seen {new Date(session.lastSeenAt).toLocaleString()} · {session.ipAddress ?? "unknown IP"}
                         </span>
                       </div>
-                      <button className="rounded-2xl border border-[#293440] px-3 py-2 text-xs text-[#edf1f5]" onClick={() => revokeSession(session.id)} type="button">
+                      <button className="rounded-2xl border border-[#242b32] px-3 py-2 text-xs text-[#dee3e7]" onClick={() => revokeSession(session.id)} type="button">
                         Revoke
                       </button>
                     </div>
@@ -543,17 +543,17 @@ function SecurityBlock({
   onAction?: () => void;
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] p-4">
-      <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#1d252e] text-[#3b91f6]">
+    <div className="flex items-start gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] p-4">
+      <span className="grid h-10 w-10 place-items-center rounded-2xl bg-[#2e3841] text-[#0093fd]">
         {icon}
       </span>
       <div className="min-w-0 flex-1">
-        <strong className="block text-sm font-semibold text-[#edf1f5]">{title}</strong>
-        <p className="mt-1 text-sm font-medium text-[#8f9aa8]">{text}</p>
+        <strong className="block text-sm font-semibold text-[#dee3e7]">{title}</strong>
+        <p className="mt-1 text-sm font-medium text-[#7b8996]">{text}</p>
       </div>
       {actionLabel && onAction ? (
         <button
-          className="rounded-2xl border border-[#293440] px-3 py-2 text-xs font-semibold text-[#edf1f5]"
+          className="rounded-2xl border border-[#242b32] px-3 py-2 text-xs font-semibold text-[#dee3e7]"
           onClick={onAction}
           type="button"
         >
@@ -566,9 +566,9 @@ function SecurityBlock({
 
 function ProfileStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#0f1318] px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-[#15191d] px-3 py-2">
       <span>{label}</span>
-      <strong className="min-w-0 truncate text-[#edf1f5]">{value}</strong>
+      <strong className="min-w-0 truncate text-[#dee3e7]">{value}</strong>
     </div>
   );
 }
@@ -583,10 +583,10 @@ function Toggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-3 rounded-2xl border border-[#293440] bg-[#0f1318] px-4 py-3 text-sm font-semibold text-[#edf1f5]">
+    <label className="flex items-center justify-between gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] px-4 py-3 text-sm font-semibold text-[#dee3e7]">
       <span>{label}</span>
       <input
-        className="h-5 w-5 accent-[#3b91f6]"
+        className="h-5 w-5 accent-[#0093fd]"
         type="checkbox"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
@@ -599,7 +599,7 @@ function InlineMessage({ tone, text }: { tone: "success" | "error"; text: string
   return (
     <div
       className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
-        tone === "success" ? "bg-green-500/10 text-green-200" : "bg-red-500/10 text-red-200"
+        tone === "success" ? "bg-[#3db468]/10 text-[#a6d2b6]" : "bg-[#cb3131]/10 text-[#daa]"
       }`}
     >
       {tone === "success" ? (

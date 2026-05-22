@@ -84,6 +84,51 @@ export function registerAuthRoutes(
   app.post<{
     Body: {
       email?: unknown;
+    };
+  }>(
+    "/api/auth/lookup",
+    {
+      preHandler: async (request, reply) => {
+        const allowed = await checkAuthRateLimit({
+          request,
+          reply,
+          endpoint: "POST /api/auth/lookup",
+          email:
+            request.body && typeof request.body.email === "string" ? request.body.email : null,
+        });
+
+        if (!allowed) {
+          return;
+        }
+      },
+    },
+    async (request, reply) => {
+      const email =
+        typeof request.body?.email === "string" ? request.body.email.trim().toLowerCase() : "";
+
+      if (email.length < 3 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return reply.status(400).send({
+          data: null,
+          error: {
+            code: "INVALID_EMAIL",
+            message: "Enter a valid email address.",
+          },
+        });
+      }
+
+      const user = await auth.repositories.users.findUserByEmail(email);
+
+      return {
+        data: {
+          exists: Boolean(user),
+        },
+      };
+    },
+  );
+
+  app.post<{
+    Body: {
+      email?: unknown;
       password?: unknown;
       displayName?: unknown;
     };

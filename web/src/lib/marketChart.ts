@@ -44,7 +44,7 @@ const rangeMs: Record<Exclude<ChartRange, "ALL">, number> = {
   "1M": 30 * 24 * 60 * 60 * 1000,
 };
 
-const seriesColors = ["#93c5fd", "#3b82f6", "#f4bd3f", "#fb923c", "#a78bfa"];
+const seriesColors = ["#b8e1fe", "#0093fd", "#f7d022", "#fe6e00", "#ac4bff"];
 const maxSeriesPoints = 180;
 
 export function filterPriceHistoryByRange(

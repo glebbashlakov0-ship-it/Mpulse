@@ -13,6 +13,19 @@ type MarketsState = {
   isLoadingMore: boolean;
 };
 
+type MarketsPage = Pick<MarketsState, "data" | "nextOffset" | "total">;
+
+type MarketsPageCacheEntry = {
+  promise?: Promise<MarketsPage>;
+  updatedAt: number;
+  value?: MarketsPage;
+};
+
+const marketPageCache = new Map<string, MarketsPageCacheEntry>();
+const marketPageCacheMaxAgeMs = 5 * 60 * 1000;
+const marketPageRevalidateMs = 30_000;
+const marketPageCacheLimit = 80;
+
 function getNextOffset({
   currentOffset,
   received,
@@ -24,6 +37,98 @@ function getNextOffset({
 }) {
   const nextOffset = currentOffset + received;
   return received > 0 && total !== null && nextOffset < total ? nextOffset : null;
+}
+
+function getMarketPageCacheKey(params: URLSearchParams) {
+  return params.toString();
+}
+
+function getOffsetParam(params: URLSearchParams) {
+  const parsed = Number(params.get("offset") ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function toMarketsPage(params: URLSearchParams, result: Awaited<ReturnType<typeof loadMarkets>>): MarketsPage {
+  const currentOffset = getOffsetParam(params);
+  const total = result.meta?.total ?? currentOffset + result.data.length;
+
+  return {
+    data: withUniqueImages(result.data),
+    total,
+    nextOffset: getNextOffset({
+      currentOffset,
+      received: result.data.length,
+      total,
+    }),
+  };
+}
+
+function readMarketsPageCache(cacheKey: string) {
+  const cached = marketPageCache.get(cacheKey);
+
+  if (!cached?.value || Date.now() - cached.updatedAt > marketPageCacheMaxAgeMs) {
+    return null;
+  }
+
+  return cached.value;
+}
+
+function shouldRevalidateMarketsPage(cacheKey: string) {
+  const cached = marketPageCache.get(cacheKey);
+
+  return !cached?.value || Date.now() - cached.updatedAt > marketPageRevalidateMs;
+}
+
+function rememberMarketsPage(cacheKey: string, value: MarketsPage) {
+  marketPageCache.set(cacheKey, {
+    updatedAt: Date.now(),
+    value,
+  });
+
+  if (marketPageCache.size <= marketPageCacheLimit) {
+    return;
+  }
+
+  const oldestKey = [...marketPageCache.entries()]
+    .sort(([, left], [, right]) => left.updatedAt - right.updatedAt)[0]?.[0];
+
+  if (oldestKey) {
+    marketPageCache.delete(oldestKey);
+  }
+}
+
+function requestMarketsPage(params: URLSearchParams) {
+  const cacheKey = getMarketPageCacheKey(params);
+  const cached = marketPageCache.get(cacheKey);
+
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const promise = loadMarkets(params, new AbortController().signal)
+    .then((result) => {
+      const page = toMarketsPage(params, result);
+      rememberMarketsPage(cacheKey, page);
+      return page;
+    })
+    .finally(() => {
+      const current = marketPageCache.get(cacheKey);
+
+      if (current?.promise === promise) {
+        marketPageCache.set(cacheKey, {
+          updatedAt: current.updatedAt,
+          value: current.value,
+        });
+      }
+    });
+
+  marketPageCache.set(cacheKey, {
+    promise,
+    updatedAt: cached?.updatedAt ?? 0,
+    value: cached?.value,
+  });
+
+  return promise;
 }
 
 export function useMarkets(
@@ -43,37 +148,48 @@ export function useMarkets(
   const requestIdRef = React.useRef(0);
 
   React.useEffect(() => {
-    const controller = new AbortController();
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
     const params = buildMarketSearchParams(deferredFilters, { limit: pageSize });
+    const cacheKey = getMarketPageCacheKey(params);
+    const cachedPage = readMarketsPageCache(cacheKey);
 
-    setState((current) => ({
-      ...current,
-      status: "loading",
-      data: [],
-      total: null,
-      nextOffset: null,
-      message: null,
-      isLoadingMore: false,
-    }));
+    if (cachedPage) {
+      setState({
+        status: "ready",
+        data: cachedPage.data,
+        total: cachedPage.total,
+        nextOffset: cachedPage.nextOffset,
+        message: null,
+        isLoadingMore: false,
+      });
+    } else {
+      setState((current) => ({
+        ...current,
+        status: "loading",
+        data: [],
+        total: null,
+        nextOffset: null,
+        message: null,
+        isLoadingMore: false,
+      }));
+    }
 
-    loadMarkets(params, controller.signal)
-      .then((result) => {
+    if (cachedPage && !shouldRevalidateMarketsPage(cacheKey)) {
+      return undefined;
+    }
+
+    requestMarketsPage(params)
+      .then((page) => {
         if (requestIdRef.current !== requestId) {
           return;
         }
 
-        const total = result.meta?.total ?? result.data.length;
         setState({
           status: "ready",
-          data: withUniqueImages(result.data),
-          total,
-          nextOffset: getNextOffset({
-            currentOffset: 0,
-            received: result.data.length,
-            total,
-          }),
+          data: page.data,
+          total: page.total,
+          nextOffset: page.nextOffset,
           message: null,
           isLoadingMore: false,
         });
@@ -97,7 +213,7 @@ export function useMarkets(
         });
       });
 
-    return () => controller.abort();
+    return undefined;
   }, [deferredFilters, pageSize]);
 
   const loadMore = React.useCallback(async () => {
@@ -119,7 +235,7 @@ export function useMarkets(
     }));
 
     try {
-      const result = await loadMarkets(params, new AbortController().signal);
+      const result = await requestMarketsPage(params);
       if (requestIdRef.current !== requestId) {
         return;
       }
@@ -127,12 +243,8 @@ export function useMarkets(
       setState((current) => ({
         status: "ready",
         data: withUniqueImages([...current.data, ...result.data]),
-        total: result.meta?.total ?? current.total,
-        nextOffset: getNextOffset({
-          currentOffset,
-          received: result.data.length,
-          total: result.meta?.total ?? current.total,
-        }),
+        total: result.total,
+        nextOffset: result.nextOffset,
         message: null,
         isLoadingMore: false,
       }));
@@ -149,6 +261,32 @@ export function useMarkets(
       }));
     }
   }, [deferredFilters, pageSize, state.isLoadingMore, state.nextOffset, state.status]);
+
+  React.useEffect(() => {
+    if (state.status !== "ready" || state.nextOffset === null) {
+      return undefined;
+    }
+
+    const params = buildMarketSearchParams(deferredFilters, {
+      limit: pageSize,
+      offset: state.nextOffset,
+    });
+    const cacheKey = getMarketPageCacheKey(params);
+
+    if (!shouldRevalidateMarketsPage(cacheKey)) {
+      return undefined;
+    }
+
+    const timeout = window.setTimeout(() => {
+      requestMarketsPage(params).catch(() => {
+        // Prefetch is opportunistic; the explicit load-more path reports errors.
+      });
+    }, 150);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [deferredFilters, pageSize, state.nextOffset, state.status]);
 
   return [state satisfies MarketsState, setState, loadMore] as const;
 }

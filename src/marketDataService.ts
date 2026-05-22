@@ -162,6 +162,8 @@ const maxDiscoveryMarketsPerEvent = 1;
 const polymarketDiscoveryEventLimit = 150;
 const polymarketEventPageLimit = 100;
 const polymarketMarketPageLimit = 100;
+const marketListCacheScope = "markets:list:v5";
+const foregroundCacheLoads = new Map<string, Promise<unknown>>();
 const backgroundCacheRefreshes = new Set<string>();
 
 function toBoolean(value: unknown): boolean | undefined {
@@ -690,8 +692,8 @@ function marketFromEvent(
           ...childMarket,
           category: childMarket.category ?? event.category,
           description: childMarket.description ?? event.description,
-          image: event.image ?? event.icon ?? childMarket.image,
-          icon: event.icon ?? event.image ?? childMarket.icon,
+          image: childMarket.image ?? childMarket.icon ?? event.image ?? event.icon,
+          icon: childMarket.icon ?? childMarket.image ?? event.icon ?? event.image,
           startDate: childMarket.startDate ?? event.startDate,
           endDate: childMarket.endDate ?? event.endDate,
           active: childMarket.active ?? event.active,
@@ -809,8 +811,8 @@ function collapseEmbeddedEventGroups(markets: PolymarketMarket[]) {
       ...market,
       groupItemTitle: inferEmbeddedGroupItemTitle(event, market),
       category: market.category ?? event.category,
-      image: event.image ?? event.icon ?? market.image,
-      icon: event.icon ?? event.image ?? market.icon,
+      image: market.image ?? market.icon ?? event.image ?? event.icon,
+      icon: market.icon ?? market.image ?? event.icon ?? event.image,
       events: [compactEventContext(event)],
     }));
     const selectedMarket = groupedChildren[0];
@@ -997,6 +999,70 @@ function toMarketFilter(params: MarketListParams, config: AppConfig) {
   };
 }
 
+type ParsedMarketFilter = ReturnType<typeof toMarketFilter>;
+
+function getListCacheKey(filter: ParsedMarketFilter) {
+  return createCacheKey(marketListCacheScope, {
+    active: filter.active,
+    closed: filter.closed,
+    category: filter.category,
+    topic: filter.topic,
+    search: filter.search,
+    sort: filter.sort,
+    limit: filter.limit,
+    offset: filter.offset,
+    status: filter.status,
+    minVolume: filter.minVolume,
+    maxVolume: filter.maxVolume,
+    closingBefore: filter.closingBefore,
+    closingAfter: filter.closingAfter,
+  });
+}
+
+function getListCacheTtlMs(filter: ParsedMarketFilter, config: AppConfig) {
+  if (filter.search) {
+    return config.cacheTtlMs.searchResults;
+  }
+
+  return filter.closed ? config.cacheTtlMs.closedMarkets : config.cacheTtlMs.activeMarkets;
+}
+
+function getListUpstreamScanLimit(filter: ParsedMarketFilter, config: AppConfig) {
+  const requestedThrough = filter.offset + filter.limit;
+  const hasFocusedFilter = Boolean(filter.category || filter.topic);
+  const multiplier = filter.search ? 2 : hasFocusedFilter ? 2 : 4;
+  const minimum = filter.search ? 80 : hasFocusedFilter ? 100 : 120;
+
+  return Math.min(
+    config.upstreamMarketLimit,
+    Math.max(minimum, requestedThrough * multiplier),
+  );
+}
+
+function listMetaToMarketDataMeta(meta: MarketListResult["meta"]): MarketDataMeta {
+  return {
+    lastSyncedAt: meta.lastSyncedAt,
+    isStale: meta.isStale,
+    sourceStatus: meta.sourceStatus,
+    warnings: meta.warnings,
+  };
+}
+
+function withListCacheMeta(
+  result: MarketListResult,
+  cacheMeta: MarketDataMeta,
+): MarketListResult {
+  const mergedMeta = mergeSourceMeta(listMetaToMarketDataMeta(result.meta), cacheMeta);
+
+  return {
+    data: result.data,
+    meta: {
+      ...result.meta,
+      ...mergedMeta,
+    },
+  };
+}
+
 function buildCacheMeta<T>(
   entry: CacheReadResult<T> | null,
   sourceStatus: MarketSourceStatus,
@@ -1122,8 +1188,15 @@ async function loadWithStaleFallback<T>({
     };
   }
 
+  const pending = foregroundCacheLoads.get(key);
+  const loadPromise = pending ?? loader();
+
+  if (!pending) {
+    foregroundCacheLoads.set(key, loadPromise);
+  }
+
   try {
-    const value = await loader();
+    const value = (await loadPromise) as T;
     cache.set(key, value, ttlMs);
     const refreshed = cache.getEntry<T>(key);
 
@@ -1154,6 +1227,10 @@ async function loadWithStaleFallback<T>({
     }
 
     throw error;
+  } finally {
+    if (!pending && foregroundCacheLoads.get(key) === loadPromise) {
+      foregroundCacheLoads.delete(key);
+    }
   }
 }
 
@@ -1183,6 +1260,23 @@ function refreshCacheInBackground<T>({
     .finally(() => {
       backgroundCacheRefreshes.delete(key);
     });
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new UpstreamError(message, 0));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function mergeSourceMeta(...items: MarketDataMeta[]): MarketDataMeta {
@@ -1221,8 +1315,14 @@ export function buildMarketDataService({
   getSnapshots?: (marketId: string, limit?: number) => MarketSnapshot[] | Promise<MarketSnapshot[]>;
 }) {
   const visibilityRules = buildKeywordVisibilityRules(config.blockedMarketTerms);
+  const topicSearchTimeoutMs = Math.min(
+    1800,
+    Math.max(750, Math.floor(config.polymarketRequestTimeoutMs / 3)),
+  );
   const topicSearchTerms: Record<string, string[]> = {
-    esports: ["esports", "dota", "league of legends", "lol", "valorant", "cs2"],
+    ai: ["ai", "openai", "gpt"],
+    culture: ["movies", "music", "box office", "eurovision", "gta vi"],
+    esports: ["esports", "dota", "valorant", "cs2"],
   };
 
   function eventQueries(params: {
@@ -1231,6 +1331,7 @@ export function buildMarketDataService({
     category?: string | null;
     topic?: string | null;
     search?: string | null;
+    maxItems: number;
   }) {
     const base = {
       active: params.active,
@@ -1243,18 +1344,23 @@ export function buildMarketDataService({
       params.category,
       params.search ? slugifyTag(params.search) : null,
     ].filter((tag): tag is string => Boolean(tag));
+    const broadDiscovery = !params.search && !params.category && !params.topic;
+    const maxItems = Math.max(1, Math.min(params.maxItems, config.upstreamMarketLimit));
 
-    const queries: Array<{ query: Record<string, unknown>; paginate: boolean; maxItems?: number }> = params.search
-      ? []
-      : [
-          {
-            query: base,
-            paginate: true,
-            maxItems: Math.min(config.upstreamMarketLimit, polymarketDiscoveryEventLimit),
-          },
-          { query: { ...base, featured: true }, paginate: false },
-          { query: { ...base, trending: true }, paginate: false },
-        ];
+    const queries: Array<{ query: Record<string, unknown>; paginate: boolean; maxItems?: number }> =
+      params.search
+        ? []
+        : broadDiscovery
+          ? [
+              {
+                query: base,
+                paginate: true,
+                maxItems: Math.min(maxItems, polymarketDiscoveryEventLimit),
+              },
+              { query: { ...base, featured: true }, paginate: false },
+              { query: { ...base, trending: true }, paginate: false },
+            ]
+          : [];
 
     for (const focusedTag of new Set(focusedTags)) {
       queries.push({
@@ -1263,7 +1369,7 @@ export function buildMarketDataService({
           tag_slug: focusedTag,
         },
         paginate: true,
-        maxItems: config.upstreamMarketLimit,
+        maxItems,
       });
     }
 
@@ -1281,13 +1387,13 @@ export function buildMarketDataService({
     }));
   }
 
-  function marketQueryPages(query: Record<string, unknown>) {
-    const pageLimit = Math.min(config.upstreamMarketLimit, polymarketMarketPageLimit);
-    const pageCount = Math.max(1, Math.ceil(config.upstreamMarketLimit / pageLimit));
+  function marketQueryPages(query: Record<string, unknown>, maxItems = config.upstreamMarketLimit) {
+    const pageLimit = Math.min(maxItems, polymarketMarketPageLimit);
+    const pageCount = Math.max(1, Math.ceil(maxItems / pageLimit));
 
     return Array.from({ length: pageCount }).map((_, index) => ({
       ...query,
-      limit: Math.min(pageLimit, config.upstreamMarketLimit - index * pageLimit),
+      limit: Math.min(pageLimit, maxItems - index * pageLimit),
       offset: index * pageLimit,
     }));
   }
@@ -1298,12 +1404,19 @@ export function buildMarketDataService({
     category?: string | null;
     topic?: string | null;
     search?: string | null;
+    maxItems: number;
   }) {
     const ttl = params.closed ? config.cacheTtlMs.closedMarkets : config.cacheTtlMs.activeMarkets;
     const queries = eventQueries(params).flatMap(({ query, paginate, maxItems }) =>
       paginate
         ? eventQueryPages(query, maxItems)
-        : [{ ...query, limit: Math.min(config.upstreamMarketLimit, polymarketEventPageLimit), offset: 0 }],
+        : [
+            {
+              ...query,
+              limit: Math.min(params.maxItems, config.upstreamMarketLimit, polymarketEventPageLimit),
+              offset: 0,
+            },
+          ],
     );
     const results = await Promise.all(
       queries.map(async (query) => {
@@ -1337,7 +1450,7 @@ export function buildMarketDataService({
     };
   }
 
-  async function getTopicSearchMarkets(topic: string | null) {
+  async function getTopicSearchMarkets(topic: string | null, maxItems: number) {
     const terms = topic ? topicSearchTerms[topic] : undefined;
     if (!terms?.length) {
       return {
@@ -1348,13 +1461,25 @@ export function buildMarketDataService({
 
     const results = await Promise.all(
       terms.map((term) => {
-        const searchQuery = { q: term, limit: config.upstreamMarketLimit };
+        const searchQuery = {
+          q: term,
+          limit: Math.min(maxItems, config.upstreamMarketLimit),
+        };
 
         return loadWithStaleFallback({
           cache,
           key: createCacheKey("polymarket:topic-search", searchQuery),
           ttlMs: config.cacheTtlMs.searchResults,
-          loader: async () => extractSearchMarkets(await polymarket.search(searchQuery)),
+          loader: async () =>
+            extractSearchMarkets(
+              await withTimeout(
+                polymarket.search<{ events?: PolymarketEvent[]; markets?: PolymarketMarket[] }>(
+                  searchQuery,
+                ),
+                topicSearchTimeoutMs,
+                "Polymarket topic search timed out",
+              ),
+            ),
           fallback: () => [],
         });
       }),
@@ -1373,52 +1498,63 @@ export function buildMarketDataService({
     search?: string;
     topic?: string | null;
     discovery?: boolean;
+    maxItems?: number;
   }) {
     const focusedTag = params.topic ?? params.category ?? null;
+    const maxItems = Math.max(
+      1,
+      Math.min(params.maxItems ?? config.upstreamMarketLimit, config.upstreamMarketLimit),
+    );
     const baseQuery = {
       active: params.active,
       closed: params.closed,
       order: "volumeNum",
       ascending: false,
     };
-    const marketQueries: Array<Record<string, unknown>> = [baseQuery];
+    const marketQueries: Array<Record<string, unknown>> = [];
 
-    if (focusedTag) {
+    if (params.search) {
       marketQueries.push({
         ...baseQuery,
-        tag_slug: focusedTag,
+        q: params.search,
       });
     }
 
-    if (params.category) {
-      marketQueries.push({
-        ...baseQuery,
-        category: params.category,
-      });
+    if (!params.search && !focusedTag && !params.category) {
+      marketQueries.push(baseQuery);
     }
 
     const ttl = params.closed ? config.cacheTtlMs.closedMarkets : config.cacheTtlMs.activeMarkets;
-    const baseMarketsPromise = Promise.all(
-      marketQueries.flatMap(marketQueryPages).map((query) =>
-        loadWithStaleFallback({
-          cache,
-          key: createCacheKey("polymarket:markets", query),
-          ttlMs: ttl,
-          loader: () => polymarket.getMarkets<PolymarketMarket[]>(query),
-        }),
-      ),
-    ).then((results) => ({
-      value: collapseEmbeddedEventGroups(dedupeMarkets(results.flatMap((result) => result.value))),
-      meta: mergeSourceMeta(...results.map((result) => result.meta)),
-    }));
+    const tolerateEmptyMarketQueryFallback = Boolean(params.search || focusedTag || params.category);
+    const baseMarketsPromise =
+      marketQueries.length > 0
+        ? Promise.all(
+            marketQueries.flatMap((query) => marketQueryPages(query, maxItems)).map((query) =>
+              loadWithStaleFallback({
+                cache,
+                key: createCacheKey("polymarket:markets", query),
+                ttlMs: ttl,
+                loader: () => polymarket.getMarkets<PolymarketMarket[]>(query),
+                fallback: tolerateEmptyMarketQueryFallback ? () => [] : undefined,
+              }),
+            ),
+          ).then((results) => ({
+            value: collapseEmbeddedEventGroups(dedupeMarkets(results.flatMap((result) => result.value))),
+            meta: mergeSourceMeta(...results.map((result) => result.meta)),
+          }))
+        : Promise.resolve({
+            value: [] as PolymarketMarket[],
+            meta: buildCacheMeta(null, "cache"),
+          });
     const eventMarketsPromise = getEventBackedMarkets({
       active: params.active,
       closed: params.closed,
       category: params.category ?? null,
       topic: params.topic ?? null,
       search: params.search ?? null,
+      maxItems,
     });
-    const topicMarketsPromise = getTopicSearchMarkets(params.topic ?? params.category ?? null);
+    const topicMarketsPromise = getTopicSearchMarkets(params.topic ?? params.category ?? null, maxItems);
     const [baseMarkets, eventMarkets, topicMarkets] = await Promise.all([
       baseMarketsPromise,
       eventMarketsPromise,
@@ -1449,7 +1585,7 @@ export function buildMarketDataService({
       };
     }
 
-    const searchQuery = { q: params.search, limit: config.upstreamMarketLimit };
+    const searchQuery = { q: params.search, limit: maxItems };
     const searchMarkets = await loadWithStaleFallback({
       cache,
       key: createCacheKey("polymarket:search", searchQuery),
@@ -1472,8 +1608,8 @@ export function buildMarketDataService({
     };
   }
 
-  async function listMarkets(params: MarketListParams): Promise<MarketListResult> {
-    const filter = toMarketFilter(params, config);
+  async function buildMarketList(filter: ParsedMarketFilter): Promise<MarketListResult> {
+    const maxItems = getListUpstreamScanLimit(filter, config);
     const rawMarketsResult = await getRawMarkets({
       active: filter.active ?? (filter.status === "live" || filter.status === "upcoming" ? true : undefined),
       closed: filter.closed ?? (filter.status === "live" || filter.status === "upcoming" ? false : filter.status === "closed" ? true : undefined),
@@ -1481,6 +1617,7 @@ export function buildMarketDataService({
       search: filter.search,
       topic: filter.topic,
       discovery: !filter.search && (filter.sort === "trending" || filter.sort === "popular"),
+      maxItems,
     });
     const normalized = rawMarketsResult.value
       .filter((market) => isMarketVisible(market, visibilityRules))
@@ -1545,6 +1682,18 @@ export function buildMarketDataService({
         ...rawMarketsResult.meta,
       },
     };
+  }
+
+  async function listMarkets(params: MarketListParams): Promise<MarketListResult> {
+    const filter = toMarketFilter(params, config);
+    const cached = await loadWithStaleFallback({
+      cache,
+      key: getListCacheKey(filter),
+      ttlMs: getListCacheTtlMs(filter, config),
+      loader: () => buildMarketList(filter),
+    });
+
+    return withListCacheMeta(cached.value, cached.meta);
   }
 
   async function getRelatedMarkets(market: PolymarketMarket) {
@@ -1699,8 +1848,8 @@ export function buildMarketDataService({
       ...childMarket,
       category: childMarket.category ?? event.category,
       description: childMarket.description ?? event.description,
-      image: event.image ?? event.icon ?? childMarket.image,
-      icon: event.icon ?? event.image ?? childMarket.icon,
+      image: childMarket.image ?? childMarket.icon ?? event.image ?? event.icon,
+      icon: childMarket.icon ?? childMarket.image ?? event.icon ?? event.image,
       startDate: childMarket.startDate ?? event.startDate,
       endDate: childMarket.endDate ?? event.endDate,
       active: childMarket.active ?? event.active,

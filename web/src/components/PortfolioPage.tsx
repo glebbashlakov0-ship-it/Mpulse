@@ -26,8 +26,8 @@ import type { Market } from "../lib/types";
 import { usePortfolio } from "../hooks/usePortfolio";
 import { MarketImage } from "./MarketMedia";
 
-const panel = "rounded-3xl border border-[#293440] bg-[#171d24]";
-const muted = "text-sm font-semibold text-[#8f9aa8]";
+const panel = "rounded-3xl border border-[#242b32] bg-[#1e2428]";
+const muted = "text-sm font-semibold text-[#7b8996]";
 
 export function PortfolioPage({
   markets,
@@ -72,7 +72,7 @@ export function PortfolioPage({
     <section className="mx-auto w-full max-w-[1500px] overflow-x-hidden px-4 py-8 md:px-6 xl:px-8">
       <div className="grid gap-6">
         <button
-          className="flex w-fit items-center gap-2 rounded-2xl border border-[#293440] px-4 py-2 text-sm font-semibold text-[#8f9aa8] transition hover:border-[#3b91f6]/50 hover:text-[#edf1f5]"
+          className="flex w-fit items-center gap-2 rounded-2xl border border-[#242b32] px-4 py-2 text-sm font-semibold text-[#7b8996] transition hover:border-[#0093fd]/50 hover:text-[#dee3e7]"
           onClick={onBack}
         >
           <ArrowLeft size={18} />
@@ -81,18 +81,18 @@ export function PortfolioPage({
 
         <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
           <div>
-            <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#3b91f6]">
+            <span className="text-xs font-bold uppercase tracking-[0.18em] text-[#0093fd]">
               Account
             </span>
-            <h1 className="mt-2 text-4xl font-semibold tracking-normal text-[#edf1f5]">
+            <h1 className="mt-2 text-4xl font-semibold tracking-normal text-[#dee3e7]">
               Portfolio
             </h1>
-            <p className="mt-2 max-w-2xl text-base font-medium text-[#8f9aa8]">
+            <p className="mt-2 max-w-2xl text-base font-medium text-[#7b8996]">
               Balance, open positions, performance, and trade history.
             </p>
           </div>
           <button
-            className="rounded-2xl border border-[#293440] px-4 py-3 text-sm font-semibold text-[#edf1f5] transition hover:border-[#d34c45]/60 hover:text-red-300 disabled:opacity-50"
+            className="rounded-2xl border border-[#242b32] px-4 py-3 text-sm font-semibold text-[#dee3e7] transition hover:border-[#cb3131]/60 hover:text-[#d78282] disabled:opacity-50"
             onClick={resetPortfolio}
             disabled={isResetting}
           >
@@ -153,22 +153,22 @@ export function PortfolioPage({
 
                 return (
                   <article
-                    className="grid min-w-0 gap-4 rounded-2xl border border-[#293440] bg-[#0f1318] p-4 md:grid-cols-[minmax(0,1fr)_110px_130px_120px_auto] md:items-center"
+                    className="grid min-w-0 gap-4 rounded-2xl border border-[#242b32] bg-[#15191d] p-4 md:grid-cols-[minmax(0,1fr)_110px_130px_120px_auto] md:items-center"
                     key={position.marketId}
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       {market ? (
                         <MarketImage market={market} />
                       ) : (
-                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#1d252e] text-[#8f9aa8]">
+                        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#2e3841] text-[#7b8996]">
                           <ImageOff size={20} />
                         </span>
                       )}
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-[#edf1f5]">
+                        <strong className="block truncate text-sm font-semibold text-[#dee3e7]">
                           {position.marketTitle}
                         </strong>
-                        <span className="text-sm font-medium text-[#8f9aa8]">
+                        <span className="text-sm font-medium text-[#7b8996]">
                           {formatShares(shares)} shares · avg{" "}
                           {formatCents(getAveragePositionPrice(position))}
                         </span>
@@ -182,7 +182,7 @@ export function PortfolioPage({
                       tone={pnl >= 0 ? "positive" : "negative"}
                     />
                     <button
-                      className="rounded-2xl bg-[#1d252e] px-4 py-2 text-sm font-semibold text-[#edf1f5] transition hover:bg-[#293440]"
+                      className="rounded-2xl bg-[#2e3841] px-4 py-2 text-sm font-semibold text-[#dee3e7] transition hover:bg-[#242b32]"
                       onClick={() => onOpenMarketId(position.marketId)}
                     >
                       Open
@@ -223,15 +223,15 @@ export function PortfolioPage({
           <div className="mt-4 grid gap-3">
             {portfolio.trades.map((trade) => (
               <article
-                className="grid min-w-0 gap-4 rounded-2xl border border-[#293440] bg-[#0f1318] p-4 md:grid-cols-[minmax(0,1fr)_130px_120px_90px_90px] md:items-center"
+                className="grid min-w-0 gap-4 rounded-2xl border border-[#242b32] bg-[#15191d] p-4 md:grid-cols-[minmax(0,1fr)_130px_120px_90px_90px] md:items-center"
                 key={trade.id}
               >
                 <div className="min-w-0">
-                  <strong className="block text-sm font-semibold text-[#edf1f5]">
+                  <strong className="block text-sm font-semibold text-[#dee3e7]">
                     {trade.action === "sell" ? "Sell" : "Buy"}{" "}
                     {trade.side === "yes" ? "Yes" : "No"}
                   </strong>
-                  <span className="block truncate text-sm font-medium text-[#8f9aa8]">
+                  <span className="block truncate text-sm font-medium text-[#7b8996]">
                     {trade.marketTitle}
                   </span>
                 </div>
@@ -241,7 +241,7 @@ export function PortfolioPage({
                 />
                 <PositionStat label="Shares" value={formatShares(trade.shares)} />
                 <PositionStat label="Price" value={formatCents(trade.price)} />
-                <time className="text-sm font-semibold text-[#8f9aa8]">
+                <time className="text-sm font-semibold text-[#7b8996]">
                   {formatRelativeTime(trade.createdAt)}
                 </time>
               </article>
@@ -258,10 +258,10 @@ function InlineState({ tone, text }: { tone: "success" | "error" | "info"; text:
     <div
       className={`flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
         tone === "success"
-          ? "bg-green-500/10 text-green-200"
+          ? "bg-[#3db468]/10 text-[#a6d2b6]"
           : tone === "error"
-            ? "bg-red-500/10 text-red-200"
-            : "bg-[#171d24] text-[#8f9aa8]"
+            ? "bg-[#cb3131]/10 text-[#daa]"
+            : "bg-[#1e2428] text-[#7b8996]"
       }`}
     >
       {tone === "success" ? (
@@ -279,7 +279,7 @@ function PortfolioSkeleton() {
     <div className="mt-4 grid gap-3">
       {Array.from({ length: 3 }).map((_, index) => (
         <div
-          className="h-24 animate-pulse rounded-2xl border border-[#293440] bg-[#0f1318]"
+          className="h-24 animate-pulse rounded-2xl border border-[#242b32] bg-[#15191d]"
           key={index}
         />
       ))}
@@ -302,10 +302,10 @@ function PortfolioMetric({
       <strong
         className={`mt-3 block text-2xl font-semibold ${
           tone === "positive"
-            ? "text-green-400"
+            ? "text-[#5fbe82]"
             : tone === "negative"
-              ? "text-red-400"
-              : "text-[#edf1f5]"
+              ? "text-[#d05959]"
+              : "text-[#dee3e7]"
         }`}
       >
         {value}
@@ -326,10 +326,10 @@ function PanelHead({
   return (
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h2 className="text-xl font-semibold text-[#edf1f5]">{title}</h2>
+        <h2 className="text-xl font-semibold text-[#dee3e7]">{title}</h2>
         <span className={muted}>{subtitle}</span>
       </div>
-      <div className="text-[#8f9aa8]">{icon}</div>
+      <div className="text-[#7b8996]">{icon}</div>
     </div>
   );
 }
@@ -345,16 +345,16 @@ function PositionStat({
 }) {
   return (
     <div>
-      <span className="block text-xs font-bold uppercase tracking-wide text-[#8f9aa8]">
+      <span className="block text-xs font-bold uppercase tracking-wide text-[#7b8996]">
         {label}
       </span>
       <strong
         className={`mt-1 block text-sm font-semibold ${
           tone === "positive"
-            ? "text-green-400"
+            ? "text-[#5fbe82]"
             : tone === "negative"
-              ? "text-red-400"
-              : "text-[#edf1f5]"
+              ? "text-[#d05959]"
+              : "text-[#dee3e7]"
         }`}
       >
         {value}
@@ -365,9 +365,9 @@ function PositionStat({
 
 function EmptyState({ title, text }: { title: string; text: string }) {
   return (
-    <div className="mt-4 rounded-2xl border border-dashed border-[#293440] bg-[#0f1318] p-8 text-center">
-      <strong className="block text-base font-semibold text-[#edf1f5]">{title}</strong>
-      <span className="mt-2 block text-sm font-medium text-[#8f9aa8]">{text}</span>
+    <div className="mt-4 rounded-2xl border border-dashed border-[#242b32] bg-[#15191d] p-8 text-center">
+      <strong className="block text-base font-semibold text-[#dee3e7]">{title}</strong>
+      <span className="mt-2 block text-sm font-medium text-[#7b8996]">{text}</span>
     </div>
   );
 }

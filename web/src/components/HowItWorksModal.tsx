@@ -68,19 +68,19 @@ export function HowItWorksModal({
       role="dialog"
     >
       <section
-        className="app-modal-panel relative max-h-[calc(100vh-48px)] w-full max-w-[450px] overflow-hidden rounded-3xl border border-[#293440] bg-[#11161c] shadow-[0_28px_80px_rgba(0,0,0,0.48)]"
+        className="app-modal-panel relative max-h-[calc(100vh-48px)] w-full max-w-[450px] overflow-hidden rounded-3xl border border-[#242b32] bg-[#181d21] shadow-[0_28px_80px_rgba(0,0,0,0.48)]"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <button
           aria-label="Close"
-          className="home-soft-button absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-full bg-[#0f1318]/80 text-[#8f9aa8] backdrop-blur transition hover:text-[#edf1f5]"
+          className="home-soft-button absolute right-3 top-3 z-10 grid size-9 place-items-center rounded-full bg-[#15191d]/80 text-[#7b8996] backdrop-blur transition hover:text-[#dee3e7]"
           onClick={onClose}
           type="button"
         >
           <X size={18} />
         </button>
 
-        <div className="bg-[#151b22]">
+        <div className="bg-[#181d21]">
           <img
             alt=""
             className="h-[260px] w-full object-cover"
@@ -91,7 +91,7 @@ export function HowItWorksModal({
 
         <div className="space-y-5 p-5">
           <div>
-            <h2 className="text-xl font-bold tracking-normal text-[#edf1f5]">{step.title}</h2>
+            <h2 className="text-xl font-bold tracking-normal text-[#dee3e7]">{step.title}</h2>
             <p className="mt-3 text-sm font-medium leading-6 text-[#9aa5b3]">{step.body}</p>
           </div>
 
@@ -99,7 +99,7 @@ export function HowItWorksModal({
             {steps.map((item, index) => (
               <span
                 className={`h-1.5 rounded-full transition ${
-                  item.title === step.title ? "w-7 bg-[#3b91f6]" : "w-1.5 bg-[#3a4654]"
+                  item.title === step.title ? "w-7 bg-[#0093fd]" : "w-1.5 bg-[#3a4654]"
                 }`}
                 key={item.title}
               />
@@ -107,7 +107,7 @@ export function HowItWorksModal({
           </div>
 
           <button
-            className="home-soft-button h-12 w-full rounded-xl bg-[#3b91f6] text-sm font-bold text-white shadow-[0_4px_0_rgba(36,98,174,0.8)] transition hover:bg-blue-400 active:translate-y-0.5 active:shadow-none"
+            className="home-soft-button h-12 w-full rounded-xl bg-[#0093fd] text-sm font-bold text-white shadow-[0_4px_0_rgba(0,0,0,0.28)] transition hover:bg-[#26a3fd]"
             onClick={handlePrimaryAction}
             type="button"
           >

@@ -23,6 +23,8 @@ export type AuditEventType =
   | "trading.sell_local"
   | "trading.rejected"
   | "market.comment_created"
+  | "market.settled"
+  | "market.cancelled"
   | "ledger.ledger_credit"
   | "ledger.rejected"
   | "compliance.profile_update"

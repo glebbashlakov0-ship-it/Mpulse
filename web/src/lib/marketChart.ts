@@ -44,7 +44,7 @@ const rangeMs: Record<Exclude<ChartRange, "ALL">, number> = {
   "1M": 30 * 24 * 60 * 60 * 1000,
 };
 
-const seriesColors = ["#b8e1fe", "#0093fd", "#f7d022", "#fe6e00", "#ac4bff"];
+const seriesColors = ["#4fb6ff", "#f7d022", "#30d158", "#ff6b6b", "#ac7cff"];
 const maxSeriesPoints = 180;
 
 export function filterPriceHistoryByRange(
@@ -76,6 +76,7 @@ export function buildChartSeries({
   height = 190,
   paddingX = 18,
   paddingY = 18,
+  selectedOutcomeName,
 }: {
   priceHistory: ChartHistoryPoint[];
   outcomes: Outcome[];
@@ -85,12 +86,13 @@ export function buildChartSeries({
   height?: number;
   paddingX?: number;
   paddingY?: number;
+  selectedOutcomeName?: string | null;
 }): ChartSeries[] {
   const visibleHistory = downsampleHistory(
     filterPriceHistoryByRange(priceHistory, range, nowMs),
     maxSeriesPoints,
   );
-  const targets = getSeriesTargets(outcomes);
+  const targets = getSeriesTargets(outcomes, selectedOutcomeName);
   const timestamps = visibleHistory
     .map((point) => Date.parse(point.timestamp))
     .filter((timestamp) => Number.isFinite(timestamp));
@@ -178,7 +180,7 @@ export function pointsToSvgPath(points: ChartPoint[]) {
     .join(" ");
 }
 
-function getSeriesTargets(outcomes: Outcome[]) {
+function getSeriesTargets(outcomes: Outcome[], selectedOutcomeName?: string | null) {
   const yes = outcomes.find((outcome) => outcome.name.trim().toLowerCase() === "yes");
   const no = outcomes.find((outcome) => outcome.name.trim().toLowerCase() === "no");
 
@@ -189,13 +191,20 @@ function getSeriesTargets(outcomes: Outcome[]) {
     ];
   }
 
-  return [...outcomes]
+  const selectedKey = selectedOutcomeName?.trim().toLowerCase() ?? null;
+  const sorted = [...outcomes]
     .sort((left, right) => toPrice(right) - toPrice(left))
-    .slice(0, 3)
-    .map((outcome) => ({
-      key: `outcome:${outcome.name.trim().toLowerCase()}`,
-      label: outcome.name,
-    }));
+  const visible = sorted.slice(0, 5);
+  const selected =
+    selectedKey && !visible.some((outcome) => outcome.name.trim().toLowerCase() === selectedKey)
+      ? outcomes.find((outcome) => outcome.name.trim().toLowerCase() === selectedKey)
+      : null;
+  const targets = selected ? [...visible.slice(0, 4), selected] : visible;
+
+  return targets.map((outcome) => ({
+    key: `outcome:${outcome.name.trim().toLowerCase()}`,
+    label: outcome.name,
+  }));
 }
 
 function getTargetPrice(

@@ -4,6 +4,7 @@ import {
   acceptLegalAcknowledgements,
   createLedgerCreditApi,
   createDepositIntent,
+  createTradingQuoteApi,
   createWithdrawalRequest,
   loadCurrentUser,
   loadComplianceEligibility,
@@ -56,13 +57,70 @@ async function withLocalFetch<T>(
 }
 
 describe("wallet api helpers", () => {
+  it("creates backend trading quotes without an idempotency header", async () => {
+    await withLocalFetch(
+      () =>
+        Response.json({
+          data: {
+            id: "quote-1",
+            marketId: "market-1",
+            marketTitle: "Will this test pass?",
+            side: "yes",
+            action: "buy",
+            price: 0.5,
+            currentOdds: 0.5,
+            shares: 122,
+            amount: 61,
+            stakeAmount: 61,
+            platformFee: 1.22,
+            fee: 1.22,
+            estimatedCost: 61,
+            estimatedProceeds: 0,
+            estimatedPayout: 59.78,
+            estimatedProfit: -1.22,
+            availableCash: 10000,
+            balanceAfterBet: 9939,
+            availableShares: 0,
+            poolBefore: 0,
+            poolAfter: 61,
+            outcomePoolBefore: 0,
+            outcomePoolAfter: 61,
+            priceImpact: 0.5,
+            nextOdds: 1,
+            status: "quoted",
+            createdAt: "2026-05-20T12:00:00.000Z",
+          },
+        }),
+      async (calls) => {
+        const quote = await createTradingQuoteApi({
+          marketId: "market-1",
+          side: "yes",
+          action: "buy",
+          amount: 61,
+        });
+        const call = calls[0];
+        const body = JSON.parse(String(call?.init?.body)) as Record<string, unknown>;
+
+        assert.equal(call?.input, "/api/trading/quote");
+        assert.equal(call?.init?.method, "POST");
+        assert.equal(getHeader(call?.init, "Idempotency-Key"), null);
+        assert.equal(body.marketId, "market-1");
+        assert.equal(body.side, "yes");
+        assert.equal(body.action, "buy");
+        assert.equal(body.amount, 61);
+        assert.equal(quote.estimatedPayout, 59.78);
+        assert.equal(quote.balanceAfterBet, 9939);
+      },
+    );
+  });
+
   it("creates TRON withdrawal requests with an idempotency header", async () => {
     await withLocalFetch(
       () =>
         Response.json({
           data: {
             mode: "wallet_review_only",
-            warning: "Transfers are not available yet.",
+            warning: "Wallet requests are reviewed before processing.",
             idempotent: false,
             compliance: {
               canUseRealMoney: false,
@@ -107,14 +165,13 @@ describe("wallet api helpers", () => {
     );
   });
 
-  it("creates local ledger credits with backend idempotency expectations", async () => {
+  it("creates ledger credits with backend idempotency expectations", async () => {
     await withLocalFetch(
       () =>
         Response.json({
           data: {
-            mode: "local_ledger",
+            mode: "ledger",
             complianceMode: "ledger_restricted",
-            warning: "ledger credit only.",
             idempotent: false,
             entry: {
               id: "entry-1",
@@ -123,7 +180,7 @@ describe("wallet api helpers", () => {
               asset: "USDT",
               entryType: "credit",
               amount: 1000,
-              reason: "ledger_credit_local",
+              reason: "ledger_credit",
               referenceType: "ledger_credit",
               referenceId: "ledger-credit-test-key",
               idempotencyKey: "ledger-credit-test-key",
@@ -161,13 +218,13 @@ describe("wallet api helpers", () => {
     await withLocalFetch(
       (input) => {
         if (input.startsWith("/api/ledger/entries")) {
-          return Response.json({ data: { mode: "local_ledger", entries: [] } });
+          return Response.json({ data: { mode: "ledger", entries: [] } });
         }
 
         return Response.json({
           data: {
             mode: "wallet_review_only",
-            warning: "Transfers are not available yet.",
+            warning: "Wallet requests are reviewed before processing.",
             walletCreated: false,
             wallet: {
               id: "wallet-1",

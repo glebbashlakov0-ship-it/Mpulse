@@ -82,7 +82,7 @@ export function formatEligibilityReason(reason: string) {
     case "COMPLIANCE_RISK_BLOCKED":
       return "Account review is required before trading.";
     case "TRANSFERS_UNAVAILABLE":
-      return "Transfers are not available yet.";
+      return "Withdrawal requests are reviewed before processing.";
     default:
       return humanizeCode(reason);
   }

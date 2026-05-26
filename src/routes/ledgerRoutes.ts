@@ -60,7 +60,7 @@ export function registerLedgerRoutes(
 
       return {
         data: {
-          mode: "local_ledger",
+          mode: "ledger",
           balance: await ledger.getBalance({
             userId: context.user.id,
             asset: parseLedgerAsset(query.asset),
@@ -93,7 +93,7 @@ export function registerLedgerRoutes(
 
       return {
         data: {
-          mode: "local_ledger",
+          mode: "ledger",
           entries: await ledger.listEntries({
             userId: context.user.id,
             asset: parseLedgerAsset(query.asset),
@@ -132,14 +132,13 @@ export function registerLedgerRoutes(
           asset: "USDT",
           entryType: "credit",
           amount,
-          reason: "ledger_credit_local",
+          reason: "ledger_credit",
           referenceType: "ledger_credit",
           referenceId: idempotencyKey,
           idempotencyKey: idempotencyKey ?? "",
           metadata: {
             ...(isRecord(request.body?.metadata) ? request.body.metadata : {}),
-            localOnly: true,
-            warning: "Not a real deposit, not USDT wallet, local only.",
+            source: "ledger_credit",
           },
         });
 
@@ -152,15 +151,13 @@ export function registerLedgerRoutes(
             asset: "USDT",
             idempotencyKey,
             idempotent: result.idempotent,
-            localOnly: true,
           },
         });
 
         return {
           data: {
-            mode: "local_ledger",
+            mode: "ledger",
             complianceMode: "ledger_restricted",
-            warning: "ledger credit only. This is not a real deposit or blockchain transfer.",
             ...result,
           },
         };
@@ -174,7 +171,6 @@ export function registerLedgerRoutes(
               reason: error.code,
               endpoint: "POST /api/ledger/credits",
               idempotencyKey,
-              localOnly: true,
             },
           });
 

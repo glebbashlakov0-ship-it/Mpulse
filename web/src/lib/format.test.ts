@@ -18,6 +18,9 @@ describe("format helpers", () => {
 
   it("formats probabilities and cents", () => {
     assert.equal(formatPercent(0.594), "59%");
+    assert.equal(formatPercent(0.03125), "3%");
+    assert.equal(formatPercent(0.0066), "<1%");
+    assert.equal(formatPercent(0), "0%");
     assert.equal(formatPercent(null), "--");
     assert.equal(formatSignedPercent(0.1234), "+12.34%");
     assert.equal(formatCents(0.004), "1¢");

@@ -13,7 +13,7 @@ export function MarketDetailPage() {
 
   if (!id) {
     return (
-      <div className="min-h-screen bg-white text-[#0e0f11]">
+      <div className="min-h-screen bg-[var(--pm-background)] text-[var(--pm-text-primary)]">
         <div className="mx-auto w-full max-w-[1350px] px-4 py-8 lg:px-6">
           <div className="rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-[#991b1b]">
             {t("errors.notFound")}
@@ -24,7 +24,7 @@ export function MarketDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-[#0e0f11]">
+    <div className="min-h-screen bg-[var(--pm-background)] text-[var(--pm-text-primary)]">
       {state.status === "loading" && (
         <MarketDetailSkeleton />
       )}

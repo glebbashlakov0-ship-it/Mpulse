@@ -125,7 +125,7 @@ export function PortfolioPage({
         <PortfolioMetric label="Cash balance" value={formatUsdt(summary.cash)} />
         <PortfolioMetric label="Positions value" value={formatUsdt(summary.positionValue)} />
         <PortfolioMetric
-          label="PnL"
+          label="Total PnL"
           value={`${formatSignedUsdt(summary.pnl)} (${formatSignedPercent(summary.pnlPercent)})`}
           tone={summary.pnl >= 0 ? "positive" : "negative"}
         />
@@ -203,10 +203,61 @@ export function PortfolioPage({
           <div className="mt-4 grid gap-4">
             <PositionStat label="Invested" value={formatUsdt(summary.invested)} />
             <PositionStat label="Available" value={formatUsdt(summary.cash)} />
+            <PositionStat label="Held" value={formatUsdt(summary.heldBalance ?? 0)} />
+            <PositionStat
+              label="Unrealized PnL"
+              value={formatSignedUsdt(summary.unrealizedPnl ?? summary.pnl)}
+              tone={(summary.unrealizedPnl ?? summary.pnl) >= 0 ? "positive" : "negative"}
+            />
+            <PositionStat
+              label="Realized PnL"
+              value={formatSignedUsdt(summary.realizedPnl ?? 0)}
+              tone={(summary.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}
+            />
             <PositionStat label="Total trades" value={String(portfolio.trades.length)} />
           </div>
         </aside>
       </div>
+
+      <section className={`${panel} mt-6 p-5`}>
+        <PanelHead
+          title="Settlement history"
+          subtitle="Resolved payouts and refunds"
+          icon={<CheckCircle2 size={22} />}
+        />
+
+        {(portfolio.settlements ?? []).length === 0 ? (
+          <EmptyState title="No settlements yet." text="Resolved markets and refunds will appear here." />
+        ) : (
+          <div className="mt-4 grid gap-3">
+            {(portfolio.settlements ?? []).map((settlement) => (
+              <article
+                className="grid min-w-0 gap-4 rounded-2xl border border-[#242b32] bg-[#15191d] p-4 md:grid-cols-[minmax(0,1fr)_120px_120px_120px_120px] md:items-center"
+                key={settlement.id}
+              >
+                <div className="min-w-0">
+                  <strong className="block truncate text-sm font-semibold text-[#dee3e7]">
+                    {settlement.marketId ?? "Market settlement"}
+                  </strong>
+                  <span className="block text-sm font-medium text-[#7b8996]">
+                    {settlement.kind ?? "settlement"} · {settlement.side ?? "n/a"}
+                  </span>
+                </div>
+                <PositionStat label="Stake" value={formatUsdt(settlement.originalStake)} />
+                <PositionStat label="Payout" value={formatUsdt(settlement.payout)} />
+                <PositionStat
+                  label="Realized"
+                  value={formatSignedUsdt(settlement.profit)}
+                  tone={settlement.profit >= 0 ? "positive" : "negative"}
+                />
+                <time className="text-sm font-semibold text-[#7b8996]">
+                  {formatRelativeTime(settlement.createdAt)}
+                </time>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className={`${panel} mt-6 p-5`}>
         <PanelHead

@@ -940,7 +940,7 @@ test("esports topic returns sports-category markets when esports is a topic", as
   assert.equal(result.data[0]?.topics.includes("esports"), true);
 });
 
-test("collector saves real snapshots and detail reads them before synthetic fallback", async () => {
+test("collector saves Polymarket content snapshots while detail uses Pulse chart history", async () => {
   const repository = new MemoryMarketRepository();
   const detail = marketFixture({
     id: "snapshot-market",
@@ -960,9 +960,12 @@ test("collector saves real snapshots and detail reads them before synthetic fall
       search: async <T>() => ({ events: [] }) as T,
     },
   });
-  const synthetic = await service.getMarketDetail("snapshot-market");
+  const initial = await service.getMarketDetail("snapshot-market");
 
-  assert.equal(synthetic.data.history.is_synthetic, true);
+  assert.equal(initial.data.history.is_synthetic, false);
+  assert.equal(initial.data.history.snapshots.length, 0);
+  assert.equal(initial.data.history.price_history.length, 1);
+  assert.equal(initial.data.history.price_history[0]?.yes, 0.5);
 
   await service.collectMarketSnapshot("snapshot-market");
   const real = await service.getMarketDetail("snapshot-market");
@@ -1003,8 +1006,9 @@ test("market detail ignores Polymarket CLOB price history", async () => {
   });
   const result = await service.getMarketDetail("clob-market");
 
-  assert.equal(result.data.history.is_synthetic, true);
-  assert.equal(result.data.history.snapshots.length, 12);
+  assert.equal(result.data.history.is_synthetic, false);
+  assert.equal(result.data.history.snapshots.length, 0);
+  assert.equal(result.data.history.price_history.length, 1);
   assert.equal(result.data.history.price_history[0]?.yes, 0.5);
 });
 
@@ -1088,10 +1092,13 @@ test("market detail uses Pulse Market trades for odds, volume, and chart history
 
   assert.equal(result.data.volume, 100);
   assert.equal(result.data.volume_detail.volume, 100);
-  assert.ok(Math.abs((result.data.prices.yes ?? 0) - 198 / 298) < 0.000001);
+  assert.equal(result.data.prices.yes, 1);
   assert.equal(result.data.history.is_synthetic, false);
-  assert.equal(result.data.history.price_history.length, 1);
-  assert.ok(Math.abs((result.data.history.price_history[0]?.yes ?? 0) - 198 / 298) < 0.000001);
+  assert.equal(result.data.history.price_history.length, 2);
+  assert.equal(result.data.history.price_history[0]?.yes, 0.5);
+  assert.equal(result.data.history.price_history[0]?.volume, 0);
+  assert.equal(result.data.history.price_history[1]?.yes, 1);
+  assert.equal(result.data.history.price_history[1]?.volume, 100);
 });
 
 test("market detail falls back to stored snapshots when CLOB history is unavailable", async () => {
@@ -1130,10 +1137,12 @@ test("market detail falls back to stored snapshots when CLOB history is unavaila
 
   assert.equal(result.data.history.is_synthetic, false);
   assert.equal(result.data.history.snapshots.length, 1);
-  assert.equal(result.data.history.price_history[0]?.yes, 0.66);
+  assert.equal(result.data.history.price_history.length, 1);
+  assert.equal(result.data.history.price_history[0]?.yes, 0.5);
+  assert.equal(result.data.history.price_history[0]?.volume, 0);
 });
 
-test("market detail uses synthetic fallback only when CLOB history and snapshots are unavailable", async () => {
+test("market detail creates an initial Pulse chart point when no Pulse trades exist", async () => {
   const service = buildMarketDataService({
     config: testConfig(),
     cache: new MemoryCacheStore(false),
@@ -1149,8 +1158,10 @@ test("market detail uses synthetic fallback only when CLOB history and snapshots
   });
   const result = await service.getMarketDetail("synthetic-fallback");
 
-  assert.equal(result.data.history.is_synthetic, true);
-  assert.equal(result.data.history.price_history.length, 12);
+  assert.equal(result.data.history.is_synthetic, false);
+  assert.equal(result.data.history.price_history.length, 1);
+  assert.equal(result.data.history.price_history[0]?.yes, 0.5);
+  assert.equal(result.data.history.price_history[0]?.volume, 0);
 });
 
 test("filters market lists by topic while treating all as no-op", async () => {
@@ -1307,7 +1318,13 @@ test("keeps grouped list odds at 50/50 after own activity enrichment", async () 
       ["Team B", 0.5, 0.5],
     ],
   );
-  assert.deepEqual(groupMarkets[0]?.outcomes, []);
+  assert.deepEqual(
+    groupMarkets[0]?.outcomes.map((outcome) => [outcome.name, outcome.price]),
+    [
+      ["Yes", 0.5],
+      ["No", 0.5],
+    ],
+  );
 });
 
 test("uses culture search fallback when Polymarket category queries are not useful", async () => {

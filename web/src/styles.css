@@ -380,6 +380,54 @@ html[data-theme="light"] .pm-shimmer::after {
   );
 }
 
+html[data-theme="dark"] .market-detail-page :where([class~="bg-white"]) {
+  background-color: var(--pm-surface-1) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="bg-white/95"]) {
+  background-color: rgb(24 29 33 / 0.95) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="bg-[#f4f5f6]"], [class~="bg-[#eef1f4]"]) {
+  background-color: var(--pm-surface-2) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="bg-[#0e0f11]"]) {
+  background-color: var(--pm-surface-3) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="border-[#e6e8ea]"], [class~="border-[#dfe3e7]"]) {
+  border-color: var(--pm-border) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="divide-[#e6e8ea]"]) > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--pm-border) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="text-[#0e0f11]"]) {
+  color: var(--pm-text-primary) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="text-[#77808d]"], [class~="text-[#4b5563]"]) {
+  color: var(--pm-text-secondary) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="text-[#991b1b]"]) {
+  color: #f2a3a3 !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="hover:bg-[#f4f5f6]"]:hover) {
+  background-color: var(--pm-surface-2) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="hover:text-[#0e0f11]"]:hover, [class~="hover:text-[#4b5563]"]:hover) {
+  color: var(--pm-text-primary) !important;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="placeholder:text-[#77808d]"])::placeholder {
+  color: var(--pm-text-secondary) !important;
+}
+
 .home-soft-button {
   transition-duration: 190ms;
   transition-property: background-color, border-color, box-shadow, color, opacity, transform;

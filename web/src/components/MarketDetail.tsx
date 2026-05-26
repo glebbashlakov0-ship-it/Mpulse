@@ -14,6 +14,7 @@ import {
   SmilePlus,
 } from "lucide-react";
 import {
+  createTradingQuoteApi,
   loadComplianceEligibility,
   loadMarketActivity,
   placeTradeApi,
@@ -44,6 +45,7 @@ import type {
   MarketHolder,
   MarketPublicPosition,
   Trade,
+  TradingQuote,
 } from "../lib/types";
 import { usePortfolio } from "../hooks/usePortfolio";
 import { MarketChart } from "./MarketChart";
@@ -71,7 +73,8 @@ type LocalComment = {
   positionLabel?: string;
 };
 
-const detailPageShell = "mx-auto w-full max-w-[1350px] overflow-x-clip px-4 py-4 text-[#0e0f11] lg:px-6";
+const detailPageShell =
+  "market-detail-page mx-auto w-full max-w-[1350px] overflow-x-clip px-4 py-4 text-[var(--pm-text-primary)] lg:px-6";
 const detailGrid = "grid min-w-0 gap-12 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start";
 const panel = "rounded-xl border border-[#e6e8ea] bg-white";
 const iconButton =
@@ -88,7 +91,7 @@ const emptyMarketActivity: MarketActivityPayload = {
 };
 
 export function MarketDetail({
-  market,
+  market: initialMarket,
   detailStatus,
   onBack,
 }: {
@@ -96,6 +99,7 @@ export function MarketDetail({
   detailStatus: "idle" | "loading" | "ready" | "error";
   onBack: () => void;
 }) {
+  const [market, setMarket] = React.useState(initialMarket);
   const [side, setSide] = React.useState<"yes" | "no">("yes");
   const [action, setAction] = React.useState<"buy" | "sell">("buy");
   const [orderType, setOrderType] = React.useState<OrderType>("market");
@@ -121,6 +125,11 @@ export function MarketDetail({
     tone: "success" | "error" | "info";
     text: string;
   } | null>(null);
+  const [quote, setQuote] = React.useState<TradingQuote | null>(null);
+  const [quoteStatus, setQuoteStatus] = React.useState<"idle" | "loading" | "ready" | "error">(
+    "idle",
+  );
+  const [quoteError, setQuoteError] = React.useState<string | null>(null);
   const groupMarkets = sortGroupMarketsForDetail(market.group_markets ?? []);
   const isGroupedEvent = groupMarkets.length > 1;
   const liveGroupMarkets = groupMarkets.filter(isLiveGroupMarket);
@@ -225,6 +234,10 @@ export function MarketDetail({
       : estimatedShares <= selectedSideShares);
 
   React.useEffect(() => {
+    setMarket(initialMarket);
+  }, [initialMarket]);
+
+  React.useEffect(() => {
     setSelectedMarketId(initialSelectedMarketId);
   }, [initialSelectedMarketId]);
 
@@ -298,6 +311,54 @@ export function MarketDetail({
     };
   }, []);
 
+  React.useEffect(() => {
+    if (!hasValidAmount || !selectedPrice || selectedPrice <= 0) {
+      setQuote(null);
+      setQuoteStatus("idle");
+      setQuoteError(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      setQuoteStatus("loading");
+      setQuoteError(null);
+      createTradingQuoteApi({
+        marketId: tradeMarket.id,
+        side,
+        action,
+        amount: action === "buy" ? estimatedCost : undefined,
+        shares: action === "sell" ? estimatedShares : undefined,
+      })
+        .then((nextQuote) => {
+          if (!cancelled) {
+            setQuote(nextQuote);
+            setQuoteStatus("ready");
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setQuote(null);
+            setQuoteStatus("error");
+            setQuoteError(error instanceof Error ? error.message : "Quote unavailable");
+          }
+        });
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    action,
+    estimatedCost,
+    estimatedShares,
+    hasValidAmount,
+    selectedPrice,
+    side,
+    tradeMarket.id,
+  ]);
+
   async function placeTrade() {
     if (!canTrade) {
       setTradeMessage({
@@ -346,6 +407,10 @@ export function MarketDetail({
         shares: action === "sell" ? estimatedShares : undefined,
       });
       setPortfolio(result.portfolio);
+      if (result.market) {
+        setMarket(result.market);
+      }
+      setQuote(null);
       setTradeMessage({
         tone: "success",
         text:
@@ -762,6 +827,12 @@ export function MarketDetail({
               </>
             )}
 
+            <QuotePreview
+              error={quoteError}
+              quote={quote}
+              status={quoteStatus}
+            />
+
             <button
               className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-[7.2px] bg-[#1f55f5] px-5 text-base font-semibold text-white shadow-[0_4px_0_#0d3dc9] transition hover:bg-[#1648df] disabled:opacity-50"
               disabled={canTrade && !canPlaceTrade}
@@ -819,9 +890,7 @@ export function MarketDetail({
             {detailStatus === "error" ? (
               <div className="mb-5 flex items-start gap-3 rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-sm font-semibold text-[#991b1b]">
                 <AlertCircle className="mt-0.5 shrink-0" size={18} />
-                <span>
-                  The market detail request failed. Showing the latest available market preview.
-                </span>
+                <span>The market detail request failed. Showing the latest available market data.</span>
               </div>
             ) : null}
 
@@ -880,8 +949,14 @@ export function MarketDetail({
                 <Clock3 className="shrink-0" size={12} />
                 <span className="whitespace-nowrap">{formatDate(marketEndDate)}</span>
               </div>
-              <span className="hidden text-lg font-semibold tracking-normal text-[#c2c8d0] sm:block">Polymarket</span>
+              <span className="hidden text-lg font-semibold tracking-normal text-[#c2c8d0] sm:block">Pulse odds</span>
             </div>
+
+            <MarketChart
+              outcomes={displayOutcomes}
+              history={market.history}
+              selectedOutcomeName={selectedVariantLabel}
+            />
 
             <div className="clear-both divide-y divide-[#e6e8ea]">
               {visibleGroupMarkets.map((groupMarket) => {
@@ -1025,9 +1100,7 @@ export function MarketDetail({
           {detailStatus === "error" ? (
             <div className="mb-5 flex items-start gap-3 rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-sm font-semibold text-[#991b1b]">
               <AlertCircle className="mt-0.5 shrink-0" size={18} />
-              <span>
-                The market detail request failed. Showing the latest available market preview.
-              </span>
+              <span>The market detail request failed. Showing the latest available market data.</span>
             </div>
           ) : null}
 
@@ -1043,7 +1116,7 @@ export function MarketDetail({
                     </React.Fragment>
                   ))}
                   <span>·</span>
-                  <span>{detailStatus === "ready" ? "Live detail" : "Market preview"}</span>
+                  <span>{detailStatus === "ready" ? "Live detail" : "Market data"}</span>
                 </div>
                 <h1 className="max-w-4xl break-words text-[24px] font-semibold leading-7 tracking-normal text-[#0e0f11]">
                   {market.title}
@@ -1227,7 +1300,7 @@ export function MarketDetail({
                         {outcome.name}
                       </strong>
                       <span className="text-sm font-semibold text-[#77808d]">
-                        {formatMoney(Math.max(market.volume / (index + 1.8), 0))} Объем
+                        {formatMoney(getOutcomeVolume(market, outcome.name))} Объем
                       </span>
                     </div>
                   </div>
@@ -1630,9 +1703,8 @@ function MarketInfoTabs({
               </span>
             </div>
             <p className="px-4 py-3 text-[13px] leading-6 text-[#77808d]">
-              Pulse Market imports the public event and resolution context, then uses our own
-              trading activity for odds, volume, and chart history. New markets start balanced
-              until our order flow moves them.
+              Pulse Market imports the public event and resolution context, then displays the
+              latest market prices, volume, and chart history as they update.
             </p>
           </div>
         </div>
@@ -2150,8 +2222,93 @@ function buildHolderRows(currentPosition: LocalPosition | undefined, market: Mar
   return [
     { label: "You", value: `${formatShares(userShares)} shares` },
     { label: "Pool", value: formatMoney(market.liquidity) },
-    { label: "Our volume", value: formatMoney(market.volume_detail?.volume ?? market.volume) },
+    { label: "Volume", value: formatMoney(market.volume_detail?.volume ?? market.volume) },
   ];
+}
+
+function getOutcomeVolume(market: Market, outcomeName: string) {
+  const latest = market.history?.price_history.at(-1);
+
+  return latest?.outcomeVolumes?.[outcomeName] ?? 0;
+}
+
+function QuotePreview({
+  error,
+  quote,
+  status,
+}: {
+  error: string | null;
+  quote: TradingQuote | null;
+  status: "idle" | "loading" | "ready" | "error";
+}) {
+  if (status === "idle" && !quote) {
+    return null;
+  }
+
+  if (status === "loading" && !quote) {
+    return (
+      <div className="rounded-lg border border-[#e6e8ea] bg-[#f7f8fa] px-3 py-2 text-sm font-semibold text-[#77808d]">
+        Calculating quote...
+      </div>
+    );
+  }
+
+  if (status === "error" && !quote) {
+    return (
+      <div className="rounded-lg border border-[#e23939]/20 bg-[#e23939]/10 px-3 py-2 text-sm font-semibold text-[#991b1b]">
+        {error ?? "Quote unavailable"}
+      </div>
+    );
+  }
+
+  if (!quote) {
+    return null;
+  }
+
+  const impact = quote.priceImpact;
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-[#e6e8ea] bg-[#f7f8fa] px-3 py-3">
+      <QuoteRow label="Current odds" value={formatPercent(quote.currentOdds)} />
+      <QuoteRow label="Est. payout" value={formatUsd(quote.estimatedPayout)} tone="green" />
+      <QuoteRow label="Est. profit" value={formatUsd(quote.estimatedProfit)} tone={quote.estimatedProfit >= 0 ? "green" : "red"} />
+      <QuoteRow label="Fee" value={formatUsd(quote.fee)} />
+      <QuoteRow label="Balance after" value={formatUsd(quote.balanceAfterBet)} />
+      <QuoteRow label="Pool" value={`${formatUsd(quote.poolBefore)} -> ${formatUsd(quote.poolAfter)}`} />
+      <QuoteRow
+        label="Price impact"
+        value={`${impact >= 0 ? "+" : ""}${formatPercent(impact)}`}
+        tone={impact >= 0 ? "green" : "red"}
+      />
+    </div>
+  );
+}
+
+function QuoteRow({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone?: "green" | "red";
+  value: string;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs font-semibold">
+      <span className="text-[#77808d]">{label}</span>
+      <strong
+        className={
+          tone === "green"
+            ? "text-[#30a159]"
+            : tone === "red"
+              ? "text-[#e23939]"
+              : "text-[#0e0f11]"
+        }
+      >
+        {value}
+      </strong>
+    </div>
+  );
 }
 
 function SummaryRow({
@@ -2422,7 +2579,7 @@ function splitDescription(description: string | null) {
   if (!description?.trim()) {
     return [
       "This market resolves according to the official source event definition.",
-      "Pulse Market imports the public event context and displays our own prices, market activity, and chart history for this contract.",
+      "Pulse Market imports the public event context and displays market prices, activity, and chart history for this contract.",
     ];
   }
 
@@ -2445,12 +2602,12 @@ function buildMarketFaq(market: Market, groupMarkets: GroupMarket[]): MarketFaqI
 
   const overviewAnswer = groupMarkets.length > 0
     ? [
-        `"${title}" is a Pulse Market prediction market based on a public Polymarket event, with ${outcomeCount} possible outcomes where traders buy and sell shares based on what they believe will happen. ${buildLeadingOutcomeSentence(leadingOutcome, secondOutcome)} Prices reflect our own crowd-sourced probabilities. ${buildPriceExample(leadingOutcome)}`,
-        "These odds shift as our traders react to new developments and information. Shares in the correct outcome are redeemable for $1 each upon market resolution.",
+        `"${title}" is a Pulse Market prediction market based on a public Polymarket event, with ${outcomeCount} possible outcomes where traders buy and sell shares based on what they believe will happen. ${buildLeadingOutcomeSentence(leadingOutcome, secondOutcome)} Prices reflect crowd-sourced probabilities. ${buildPriceExample(leadingOutcome)}`,
+        "These odds shift as traders react to new developments and information. Shares in the correct outcome are redeemable for $1 each upon market resolution.",
       ]
     : [
         `"${title}" is a Pulse Market prediction market based on a public Polymarket event where traders buy and sell "Yes" or "No" shares based on whether they believe this event will happen. ${buildBinaryProbabilitySentence(outcomes)} ${buildPriceExample(leadingOutcome)}`,
-        "The price updates as our traders react to new information. Shares in the correct outcome are redeemable for $1 each when the market resolves.",
+        "The price updates as traders react to new information. Shares in the correct outcome are redeemable for $1 each when the market resolves.",
       ];
 
   return [
@@ -2463,8 +2620,8 @@ function buildMarketFaq(market: Market, groupMarkets: GroupMarket[]): MarketFaqI
       id: "activity",
       question: `How much trading activity has "${title}" generated on Pulse Market?`,
       answer: [
-        `As of the latest Pulse Market data, "${title}" has generated ${formatMoney(volume)} in our trading volume${openedAt ? ` since the market launched on ${formatDate(openedAt)}` : ""}. This activity reflects engagement from our participants and helps move the displayed odds.`,
-        "You can track our price movement, volume, and each tradable outcome directly on this page.",
+        `As of the latest Pulse Market data, "${title}" has generated ${formatMoney(volume)} in trading volume${openedAt ? ` since the market launched on ${formatDate(openedAt)}` : ""}. This activity reflects participant engagement and helps move the displayed odds.`,
+        "You can track price movement, volume, and each tradable outcome directly on this page.",
       ],
     },
     {
@@ -2552,7 +2709,7 @@ function buildCurrentOddsAnswer(title: string, outcomes: FaqOutcome[]) {
   const secondOutcome = outcomes[1] ?? null;
 
   if (!leadingOutcome) {
-    return `The current odds for "${title}" are not available yet. Once trading data is available, this section will update with the latest implied probabilities.`;
+    return `The current odds for "${title}" will appear here once trading data is available.`;
   }
 
   const nextClosest = secondOutcome

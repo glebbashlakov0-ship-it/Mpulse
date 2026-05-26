@@ -23,7 +23,7 @@ import { MarketSkeleton } from "../components/MarketSkeleton";
 import { useMarkets } from "../hooks/useMarkets";
 import { useCategories } from "../hooks/useCategories";
 import { useMarketTags } from "../hooks/useMarketTags";
-import { formatCents, formatMoney, formatPercent, formatShortDate } from "../lib/format";
+import { formatMoney, formatPercent, formatShortDate } from "../lib/format";
 import {
   buildTopicTabsFromTags,
   defaultMarketFilters,
@@ -1070,7 +1070,7 @@ function SportsMarketRow({
           <span className="mr-2 text-[#cb3131]">● LIVE</span>
           <span>{index % 2 === 0 ? "Today" : "Final"}</span>
           <span className="mx-1">·</span>
-          <span>{formatMoney(market.volume)} Our Vol.</span>
+          <span>{formatMoney(market.volume)} Vol.</span>
         </div>
         <span className="rounded-xl bg-[#242b32] px-3 py-1.5 text-sm font-bold text-[#d2d8df]">
           Game View <ChevronRight className="inline" size={14} />
@@ -1080,9 +1080,6 @@ function SportsMarketRow({
         <div className="space-y-3">
           {[first, second].map((team, teamIndex) => (
             <div className="flex items-center gap-3" key={`${market.id}-${team}-${teamIndex}`}>
-              <span className="grid size-8 place-items-center rounded-lg bg-[#242b32] text-sm font-bold text-[#7b8996]">
-                {teamIndex === 0 ? (index % 3 === 0 ? "6" : "1") : index % 3 === 0 ? "3" : "0"}
-              </span>
               <MarketImage
                 market={market}
                 className="size-8 rounded-md"
@@ -1093,9 +1090,9 @@ function SportsMarketRow({
             </div>
           ))}
         </div>
-        <SportsbookButtons tone={esport ? "blue" : "red"} labels={[first, second]} prices={rows} />
-        <SportsbookButtons tone="dark" labels={[`${shortLabel(first)} -1.5`, `${shortLabel(second)} +1.5`]} prices={rows} />
-        <SportsbookButtons tone="dark" labels={["O 2.5", "U 2.5"]} prices={rows} />
+        <SportsbookButtons tone={esport ? "blue" : "red"} labels={[first, second]} />
+        <SportsbookButtons tone="dark" labels={[shortLabel(first), shortLabel(second)]} />
+        <SportsbookButtons tone="dark" labels={["Over", "Under"]} />
       </div>
     </article>
   );
@@ -1103,11 +1100,9 @@ function SportsMarketRow({
 
 function SportsbookButtons({
   labels,
-  prices,
   tone,
 }: {
   labels: string[];
-  prices: MiniOutcomeRow[];
   tone: "blue" | "dark" | "red";
 }) {
   const toneClass =
@@ -1125,9 +1120,7 @@ function SportsbookButtons({
           key={`${label}-${index}`}
           type="button"
         >
-          <span className="block truncate">
-            {label} {formatCents(index === 0 ? prices[0]?.yesPrice ?? null : prices[1]?.yesPrice ?? null)}
-          </span>
+          <span className="block truncate">{label}</span>
         </button>
       ))}
     </div>
@@ -1174,10 +1167,10 @@ function TradeTicket({ esport, market }: { esport: boolean; market?: Market }) {
             }`}
             type="button"
           >
-            {shortLabel(first)} {formatCents(rows[0]?.yesPrice ?? null)}
+            {shortLabel(first)}
           </button>
           <button className="home-soft-button h-14 rounded-xl bg-[#242b32] text-base font-bold text-[#7b8996]" type="button">
-            {shortLabel(second)} {formatCents(rows[1]?.yesPrice ?? null)}
+            {shortLabel(second)}
           </button>
         </div>
         <div className="mt-8 flex items-end justify-between">
@@ -1186,13 +1179,6 @@ function TradeTicket({ esport, market }: { esport: boolean; market?: Market }) {
             <p className="text-sm font-semibold text-[#7b8996]">$0.00 cash</p>
           </div>
           <p className="text-5xl font-bold text-[#697d91]">$0</p>
-        </div>
-        <div className="mt-6 flex justify-end gap-2">
-          {["+$1", "+$5", "+$10", "+$100"].map((amount) => (
-            <button className="home-soft-button rounded-lg bg-[#242b32] px-3 py-2 text-sm font-bold text-[#7b8996]" key={amount} type="button">
-              {amount}
-            </button>
-          ))}
         </div>
         <button className="home-soft-button mt-6 h-12 w-full rounded-xl bg-[#1e2428] text-sm font-bold text-[#586879]" type="button">
           Restricted region
@@ -1236,7 +1222,7 @@ function MentionsSurface({
               <span className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#7b8996]">
                 <span className="rounded-md bg-[#2e3841] px-2 py-1">{getMentionTime(index)}</span>
                 {market.status === "live" ? <span className="text-[#cb3131]">LIVE</span> : null}
-                <span>{formatMoney(market.volume)} Our Vol.</span>
+                <span>{formatMoney(market.volume)} Vol.</span>
               </span>
             </span>
             <span className="mention-tags flex min-w-0 justify-end gap-2">
@@ -1363,10 +1349,10 @@ function WeatherTicket({ market }: { market?: Market }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <button className="home-soft-button h-14 rounded-xl bg-[#3db468]/70 text-base font-bold text-white" type="button">
-          Yes {formatCents(rows[0]?.yesPrice ?? null)}
+          Yes
         </button>
         <button className="home-soft-button h-14 rounded-xl bg-[#242b32] text-base font-bold text-[#7b8996]" type="button">
-          No {formatCents(rows[0]?.noPrice ?? null)}
+          No
         </button>
       </div>
       <div className="mt-8 flex items-end justify-between">
@@ -2030,7 +2016,7 @@ function getSortOptionLabel(value: MarketFilters["sort"]) {
   }
 
   if (value === "volume") {
-    return "Our volume";
+    return "Volume";
   }
 
   if (value === "closing_soon") {

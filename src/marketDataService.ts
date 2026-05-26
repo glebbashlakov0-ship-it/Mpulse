@@ -11,6 +11,8 @@ import {
   toNumber,
 } from "./normalizers.js";
 import {
+  buildGroupedMarketHistory,
+  buildGroupedMarketStats,
   buildOwnMarketHistory,
   buildOwnMarketStats,
 } from "./marketOdds.js";
@@ -1726,17 +1728,15 @@ export function buildMarketDataService({
 
     const groupMarkets = market.group_markets ?? [];
     if (groupMarkets.length > 0) {
-      const enrichedGroups = await Promise.all(
-        groupMarkets.map((groupMarket) => enrichGroupMarketWithOwnActivity(groupMarket)),
-      );
-      const totals = sumMarketStats(enrichedGroups);
+      const tradesByMarketId = await listOwnTradesForMarkets(groupMarkets);
+      const groupedStats = buildGroupedMarketStats(groupMarkets, tradesByMarketId);
 
       return {
         ...market,
-        group_markets: enrichedGroups,
-        volume: totals.volume,
-        volume_24h: totals.volume24h,
-        liquidity: totals.liquidity,
+        group_markets: groupedStats.markets,
+        volume: groupedStats.volume,
+        volume_24h: groupedStats.volume24h,
+        liquidity: groupedStats.liquidity,
       };
     }
 
@@ -1766,17 +1766,24 @@ export function buildMarketDataService({
     marketTrades?: MarketTradeActivityRecord[],
   ): Promise<NormalizedMarketDetail> {
     const groupMarkets = detail.group_markets ?? [];
-    const enrichedGroups =
+    const tradesByMarketId =
       marketActivityRepository && groupMarkets.length > 0
-        ? await Promise.all(groupMarkets.map((groupMarket) => enrichGroupMarketWithOwnActivity(groupMarket)))
-        : groupMarkets;
+        ? await listOwnTradesForMarkets(groupMarkets)
+        : new Map<string, MarketTradeActivityRecord[]>();
+    const groupedStats =
+      groupMarkets.length > 0
+        ? buildGroupedMarketStats(groupMarkets, tradesByMarketId)
+        : null;
+    const enrichedGroups = groupedStats?.markets ?? groupMarkets;
     const trades = marketTrades ?? (marketActivityRepository ? await listOwnTrades(detail.id) : []);
     const stats = buildOwnMarketStats(detail, trades);
     const market = applyOwnStatsToMarket(detail, stats);
-    const groupTotals = sumMarketStats(enrichedGroups);
-    const volume = enrichedGroups.length > 0 ? groupTotals.volume : stats.volume;
-    const volume24h = enrichedGroups.length > 0 ? groupTotals.volume24h : stats.volume24h;
-    const liquidity = enrichedGroups.length > 0 ? groupTotals.liquidity : stats.liquidity;
+    const volume = groupedStats ? groupedStats.volume : stats.volume;
+    const volume24h = groupedStats ? groupedStats.volume24h : stats.volume24h;
+    const liquidity = groupedStats ? groupedStats.liquidity : stats.liquidity;
+    const groupedHistory = groupedStats
+      ? buildGroupedMarketHistory(enrichedGroups, tradesByMarketId)
+      : null;
 
     return {
       ...market,
@@ -1789,6 +1796,13 @@ export function buildMarketDataService({
         volume,
         liquidity,
       },
+      history: groupedHistory
+        ? {
+            ...detail.history,
+            price_history: groupedHistory,
+            is_synthetic: false,
+          }
+        : market.history,
     };
   }
 
@@ -1801,6 +1815,14 @@ export function buildMarketDataService({
       .listTrades(marketId, 500)
       .then((trades) => trades.filter((trade) => !isLegacyDemoMarketActivity(trade)))
       .catch(() => []);
+  }
+
+  async function listOwnTradesForMarkets(markets: Array<Pick<NormalizedMarket, "id">>) {
+    const entries = await Promise.all(
+      markets.map(async (market) => [market.id, await listOwnTrades(market.id)] as const),
+    );
+
+    return new Map(entries);
   }
 
   function applyOwnStatsToMarket<T extends NormalizedMarket>(

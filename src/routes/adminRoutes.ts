@@ -3,6 +3,7 @@ import { AuthError, type AuthService, getAuthContext, requireAdmin, requireAdmin
 import { type AdminService } from "../admin.js";
 import { type AuditService } from "../audit.js";
 import type { AppConfig } from "../config.js";
+import type { SettlementService } from "../settlement.js";
 
 function parseAdminLimit(value: unknown) {
   if (typeof value !== "string") {
@@ -35,6 +36,7 @@ export function registerAdminRoutes(
   audit: AuditService,
   admin: AdminService,
   config: AppConfig,
+  settlement?: SettlementService,
 ) {
   function adminPreHandler(roles?: AdminRole[]) {
     return async (request: FastifyRequest, reply: FastifyReply) => {
@@ -256,4 +258,85 @@ export function registerAdminRoutes(
       };
     },
   );
+
+  app.post<{ Params: { id: string }; Body: { winningSide?: unknown; idempotencyKey?: unknown } }>(
+    "/api/admin/markets/:id/resolve",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const context = getAuthContext(request);
+      if (!context) {
+        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
+      }
+
+      if (!settlement) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "SETTLEMENT_UNAVAILABLE",
+            message: "Settlement service is unavailable.",
+          },
+        });
+      }
+
+      return {
+        data: await settlement.resolveMarket({
+          marketId: request.params.id,
+          winningSide: request.body?.winningSide,
+          adminUserId: context.user.id,
+          sessionId: context.session.id,
+          idempotencyKey: getIdempotencyKey(request, request.body),
+        }),
+      };
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { idempotencyKey?: unknown } }>(
+    "/api/admin/markets/:id/cancel",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const context = getAuthContext(request);
+      if (!context) {
+        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
+      }
+
+      if (!settlement) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "SETTLEMENT_UNAVAILABLE",
+            message: "Settlement service is unavailable.",
+          },
+        });
+      }
+
+      return {
+        data: await settlement.cancelMarket({
+          marketId: request.params.id,
+          adminUserId: context.user.id,
+          sessionId: context.session.id,
+          idempotencyKey: getIdempotencyKey(request, request.body),
+        }),
+      };
+    },
+  );
+}
+
+function getIdempotencyKey(
+  request: FastifyRequest,
+  body: { idempotencyKey?: unknown } | null | undefined,
+) {
+  const header = request.headers["idempotency-key"];
+  const headerValue = Array.isArray(header) ? header[0] : header;
+  const value =
+    typeof headerValue === "string" && headerValue.trim()
+      ? headerValue
+      : typeof body?.idempotencyKey === "string"
+        ? body.idempotencyKey
+        : null;
+
+  return value?.trim() || null;
 }

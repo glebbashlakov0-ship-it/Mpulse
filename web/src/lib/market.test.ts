@@ -243,7 +243,7 @@ describe("market helpers", () => {
     );
   });
 
-  it("shows probability gauges only for single-market cards", () => {
+  it("hides probability gauges on card previews", () => {
     const singleBinary = market({
       id: "hantavirus-card",
       title: "Hantavirus pandemic in 2026?",
@@ -291,8 +291,8 @@ describe("market helpers", () => {
       ],
     });
 
-    assert.equal(getMarketProbabilityGaugeVariant(singleBinary), "chance");
-    assert.equal(getMarketProbabilityGaugeVariant(upDown), "updown");
+    assert.equal(getMarketProbabilityGaugeVariant(singleBinary), null);
+    assert.equal(getMarketProbabilityGaugeVariant(upDown), null);
     assert.equal(getMarketProbabilityGaugeVariant(grouped), null);
   });
 

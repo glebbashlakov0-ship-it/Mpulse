@@ -103,7 +103,8 @@ export type Market = {
       timestamp: string;
       yes: number | null;
       no: number | null;
-      outcomes?: Array<{ name: string; price: number | null }>;
+      outcomes?: Array<{ name: string; price: number | null; volume?: number }>;
+      outcomeVolumes?: Record<string, number>;
       volume: number;
       liquidity: number;
       synthetic?: boolean;
@@ -185,6 +186,36 @@ export type Trade = {
   shares: number;
   realizedPnl: number | null;
   idempotencyKey: string | null;
+  createdAt: string;
+};
+
+export type TradingQuote = {
+  id: string;
+  marketId: string;
+  marketTitle: string;
+  side: "yes" | "no";
+  action: "buy" | "sell";
+  price: number;
+  currentOdds: number;
+  shares: number;
+  amount: number;
+  stakeAmount: number;
+  platformFee: number;
+  fee: number;
+  estimatedCost: number;
+  estimatedProceeds: number;
+  estimatedPayout: number;
+  estimatedProfit: number;
+  availableCash: number;
+  balanceAfterBet: number;
+  availableShares: number;
+  poolBefore: number;
+  poolAfter: number;
+  outcomePoolBefore: number;
+  outcomePoolAfter: number;
+  priceImpact: number;
+  nextOdds: number;
+  status: "quoted";
   createdAt: string;
 };
 
@@ -434,19 +465,18 @@ export type LedgerBalance = {
 };
 
 export type LedgerBalancePayload = {
-  mode: "local_ledger";
+  mode: "ledger";
   balance: LedgerBalance;
 };
 
 export type LedgerEntriesPayload = {
-  mode: "local_ledger";
+  mode: "ledger";
   entries: LedgerEntry[];
 };
 
-export type LocalLedgerCreditPayload = {
-  mode: "local_ledger";
+export type LedgerCreditPayload = {
+  mode: "ledger";
   complianceMode: "ledger_restricted";
-  warning: string;
   entry: LedgerEntry;
   balance: LedgerBalance;
   idempotent: boolean;
@@ -454,12 +484,27 @@ export type LocalLedgerCreditPayload = {
 
 export type PortfolioSummary = {
   cash: number;
+  heldBalance?: number;
   positionValue: number;
   invested: number;
   equity: number;
+  unrealizedPnl?: number;
+  realizedPnl?: number;
   pnl: number;
   pnlPercent: number;
   openPositions: number;
+};
+
+export type SettlementHistoryItem = {
+  id: string;
+  marketId: string | null;
+  settlementId: string | null;
+  side: "yes" | "no" | null;
+  originalStake: number;
+  payout: number;
+  profit: number;
+  kind: string | null;
+  createdAt: string;
 };
 
 export type Portfolio = {
@@ -467,6 +512,7 @@ export type Portfolio = {
   wallet: LocalWallet;
   trades: Trade[];
   positions: LocalPosition[];
+  settlements?: SettlementHistoryItem[];
   summary: PortfolioSummary;
 };
 
@@ -609,4 +655,40 @@ export type AdminWithdrawalsPayload = {
   realTransferBlocked: true;
   warning: string;
   withdrawalRequests: AdminWithdrawalRequest[];
+};
+
+export type AdminSettlementResult = {
+  settlement: {
+    id: string;
+    marketId: string;
+    status: "resolved" | "cancelled" | "no_winner";
+    winningSide: "yes" | "no" | null;
+    totalPool: number;
+    winningPool: number;
+    platformFee: number;
+    distributablePool: number;
+    payoutCount: number;
+    createdBy: string;
+    idempotencyKey: string;
+    createdAt: string;
+  };
+  payouts: Array<{
+    id: string;
+    settlementId: string;
+    marketId: string;
+    userId: string;
+    side: "yes" | "no";
+    originalStake: number;
+    payout: number;
+    profit: number;
+    kind: "payout" | "refund" | "loss";
+    ledgerEntryId: string | null;
+    createdAt: string;
+  }>;
+  balancing: {
+    totalPool: number;
+    payoutTotal: number;
+    platformFee: number;
+    balanced: boolean;
+  };
 };

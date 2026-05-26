@@ -93,11 +93,16 @@ export type MarketActivityRepository = {
   listTopHolders(marketId: string, limit?: number): Promise<MarketHolderRecord[]>;
   listPositions(marketId: string, limit?: number): Promise<MarketPositionRecord[]>;
   listTrades(marketId: string, limit?: number): Promise<MarketTradeActivityRecord[]>;
+  recordTrade?(trade: Omit<MarketTradeActivityRecord, "id" | "createdAt"> & {
+    id?: string;
+    createdAt?: string;
+  }): Promise<MarketTradeActivityRecord>;
+  upsertPosition?(position: MarketPositionRecord): Promise<void>;
+  deletePosition?(input: { marketId: string; userId: string; side: "yes" | "no" }): Promise<void>;
 };
 
 export class MemoryMarketActivityRepository implements MarketActivityRepository {
   private readonly comments: MarketCommentRecord[] = [];
-  private readonly holders: MarketHolderRecord[] = [];
   private readonly positions: MarketPositionRecord[] = [];
   private readonly trades: MarketTradeActivityRecord[] = [];
 
@@ -129,8 +134,37 @@ export class MemoryMarketActivityRepository implements MarketActivityRepository 
   }
 
   async listTopHolders(marketId: string, limit = 20) {
-    return this.holders
-      .filter((holder) => holder.id === marketId || holder.id.startsWith(`${marketId}:`))
+    const byUser = new Map<string, MarketHolderRecord>();
+
+    for (const position of this.positions.filter((item) => item.id.startsWith(`${marketId}:`))) {
+      const existing = byUser.get(position.userId) ?? {
+        id: `${marketId}:${position.userId}`,
+        userId: position.userId,
+        displayName: position.displayName,
+        yesShares: 0,
+        noShares: 0,
+        shares: 0,
+        value: 0,
+        updatedAt: position.updatedAt,
+      };
+      const shares = Math.max(0, position.shares);
+
+      if (position.side === "yes") {
+        existing.yesShares += shares;
+      } else {
+        existing.noShares += shares;
+      }
+      existing.shares += shares;
+      existing.value += position.value;
+      existing.updatedAt =
+        Date.parse(position.updatedAt) > Date.parse(existing.updatedAt)
+          ? position.updatedAt
+          : existing.updatedAt;
+      byUser.set(position.userId, existing);
+    }
+
+    return [...byUser.values()]
+      .sort((left, right) => right.shares - left.shares || right.value - left.value)
       .slice(0, limit);
   }
 
@@ -144,6 +178,58 @@ export class MemoryMarketActivityRepository implements MarketActivityRepository 
     return this.trades
       .filter((trade) => trade.marketId === marketId)
       .slice(0, limit);
+  }
+
+  async recordTrade(trade: Omit<MarketTradeActivityRecord, "id" | "createdAt"> & {
+    id?: string;
+    createdAt?: string;
+  }) {
+    const record: MarketTradeActivityRecord = {
+      id: trade.id ?? randomUUID(),
+      marketId: trade.marketId,
+      userId: trade.userId,
+      displayName: trade.displayName,
+      side: trade.side,
+      action: trade.action,
+      amount: trade.amount,
+      price: trade.price,
+      shares: trade.shares,
+      createdAt: trade.createdAt ?? new Date().toISOString(),
+    };
+
+    this.trades.unshift(record);
+    return record;
+  }
+
+  async upsertPosition(position: MarketPositionRecord) {
+    const index = this.positions.findIndex((candidate) => candidate.id === position.id);
+
+    if (position.shares <= 0) {
+      if (index >= 0) {
+        this.positions.splice(index, 1);
+      }
+      return;
+    }
+
+    if (index >= 0) {
+      this.positions[index] = position;
+    } else {
+      this.positions.unshift(position);
+    }
+  }
+
+  async deletePosition(input: { marketId: string; userId: string; side: "yes" | "no" }) {
+    const index = this.positions.findIndex(
+      (position) =>
+        position.id === `${input.marketId}:${input.userId}:${input.side}` ||
+        (position.userId === input.userId &&
+          position.side === input.side &&
+          position.id.startsWith(`${input.marketId}:`)),
+    );
+
+    if (index >= 0) {
+      this.positions.splice(index, 1);
+    }
   }
 }
 

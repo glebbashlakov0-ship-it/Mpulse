@@ -140,11 +140,11 @@ logs, compliance profiles/consents, ledger entries, wallet rows, deposit intents
 withdrawal requests, wallet provider events, watchlist rows, trades, and positions use Postgres.
 Market data still comes from `https://gamma-api.polymarket.com`; binary chart history can also
 come from backend-only `https://clob.polymarket.com/prices-history` calls using Gamma
-`clobTokenIds`. Responses are cached in backend memory where configured and normalized into our
-own response shape.
+`clobTokenIds`. Responses are cached in backend memory where configured and normalized into the
+API response shape.
 
 All Polymarket traffic stays on the backend. Frontend market list/detail/search/category flows use
-our API response shapes only.
+the API response shapes only.
 
 Stable market fields are `id`, `slug`, `title`, `description`, `category`, `category_label`,
 `topics`, `image`, `icon`, `outcomes`, `volume`, `liquidity`, `starts_at`, `ends_at`, `status`,

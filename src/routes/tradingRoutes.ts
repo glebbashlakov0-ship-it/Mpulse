@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { AuthError, type AuthService, getAuthContext, requireAuth } from "../auth.js";
 import { type AuditService } from "../audit.js";
 import type { AppConfig } from "../config.js";
+import type { ComplianceService } from "../compliance.js";
 import { type MarketDataService } from "../marketDataService.js";
 import {
   createTradingQuote,
@@ -13,6 +14,8 @@ import {
   type TradeAction,
 } from "../trading.js";
 import type { PortfolioRepository } from "../portfolioRepository.js";
+import type { MarketActivityRepository } from "../marketActivityRepository.js";
+import type { SettlementRepository } from "../settlement.js";
 
 function getIdempotencyKey(
   request: FastifyRequest,
@@ -85,6 +88,9 @@ export function registerTradingRoutes(
   marketData: MarketDataService,
   ledger: import("../ledger.js").LedgerService,
   portfolioRepository?: PortfolioRepository,
+  compliance?: ComplianceService,
+  marketActivityRepository?: MarketActivityRepository,
+  settlementRepository?: SettlementRepository,
   options: { requirePersistentUserState?: boolean } = {},
 ) {
   const authenticatedStateRoute = options.requirePersistentUserState
@@ -102,11 +108,49 @@ export function registerTradingRoutes(
     return context;
   }
 
+  async function ensureEligibleForOrder(request: FastifyRequest, reply: FastifyReply) {
+    const context = getRequiredContext(request);
+
+    if (!context || !compliance) {
+      return { ok: true as const, context };
+    }
+
+    const eligibility = await compliance.getEligibility({
+      userId: context.user.id,
+      sessionId: context.session.id,
+    });
+
+    if (eligibility.canTradeLocal) {
+      return { ok: true as const, context, eligibility };
+    }
+
+    await audit.record({
+      eventType: "trading.rejected",
+      userId: context.user.id,
+      sessionId: context.session.id,
+      metadata: {
+        reason: "KYC_ELIGIBILITY_REQUIRED",
+        reasons: eligibility.reasons,
+      },
+    });
+
+    reply.status(403).send({
+      data: null,
+      error: {
+        code: "KYC_ELIGIBILITY_REQUIRED",
+        message: "Complete verification and legal acknowledgements before trading.",
+        reasons: eligibility.reasons,
+      },
+    });
+    return { ok: false as const };
+  }
+
   app.get("/api/portfolio", authenticatedStateRoute, async (request) => ({
     data: await getPortfolio(
       getRequiredContext(request)?.user.id,
       ledger,
       getAuthContext(request) ? portfolioRepository : undefined,
+      getAuthContext(request) ? settlementRepository : undefined,
     ),
   }));
 
@@ -151,6 +195,7 @@ export function registerTradingRoutes(
       userId: context?.user.id,
       ledger,
       portfolioRepository: context ? portfolioRepository : undefined,
+      settlementRepository: context ? settlementRepository : undefined,
     });
 
     if (!result.ok) {
@@ -202,7 +247,12 @@ export function registerTradingRoutes(
       idempotencyKey?: unknown;
     };
   }>("/api/trading/orders", authenticatedStateRoute, async (request, reply) => {
-    const context = getRequiredContext(request);
+    const eligibilityResult = await ensureEligibleForOrder(request, reply);
+    if (!eligibilityResult.ok) {
+      return reply;
+    }
+
+    const context = eligibilityResult.context;
     const parsed = parseTradingRequest(request.body);
     const idempotencyKey = getIdempotencyKey(request, request.body);
 
@@ -237,6 +287,7 @@ export function registerTradingRoutes(
       idempotencyKey,
       ledger,
       portfolioRepository: context ? portfolioRepository : undefined,
+      settlementRepository: context ? settlementRepository : undefined,
     });
 
     if (!result.ok) {
@@ -262,6 +313,14 @@ export function registerTradingRoutes(
     }
 
     if (!result.idempotent) {
+      await syncMarketActivity({
+        repository: marketActivityRepository,
+        displayName: context?.user.displayName ?? "Pulse Trader",
+        result,
+      });
+    }
+
+    if (!result.idempotent) {
       await audit.record({
         eventType: result.trade.action === "buy" ? "trading.buy_local" : "trading.sell_local",
         userId: context?.user.id,
@@ -277,8 +336,23 @@ export function registerTradingRoutes(
       });
     }
 
+    const freshMarket = await marketData.getMarketDetail(parsed.marketId).catch(() => null);
+
     return {
-      data: result,
+      data: {
+        ...result,
+        market: freshMarket?.data ?? null,
+        marketOdds: freshMarket
+          ? {
+              marketId: freshMarket.data.id,
+              outcomes: freshMarket.data.outcomes,
+              prices: freshMarket.data.prices,
+              volume: freshMarket.data.volume,
+              liquidity: freshMarket.data.liquidity,
+              history: freshMarket.data.history,
+            }
+          : null,
+      },
     };
   });
 
@@ -287,6 +361,7 @@ export function registerTradingRoutes(
       getRequiredContext(request)?.user.id,
       ledger,
       getAuthContext(request) ? portfolioRepository : undefined,
+      getAuthContext(request) ? settlementRepository : undefined,
     ),
   }));
 
@@ -296,6 +371,7 @@ export function registerTradingRoutes(
         getRequiredContext(request)?.user.id,
         ledger,
         getAuthContext(request) ? portfolioRepository : undefined,
+        getAuthContext(request) ? settlementRepository : undefined,
       )
     ).trades,
   }));
@@ -349,6 +425,77 @@ export function registerTradingRoutes(
       getRequiredContext(request)?.user.id,
       ledger,
       getAuthContext(request) ? portfolioRepository : undefined,
+      getAuthContext(request) ? settlementRepository : undefined,
     ),
   }));
+}
+
+type SuccessfulOrderResult = Extract<Awaited<ReturnType<typeof placeLocalOrder>>, { ok: true }>;
+
+async function syncMarketActivity({
+  repository,
+  displayName,
+  result,
+}: {
+  repository?: MarketActivityRepository;
+  displayName: string;
+  result: SuccessfulOrderResult;
+}) {
+  if (!repository?.recordTrade) {
+    return;
+  }
+
+  await repository.recordTrade({
+    id: result.trade.id,
+    marketId: result.trade.marketId,
+    userId: result.trade.userId,
+    displayName,
+    side: result.trade.side,
+    action: result.trade.action,
+    amount: result.trade.stakeAmount ?? result.trade.amount,
+    price: result.trade.price,
+    shares: result.trade.shares,
+    createdAt: result.trade.createdAt,
+  });
+
+  const position = result.portfolio.positions.find(
+    (candidate) => candidate.marketId === result.trade.marketId,
+  );
+
+  if (!repository.upsertPosition || !repository.deletePosition) {
+    return;
+  }
+
+  for (const side of ["yes", "no"] as const) {
+    const shares = side === "yes" ? position?.yesShares ?? 0 : position?.noShares ?? 0;
+    const totalCost = side === "yes" ? position?.yesCost ?? 0 : position?.noCost ?? 0;
+    const lastPrice =
+      side === "yes" ? position?.lastYesPrice ?? null : position?.lastNoPrice ?? null;
+
+    if (!position || shares <= 0) {
+      await repository.deletePosition({
+        marketId: result.trade.marketId,
+        userId: result.trade.userId,
+        side,
+      });
+      continue;
+    }
+
+    const price = lastPrice ?? (shares > 0 ? totalCost / shares : 0);
+    const value = shares * (price ?? 0);
+
+    await repository.upsertPosition({
+      id: `${result.trade.marketId}:${result.trade.userId}:${side}`,
+      userId: result.trade.userId,
+      displayName,
+      side,
+      shares,
+      totalCost,
+      averagePrice: shares > 0 ? totalCost / shares : null,
+      lastPrice,
+      value,
+      pnl: value - totalCost,
+      updatedAt: position.lastTradeAt,
+    });
+  }
 }

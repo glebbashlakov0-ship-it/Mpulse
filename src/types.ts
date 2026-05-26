@@ -217,7 +217,8 @@ export type MarketPriceHistoryPoint = {
   timestamp: string;
   yes: number | null;
   no: number | null;
-  outcomes?: Array<{ name: string; price: number | null }>;
+  outcomes?: Array<{ name: string; price: number | null; volume?: number }>;
+  outcomeVolumes?: Record<string, number>;
   volume: number;
   liquidity: number;
   synthetic?: boolean;

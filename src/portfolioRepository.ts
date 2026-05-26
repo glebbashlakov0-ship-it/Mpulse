@@ -47,10 +47,12 @@ export type TradeWriteRecord = TradeRecord;
 export type PortfolioRepository = {
   getWalletsByUserId(userId: string): Promise<WalletRecord[]>;
   getPositionsByUserId(userId: string): Promise<PositionRecord[]>;
+  listPositionsByMarketId(marketId: string): Promise<PositionRecord[]>;
   getTradesByUserId(userId: string, limit?: number): Promise<TradeRecord[]>;
   findTradeByIdempotencyKey(userId: string, idempotencyKey: string): Promise<TradeRecord | null>;
   upsertPosition(position: PositionWriteRecord): Promise<void>;
   deletePosition(userId: string, marketId: string, side: "yes" | "no"): Promise<void>;
+  clearMarketPositions(marketId: string): Promise<void>;
   createTrade(trade: TradeWriteRecord): Promise<void>;
   clearUserPortfolio(userId: string): Promise<void>;
 };
@@ -66,6 +68,12 @@ export class MemoryPortfolioRepository implements PortfolioRepository {
   async getPositionsByUserId(userId: string) {
     return [...this.positions.values()]
       .filter((position) => position.userId === userId)
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  }
+
+  async listPositionsByMarketId(marketId: string) {
+    return [...this.positions.values()]
+      .filter((position) => position.marketId === marketId)
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   }
 
@@ -88,6 +96,14 @@ export class MemoryPortfolioRepository implements PortfolioRepository {
   async deletePosition(userId: string, marketId: string, side: "yes" | "no") {
     for (const [id, position] of this.positions.entries()) {
       if (position.userId === userId && position.marketId === marketId && position.side === side) {
+        this.positions.delete(id);
+      }
+    }
+  }
+
+  async clearMarketPositions(marketId: string) {
+    for (const [id, position] of this.positions.entries()) {
+      if (position.marketId === marketId) {
         this.positions.delete(id);
       }
     }
@@ -187,19 +203,21 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
       [userId],
     );
 
-    return result.rows.map((row) => ({
-      id: row.id,
-      userId: row.user_id,
-      marketId: row.market_external_id,
-      marketTitle: row.market_title,
-      side: row.side,
-      shares: String(row.shares),
-      totalCost: String(row.total_cost),
-      averagePrice: row.average_price === null ? null : String(row.average_price),
-      lastPrice: row.last_price === null ? null : String(row.last_price),
-      openedAt: toIsoString(row.opened_at),
-      updatedAt: toIsoString(row.updated_at),
-    }));
+    return result.rows.map(mapPositionRow);
+  }
+
+  async listPositionsByMarketId(marketId: string) {
+    const result = await this.db.query<PositionRow>(
+      `select
+         id, user_id, market_external_id, market_title, side, shares, total_cost,
+         average_price, last_price, opened_at, updated_at
+       from positions
+       where market_external_id = $1
+       order by updated_at desc`,
+      [marketId],
+    );
+
+    return result.rows.map(mapPositionRow);
   }
 
   async getTradesByUserId(userId: string, limit = 100) {
@@ -296,6 +314,10 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
     );
   }
 
+  async clearMarketPositions(marketId: string) {
+    await this.db.query(`delete from positions where market_external_id = $1`, [marketId]);
+  }
+
   async createTrade(trade: TradeWriteRecord) {
     await this.db.query(
       `insert into trades (
@@ -325,4 +347,20 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
     await this.db.query(`delete from trades where user_id = $1`, [userId]);
     await this.db.query(`delete from positions where user_id = $1`, [userId]);
   }
+}
+
+function mapPositionRow(row: PositionRow): PositionRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    marketId: row.market_external_id,
+    marketTitle: row.market_title,
+    side: row.side,
+    shares: String(row.shares),
+    totalCost: String(row.total_cost),
+    averagePrice: row.average_price === null ? null : String(row.average_price),
+    lastPrice: row.last_price === null ? null : String(row.last_price),
+    openedAt: toIsoString(row.opened_at),
+    updatedAt: toIsoString(row.updated_at),
+  };
 }

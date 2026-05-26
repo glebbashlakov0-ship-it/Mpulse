@@ -40,6 +40,12 @@ import {
   MemoryLedgerRepository,
   PostgresLedgerRepository,
 } from "./ledger.js";
+import {
+  buildSettlementService,
+  MemorySettlementRepository,
+  PostgresSettlementRepository,
+  SettlementError,
+} from "./settlement.js";
 import { MemoryPortfolioRepository, PostgresPortfolioRepository } from "./portfolioRepository.js";
 import {
   MemoryMarketActivityRepository,
@@ -128,6 +134,14 @@ export function buildApp(config: AppConfig = getConfig()) {
   const admin = buildAdminService({
     repository: db.enabled ? new PostgresAdminRepository(db) : new MemoryAdminRepository(),
     walletRepository: wallets.repository,
+  });
+  const settlement = buildSettlementService({
+    repository: db.enabled
+      ? new PostgresSettlementRepository(db)
+      : new MemorySettlementRepository(),
+    portfolioRepository,
+    ledger,
+    audit,
   });
   const authRateLimiter = buildAuthRateLimiter(config);
   const marketData = buildMarketDataService({
@@ -257,6 +271,16 @@ export function buildApp(config: AppConfig = getConfig()) {
       });
     }
 
+    if (error instanceof SettlementError) {
+      return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+    }
+
     app.log.error(error);
     return reply.status(500).send({
       data: null,
@@ -276,10 +300,22 @@ export function buildApp(config: AppConfig = getConfig()) {
   registerComplianceRoutes(app, auth, compliance, config);
   registerWalletRoutes(app, auth, audit, wallets, config);
   registerLedgerRoutes(app, auth, audit, ledger, config);
-  registerTradingRoutes(app, auth, config, audit, marketData, ledger, portfolioRepository, {
-    requirePersistentUserState: db.enabled || config.nodeEnv === "production",
-  });
-  registerAdminRoutes(app, auth, audit, admin, config);
+  registerTradingRoutes(
+    app,
+    auth,
+    config,
+    audit,
+    marketData,
+    ledger,
+    portfolioRepository,
+    compliance,
+    marketActivityRepository,
+    settlement.repository,
+    {
+      requirePersistentUserState: db.enabled || config.nodeEnv === "production",
+    },
+  );
+  registerAdminRoutes(app, auth, audit, admin, config, settlement);
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
 
   if (config.marketSnapshotCollectorEnabled && config.marketSnapshotCollectorMarketIds.length > 0) {

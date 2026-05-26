@@ -1676,6 +1676,34 @@ async function registerForTrading(app: ReturnType<typeof buildApp>, email: strin
   return getCookieHeader(response);
 }
 
+async function registerEligibleTrader(app: ReturnType<typeof buildApp>, email: string) {
+  const cookie = await registerForTrading(app, email);
+
+  const profile = await app.inject({
+    method: "PATCH",
+    url: "/api/compliance/me",
+    headers: { cookie },
+    payload: {
+      countryCode: "US",
+      dateOfBirth: "1990-01-01",
+    },
+  });
+  const terms = await app.inject({
+    method: "POST",
+    url: "/api/compliance/accept-terms",
+    headers: { cookie },
+    payload: {
+      termsVersion: "terms-2026.04",
+      privacyVersion: "privacy-2026.04",
+      riskDisclosureVersion: "risk-2026.04",
+    },
+  });
+
+  assert.equal(profile.statusCode, 200);
+  assert.equal(terms.statusCode, 200);
+  return cookie;
+}
+
 test("POST /api/trading/quote returns a backend quote without mutating portfolio", async () => {
   const restoreFetch = installTradingFetchStub();
   const app = buildApp(testConfig());
@@ -1702,10 +1730,19 @@ test("POST /api/trading/quote returns a backend quote without mutating portfolio
     const quoteBody = JSON.parse(quoteResponse.body) as {
       data: {
         price: number;
+        currentOdds: number;
         shares: number;
         estimatedCost: number;
         platformFee: number;
+        fee: number;
         stakeAmount: number;
+        estimatedPayout: number;
+        estimatedProfit: number;
+        balanceAfterBet: number;
+        poolBefore: number;
+        poolAfter: number;
+        priceImpact: number;
+        nextOdds: number;
       };
     };
     const portfolioBody = JSON.parse(portfolioResponse.body) as {
@@ -1714,10 +1751,19 @@ test("POST /api/trading/quote returns a backend quote without mutating portfolio
 
     assert.equal(quoteResponse.statusCode, 200);
     assert.equal(quoteBody.data.price, 0.5);
-    assert.equal(quoteBody.data.shares, 119.56);
+    assert.equal(quoteBody.data.currentOdds, 0.5);
+    assert.equal(quoteBody.data.shares, 122);
     assert.equal(quoteBody.data.estimatedCost, 61);
     assert.equal(quoteBody.data.platformFee, 1.22);
-    assert.equal(quoteBody.data.stakeAmount, 59.78);
+    assert.equal(quoteBody.data.fee, 1.22);
+    assert.equal(quoteBody.data.stakeAmount, 61);
+    assert.equal(quoteBody.data.estimatedPayout, 59.78);
+    assert.equal(quoteBody.data.estimatedProfit, -1.22);
+    assert.equal(quoteBody.data.balanceAfterBet, 9939);
+    assert.equal(quoteBody.data.poolBefore, 0);
+    assert.equal(quoteBody.data.poolAfter, 61);
+    assert.equal(quoteBody.data.priceImpact, 0.5);
+    assert.equal(quoteBody.data.nextOdds, 1);
     assert.equal(portfolioBody.data.wallet.balance, 10000);
     assert.equal(portfolioBody.data.trades.length, 0);
   } finally {
@@ -1750,21 +1796,28 @@ test("POST /api/trading/orders buys shares and updates backend portfolio", async
         trade: { action: string; shares: number; platformFee: number; stakeAmount: number };
         portfolio: {
           wallet: { balance: number };
-          positions: Array<{ yesShares: number; totalCost: number }>;
+          positions: Array<{ yesShares: number; totalCost: number; currentValue: number; pnl: number }>;
           trades: unknown[];
         };
+        marketOdds: { volume: number; liquidity: number; prices: { yes: number | null; no: number | null } };
       };
     };
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.trade.action, "buy");
-    assert.equal(body.data.trade.shares, 119.56);
+    assert.equal(body.data.trade.shares, 122);
     assert.equal(body.data.trade.platformFee, 1.22);
-    assert.equal(body.data.trade.stakeAmount, 59.78);
+    assert.equal(body.data.trade.stakeAmount, 61);
     assert.equal(body.data.portfolio.wallet.balance, 9939);
-    assert.equal(body.data.portfolio.positions[0]?.yesShares, 119.56);
+    assert.equal(body.data.portfolio.positions[0]?.yesShares, 122);
     assert.equal(body.data.portfolio.positions[0]?.totalCost, 61);
+    assert.equal(body.data.portfolio.positions[0]?.currentValue, 122);
+    assert.equal(body.data.portfolio.positions[0]?.pnl, 61);
     assert.equal(body.data.portfolio.trades.length, 1);
+    assert.equal(body.data.marketOdds.volume, 61);
+    assert.equal(body.data.marketOdds.liquidity, 61);
+    assert.equal(body.data.marketOdds.prices.yes, 1);
+    assert.equal(body.data.marketOdds.prices.no, 0);
   } finally {
     await app.close();
     restoreFetch();
@@ -1794,6 +1847,68 @@ test("POST /api/trading/orders rejects buys with insufficient balance", async ()
 
     assert.equal(response.statusCode, 400);
     assert.equal(body.error.code, "INSUFFICIENT_BALANCE");
+  } finally {
+    await app.close();
+    restoreFetch();
+  }
+});
+
+test("POST /api/trading/orders rejects authenticated users before KYC eligibility", async () => {
+  const restoreFetch = installTradingFetchStub();
+  const app = buildApp(testConfig());
+
+  try {
+    const cookie = await registerForTrading(app, "kyc-required-order@example.com");
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/trading/orders",
+      headers: { cookie },
+      payload: {
+        marketId: "trade-market",
+        side: "yes",
+        action: "buy",
+        amount: 61,
+      },
+    });
+    const body = JSON.parse(response.body) as { error: { code: string; reasons: string[] } };
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(body.error.code, "KYC_ELIGIBILITY_REQUIRED");
+    assert.ok(body.error.reasons.includes("DATE_OF_BIRTH_REQUIRED_FOR_COMPLIANCE"));
+    assert.ok(body.error.reasons.includes("LEGAL_CONSENTS_REQUIRED"));
+  } finally {
+    await app.close();
+    restoreFetch();
+  }
+});
+
+test("POST /api/trading/orders rejects closed markets", async () => {
+  const restoreFetch = installTradingFetchStub({
+    active: false,
+    closed: true,
+    endDate: "2026-05-01T00:00:00.000Z",
+  });
+  const app = buildApp(testConfig());
+
+  try {
+    await app.inject({
+      method: "POST",
+      url: "/api/portfolio/reset",
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/trading/orders",
+      payload: {
+        marketId: "trade-market",
+        side: "yes",
+        action: "buy",
+        amount: 61,
+      },
+    });
+    const body = JSON.parse(response.body) as { error: { code: string } };
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(body.error.code, "MARKET_CLOSED");
   } finally {
     await app.close();
     restoreFetch();
@@ -1841,11 +1956,11 @@ test("POST /api/trading/orders sells shares and reduces the position", async () 
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.trade.action, "sell");
-    assert.equal(body.data.trade.amount, 20);
-    assert.ok(Math.abs(body.data.trade.realizedPnl + 0.408163265306122) < 0.000001);
-    assert.equal(body.data.portfolio.wallet.balance, 9959);
-    assert.equal(body.data.portfolio.positions[0]?.yesShares, 79.56);
-    assert.ok(Math.abs((body.data.portfolio.positions[0]?.totalCost ?? 0) - 40.59183673469388) < 0.000001);
+    assert.equal(body.data.trade.amount, 40);
+    assert.equal(body.data.trade.realizedPnl, 20);
+    assert.equal(body.data.portfolio.wallet.balance, 9979);
+    assert.equal(body.data.portfolio.positions[0]?.yesShares, 82);
+    assert.equal(body.data.portfolio.positions[0]?.totalCost, 41);
   } finally {
     await app.close();
     restoreFetch();
@@ -1868,7 +1983,7 @@ test("POST /api/trading/orders rejects sells with insufficient shares", async ()
         marketId: "trade-market",
         side: "yes",
         action: "sell",
-        shares: 1,
+        shares: 3,
       },
     });
     const body = JSON.parse(response.body) as { error: { code: string } };
@@ -1886,7 +2001,7 @@ test("POST /api/trading/orders idempotency key prevents duplicate buys", async (
   const app = buildApp(testConfig());
 
   try {
-    const cookie = await registerForTrading(app, "idempotent@example.com");
+    const cookie = await registerEligibleTrader(app, "idempotent@example.com");
     const order = {
       method: "POST" as const,
       url: "/api/trading/orders",
@@ -1931,8 +2046,8 @@ test("GET /api/trading/trades returns user-scoped trade history", async () => {
   const app = buildApp(testConfig());
 
   try {
-    const firstCookie = await registerForTrading(app, "first-trader@example.com");
-    const secondCookie = await registerForTrading(app, "second-trader@example.com");
+    const firstCookie = await registerEligibleTrader(app, "first-trader@example.com");
+    const secondCookie = await registerEligibleTrader(app, "second-trader@example.com");
 
     await app.inject({
       method: "POST",
@@ -2036,6 +2151,171 @@ test("POST /api/ledger/credits requires authentication", async () => {
   }
 });
 
+test("POST /api/admin/markets/:id/resolve settles Pulse positions and rejects duplicates", async () => {
+  const restoreFetch = installTradingFetchStub();
+  const app = buildApp(testConfig({ adminEmails: ["settlement-admin@example.com"] }));
+
+  try {
+    const yesCookie = await registerEligibleTrader(app, "settlement-yes@example.com");
+    const noCookie = await registerEligibleTrader(app, "settlement-no@example.com");
+    const adminCookie = await registerForTrading(app, "settlement-admin@example.com");
+
+    const yesOrder = await app.inject({
+      method: "POST",
+      url: "/api/trading/orders",
+      headers: { cookie: yesCookie, "Idempotency-Key": "settlement-yes-buy" },
+      payload: {
+        marketId: "trade-market",
+        side: "yes",
+        action: "buy",
+        amount: 60,
+      },
+    });
+    const noOrder = await app.inject({
+      method: "POST",
+      url: "/api/trading/orders",
+      headers: { cookie: noCookie, "Idempotency-Key": "settlement-no-buy" },
+      payload: {
+        marketId: "trade-market",
+        side: "no",
+        action: "buy",
+        amount: 40,
+      },
+    });
+    const resolveResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/markets/trade-market/resolve",
+      headers: { cookie: adminCookie, "Idempotency-Key": "settlement-resolve" },
+      payload: { winningSide: "yes" },
+    });
+    const duplicateResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/markets/trade-market/resolve",
+      headers: { cookie: adminCookie, "Idempotency-Key": "settlement-resolve-duplicate" },
+      payload: { winningSide: "yes" },
+    });
+    const yesPortfolio = await app.inject({
+      method: "GET",
+      url: "/api/trading/positions",
+      headers: { cookie: yesCookie },
+    });
+    const noPortfolio = await app.inject({
+      method: "GET",
+      url: "/api/trading/positions",
+      headers: { cookie: noCookie },
+    });
+    const resolveBody = JSON.parse(resolveResponse.body) as {
+      data: {
+        settlement: { totalPool: number; winningPool: number; platformFee: number; distributablePool: number };
+        balancing: { payoutTotal: number; balanced: boolean };
+        payouts: Array<{ userId: string; payout: number; profit: number; kind: string }>;
+      };
+    };
+    const duplicateBody = JSON.parse(duplicateResponse.body) as { error: { code: string } };
+    const yesBody = JSON.parse(yesPortfolio.body) as {
+      data: {
+        wallet: { balance: number };
+        positions: unknown[];
+        settlements: Array<{ payout: number; profit: number; kind: string }>;
+        summary: { realizedPnl: number };
+      };
+    };
+    const noBody = JSON.parse(noPortfolio.body) as {
+      data: {
+        wallet: { balance: number };
+        positions: unknown[];
+        settlements: Array<{ payout: number; profit: number; kind: string }>;
+        summary: { realizedPnl: number };
+      };
+    };
+
+    assert.equal(yesOrder.statusCode, 200);
+    assert.equal(noOrder.statusCode, 200);
+    assert.equal(resolveResponse.statusCode, 200);
+    assert.equal(resolveBody.data.settlement.totalPool, 100);
+    assert.equal(resolveBody.data.settlement.winningPool, 60);
+    assert.equal(resolveBody.data.settlement.platformFee, 2);
+    assert.equal(resolveBody.data.settlement.distributablePool, 98);
+    assert.equal(resolveBody.data.balancing.payoutTotal, 98);
+    assert.equal(resolveBody.data.balancing.balanced, true);
+    assert.equal(resolveBody.data.payouts.some((payout) => payout.kind === "loss" && payout.profit === -40), true);
+    assert.equal(duplicateResponse.statusCode, 409);
+    assert.equal(duplicateBody.error.code, "MARKET_ALREADY_SETTLED");
+    assert.equal(yesBody.data.wallet.balance, 10038);
+    assert.equal(yesBody.data.positions.length, 0);
+    assert.equal(yesBody.data.settlements[0]?.payout, 98);
+    assert.equal(yesBody.data.settlements[0]?.profit, 38);
+    assert.equal(yesBody.data.summary.realizedPnl, 38);
+    assert.equal(noBody.data.wallet.balance, 9960);
+    assert.equal(noBody.data.positions.length, 0);
+    assert.equal(noBody.data.settlements[0]?.payout, 0);
+    assert.equal(noBody.data.settlements[0]?.profit, -40);
+    assert.equal(noBody.data.summary.realizedPnl, -40);
+  } finally {
+    await app.close();
+    restoreFetch();
+  }
+});
+
+test("POST /api/admin/markets/:id/cancel refunds all Pulse stakes", async () => {
+  const restoreFetch = installTradingFetchStub();
+  const app = buildApp(testConfig({ adminEmails: ["refund-admin@example.com"] }));
+
+  try {
+    const userCookie = await registerEligibleTrader(app, "refund-user@example.com");
+    const adminCookie = await registerForTrading(app, "refund-admin@example.com");
+
+    await app.inject({
+      method: "POST",
+      url: "/api/trading/orders",
+      headers: { cookie: userCookie, "Idempotency-Key": "refund-user-buy" },
+      payload: {
+        marketId: "trade-market",
+        side: "yes",
+        action: "buy",
+        amount: 25,
+      },
+    });
+    const cancelResponse = await app.inject({
+      method: "POST",
+      url: "/api/admin/markets/trade-market/cancel",
+      headers: { cookie: adminCookie, "Idempotency-Key": "refund-cancel" },
+    });
+    const portfolioResponse = await app.inject({
+      method: "GET",
+      url: "/api/trading/positions",
+      headers: { cookie: userCookie },
+    });
+    const cancelBody = JSON.parse(cancelResponse.body) as {
+      data: {
+        settlement: { status: string; platformFee: number };
+        balancing: { payoutTotal: number; balanced: boolean };
+      };
+    };
+    const portfolioBody = JSON.parse(portfolioResponse.body) as {
+      data: {
+        wallet: { balance: number };
+        positions: unknown[];
+        settlements: Array<{ payout: number; profit: number; kind: string }>;
+      };
+    };
+
+    assert.equal(cancelResponse.statusCode, 200);
+    assert.equal(cancelBody.data.settlement.status, "cancelled");
+    assert.equal(cancelBody.data.settlement.platformFee, 0);
+    assert.equal(cancelBody.data.balancing.payoutTotal, 25);
+    assert.equal(cancelBody.data.balancing.balanced, true);
+    assert.equal(portfolioBody.data.wallet.balance, 10000);
+    assert.equal(portfolioBody.data.positions.length, 0);
+    assert.equal(portfolioBody.data.settlements[0]?.payout, 25);
+    assert.equal(portfolioBody.data.settlements[0]?.profit, 0);
+    assert.equal(portfolioBody.data.settlements[0]?.kind, "refund");
+  } finally {
+    await app.close();
+    restoreFetch();
+  }
+});
+
 test("POST /api/ledger/credits credits local ledger balance with idempotency", async () => {
   const app = buildApp(testConfig());
 
@@ -2077,12 +2357,12 @@ test("POST /api/ledger/credits credits local ledger balance with idempotency", a
     assert.equal(secondResponse.statusCode, 200);
     assert.equal(firstBody.data.complianceMode, "ledger_restricted");
     assert.equal(firstBody.data.entry.entryType, "credit");
-    assert.equal(firstBody.data.entry.reason, "ledger_credit_local");
+    assert.equal(firstBody.data.entry.reason, "ledger_credit");
     assert.equal(firstBody.data.balance.availableBalance, 125);
     assert.equal(secondBody.data.idempotent, true);
     assert.equal(secondBody.data.entry.id, firstBody.data.entry.id);
     assert.equal(secondBody.data.balance.availableBalance, 125);
-    assert.equal(balanceBody.data.mode, "local_ledger");
+    assert.equal(balanceBody.data.mode, "ledger");
     assert.equal(balanceBody.data.balance.availableBalance, 125);
     assert.equal(balanceBody.data.balance.totalCredited, 125);
   } finally {
@@ -2280,7 +2560,7 @@ test("GET /api/wallets/me creates and reuses a wallet", async () => {
     assert.equal(firstResponse.statusCode, 200);
     assert.equal(secondResponse.statusCode, 200);
     assert.equal(firstBody.data.mode, "wallet_review_only");
-    assert.match(firstBody.data.warning, /Transfers are not available yet./);
+    assert.match(firstBody.data.warning, /Wallet requests are reviewed before processing./);
     assert.equal(firstBody.data.created, true);
     assert.equal(secondBody.data.created, false);
     assert.equal(secondBody.data.wallet.id, firstBody.data.wallet.id);
@@ -2319,7 +2599,7 @@ test("POST /api/wallets/deposit-intents creates a deposit intent", async () => {
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.mode, "wallet_review_only");
-    assert.match(body.data.warning, /Transfers are not available yet./);
+    assert.match(body.data.warning, /Wallet requests are reviewed before processing./);
     assert.equal(body.data.depositIntent.expectedAmount, 42);
     assert.equal(body.data.depositIntent.status, "waiting");
     assert.equal(body.data.depositIntent.reference, "local-ref");
@@ -2376,7 +2656,7 @@ test("POST /api/wallets/withdrawal-requests creates and lists a blocked withdraw
     assert.equal(secondResponse.statusCode, 200);
     assert.equal(listResponse.statusCode, 200);
     assert.equal(firstBody.data.mode, "wallet_review_only");
-    assert.match(firstBody.data.warning, /Transfers are not available yet./);
+    assert.match(firstBody.data.warning, /Wallet requests are reviewed before processing./);
     assert.equal(firstBody.data.idempotent, false);
     assert.equal(firstBody.data.withdrawalRequest.status, "pending_review");
     assert.equal(firstBody.data.withdrawalRequest.realTransferBlocked, true);
@@ -2386,7 +2666,7 @@ test("POST /api/wallets/withdrawal-requests creates and lists a blocked withdraw
     assert.equal(secondBody.data.idempotent, true);
     assert.equal(secondBody.data.withdrawalRequest.id, firstBody.data.withdrawalRequest.id);
     assert.equal(listBody.data.mode, "wallet_review_only");
-    assert.match(listBody.data.warning, /Transfers are not available yet./);
+    assert.match(listBody.data.warning, /Wallet requests are reviewed before processing./);
     assert.equal(listBody.data.withdrawalRequests.length, 1);
   } finally {
     await app.close();
@@ -2687,7 +2967,7 @@ test("POST /api/wallets/webhooks/deposits credits confirmed USDT/TRON deposits i
     assert.equal(webhookResponse.statusCode, 200);
     assert.equal(duplicateResponse.statusCode, 200);
     assert.equal(webhookBody.data.mode, "wallet_review_only");
-    assert.match(webhookBody.data.warning, /Transfers are not available yet./);
+    assert.match(webhookBody.data.warning, /Wallet requests are reviewed before processing./);
     assert.equal(webhookBody.data.idempotent, false);
     assert.equal(webhookBody.data.depositEvent.status, "credited");
     assert.equal(webhookBody.data.depositEvent.amount, 100);

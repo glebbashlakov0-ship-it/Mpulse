@@ -2,7 +2,6 @@ import * as React from "react";
 import toast from "react-hot-toast";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import {
-  createLedgerCreditApi,
   createDepositIntent,
   createWithdrawalRequest,
   loadComplianceEligibility,
@@ -45,7 +44,6 @@ export function WalletPage() {
   const [depositAmount, setDepositAmount] = React.useState("25");
   const [withdrawAmount, setWithdrawAmount] = React.useState("");
   const [withdrawAddress, setWithdrawAddress] = React.useState("");
-  const [isCrediting, setIsCrediting] = React.useState(false);
   const [isDepositCreating, setIsDepositCreating] = React.useState(false);
   const [isWithdrawSubmitting, setIsWithdrawSubmitting] = React.useState(false);
 
@@ -94,20 +92,6 @@ export function WalletPage() {
     const [balance, ledger] = await Promise.all([loadLedgerBalance(), loadLedgerEntries(50)]);
     setBalanceState(balance);
     setLedgerState(ledger);
-  }
-
-  async function handleAddBalance() {
-    setIsCrediting(true);
-
-    try {
-      await createLedgerCreditApi(1000);
-      await refreshLedger();
-      toast.success("Added 1,000.00 USDT to your balance.");
-    } catch (nextError) {
-      toast.error(nextError instanceof Error ? nextError.message : "Could not add balance");
-    } finally {
-      setIsCrediting(false);
-    }
   }
 
   async function handleDepositIntent(event: React.FormEvent) {
@@ -262,15 +246,6 @@ export function WalletPage() {
                   Rail: {RAIL_LABEL}. Withdrawal requests are reviewed before processing.
                 </p>
               </div>
-              <button
-                className="inline-flex items-center gap-2 rounded-2xl bg-[#0093fd] px-4 py-2 text-sm font-semibold text-white hover:bg-[#26a3fd] disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isCrediting}
-                onClick={() => void handleAddBalance()}
-                type="button"
-              >
-                <RefreshCw size={16} />
-                {isCrediting ? "Adding..." : "Add balance"}
-              </button>
             </div>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-4">
@@ -329,7 +304,7 @@ export function WalletPage() {
             <section className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-6">
               <h2 className="text-xl font-semibold text-[#dee3e7]">Withdrawal request</h2>
               <p className="mt-1 text-sm text-[#7b8996]">
-                Withdrawal requests are reviewed before processing. Transfers are not available yet.
+                Withdrawal requests are reviewed before processing.
               </p>
               {!canRequestWithdrawal ? (
                 <div className="mt-4 rounded-2xl border border-[#f7d022]/35 bg-[#f7d022]/10 px-4 py-3 text-sm font-semibold text-[#f8da52]">
@@ -536,7 +511,7 @@ function WithdrawalHistory({
 
 function LedgerHistory({ entries }: { entries: LedgerEntriesPayload["entries"] }) {
   if (entries.length === 0) {
-    return <EmptyState text="No balance history yet. Add balance to create one." />;
+    return <EmptyState text="No balance history yet." />;
   }
 
   return (

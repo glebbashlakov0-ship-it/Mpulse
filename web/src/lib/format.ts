@@ -35,6 +35,14 @@ export function formatPercent(value: number | null) {
     return "--";
   }
 
+  if (value === 0) {
+    return "0%";
+  }
+
+  if (value > 0 && value < 0.01) {
+    return "<1%";
+  }
+
   return `${Math.round(value * 100)}%`;
 }
 

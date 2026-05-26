@@ -95,10 +95,42 @@ describe("market chart helpers", () => {
 
     assert.deepEqual(
       series.map((item) => item.label),
-      ["Candidate A", "Candidate B", "Candidate C"],
+      ["Candidate A", "Candidate B", "Candidate C", "Candidate D"],
     );
     assert.equal(series.every((item) => item.points.length === 2), true);
-    assert.equal(series.some((item) => item.label === "Candidate D"), false);
+  });
+
+  it("keeps the selected multi-outcome visible when it is outside the top series", () => {
+    const outcomes: Outcome[] = [
+      { name: "Candidate A", price: 0.5, clobTokenId: null },
+      { name: "Candidate B", price: 0.2, clobTokenId: null },
+      { name: "Candidate C", price: 0.12, clobTokenId: null },
+      { name: "Candidate D", price: 0.08, clobTokenId: null },
+      { name: "Candidate E", price: 0.06, clobTokenId: null },
+      { name: "Candidate F", price: 0.04, clobTokenId: null },
+    ];
+    const priceHistory: ChartHistoryPoint[] = [
+      {
+        ...point(0, 0.5),
+        outcomes: outcomes.map((candidate) => ({
+          name: candidate.name,
+          price: candidate.price,
+        })),
+      },
+    ];
+
+    const series = buildChartSeries({
+      priceHistory,
+      outcomes,
+      range: "ALL",
+      nowMs,
+      selectedOutcomeName: "Candidate F",
+    });
+
+    assert.deepEqual(
+      series.map((item) => item.label),
+      ["Candidate A", "Candidate B", "Candidate C", "Candidate D", "Candidate F"],
+    );
   });
 
   it("downsamples large CLOB histories while keeping the first and latest real points", () => {

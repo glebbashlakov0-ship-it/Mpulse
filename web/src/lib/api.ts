@@ -2,13 +2,14 @@ import type {
   ApiListResponse,
   ApiResponse,
   AdminAuditPayload,
+  AdminSettlementResult,
   AdminUsersPayload,
   AdminWithdrawalsPayload,
   ComplianceEligibilityPayload,
   ComplianceMePayload,
   CreateDepositIntentPayload,
   CreateWithdrawalPayload,
-  LocalLedgerCreditPayload,
+  LedgerCreditPayload,
   AuthSessionInfo,
   AuthUser,
   HiddenMarketRule,
@@ -19,6 +20,7 @@ import type {
   MarketCategory,
   MarketTag,
   Portfolio,
+  TradingQuote,
   Trade,
   MyWalletPayload,
   TwoFactorSetup,
@@ -190,6 +192,7 @@ export async function placeTradeApi({
         ok: true;
         trade: Trade;
         portfolio: Portfolio;
+        market: Market | null;
         idempotent: boolean;
       }>
     | { error?: { message?: string }; message?: string };
@@ -201,6 +204,35 @@ export async function placeTradeApi({
     );
   }
 
+  return payload.data;
+}
+
+export async function createTradingQuoteApi({
+  marketId,
+  side,
+  action,
+  amount,
+  shares,
+}: {
+  marketId: string;
+  side: "yes" | "no";
+  action: "buy" | "sell";
+  amount?: number;
+  shares?: number;
+}) {
+  const response = await apiFetch("/api/trading/quote", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ marketId, side, action, amount, shares }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not quote trade"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<TradingQuote>;
   return payload.data;
 }
 
@@ -754,10 +786,10 @@ export async function createLedgerCreditApi(amount: number, idempotencyKey = cre
     }),
   });
   if (!response.ok) {
-    throw new Error(await readApiError(response, "Could not add test balance"));
+    throw new Error(await readApiError(response, "Could not update balance"));
   }
 
-  const payload = (await response.json()) as ApiResponse<LocalLedgerCreditPayload>;
+  const payload = (await response.json()) as ApiResponse<LedgerCreditPayload>;
   return payload.data;
 }
 
@@ -887,5 +919,44 @@ export async function unhideAdminMarket(id: string) {
     realTransferBlocked: true;
     mode: "wallet_review_only";
   }>;
+  return payload.data;
+}
+
+export async function resolveAdminMarket(input: {
+  marketId: string;
+  winningSide: "yes" | "no";
+}) {
+  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(input.marketId)}/resolve`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": createIdempotencyKey("settlement"),
+    },
+    body: JSON.stringify({ winningSide: input.winningSide }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not resolve market"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminSettlementResult>;
+  return payload.data;
+}
+
+export async function cancelAdminMarket(marketId: string) {
+  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(marketId)}/cancel`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": createIdempotencyKey("settlement-cancel"),
+    },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not cancel market"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminSettlementResult>;
   return payload.data;
 }

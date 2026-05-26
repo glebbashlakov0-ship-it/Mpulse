@@ -5,7 +5,7 @@ import { isRecord, numberFromDb, sortJsonValue, stableStringify, toIsoString } f
 
 export const WALLET_REVIEW_MODE = "wallet_review_only" as const;
 export const WALLET_REVIEW_WARNING =
-  "Wallet requests are reviewed before processing. Transfers are not available yet.";
+  "Wallet requests are reviewed before processing.";
 
 export const WALLET_ASSET = "USDT" as const;
 export const WALLET_NETWORK = "TRON" as const;
@@ -1310,7 +1310,7 @@ function validateWithdrawalBody(value: unknown) {
   if (value.manualReview !== true && value.mode !== WALLET_REVIEW_MODE) {
     throw new WalletError(
       "REVIEW_MODE_REQUIRED",
-      "manualReview: true or core mode is required for local withdrawal requests.",
+      "Manual review is required before withdrawal requests can be submitted.",
     );
   }
 

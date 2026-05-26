@@ -1,15 +1,19 @@
 import { Ban, EyeOff, ShieldCheck, Undo2 } from "lucide-react";
 import * as React from "react";
 import {
+  cancelAdminMarket,
   hideAdminMarket,
   loadAdminAuditLogs,
   loadAdminUsers,
   loadAdminWithdrawals,
   rejectAdminWithdrawal,
+  resolveAdminMarket,
   unhideAdminMarket,
 } from "../lib/api";
+import { formatUsdt } from "../lib/format";
 import type {
   AdminAuditPayload,
+  AdminSettlementResult,
   AdminUsersPayload,
   AdminWithdrawalsPayload,
   AuthUser,
@@ -32,6 +36,10 @@ export function AdminPage({
   const [audit, setAudit] = React.useState<AdminAuditPayload | null>(null);
   const [withdrawals, setWithdrawals] = React.useState<AdminWithdrawalsPayload | null>(null);
   const [marketId, setMarketId] = React.useState("");
+  const [settlementMarketId, setSettlementMarketId] = React.useState("");
+  const [winningSide, setWinningSide] = React.useState<"yes" | "no">("yes");
+  const [settlementResult, setSettlementResult] =
+    React.useState<AdminSettlementResult | null>(null);
   const [reason, setReason] = React.useState<HiddenMarketRule["reason"]>("manual_review");
   const [status, setStatus] = React.useState<"idle" | "loading" | "ready" | "error">("idle");
   const [message, setMessage] = React.useState<string | null>(null);
@@ -104,6 +112,41 @@ export function AdminPage({
     }
   }
 
+  async function resolveMarket() {
+    if (!settlementMarketId.trim()) {
+      setMessage("Market id is required.");
+      return;
+    }
+
+    setMessage(null);
+    try {
+      const result = await resolveAdminMarket({
+        marketId: settlementMarketId.trim(),
+        winningSide,
+      });
+      setSettlementResult(result);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not resolve market");
+    }
+  }
+
+  async function cancelMarket() {
+    if (!settlementMarketId.trim()) {
+      setMessage("Market id is required.");
+      return;
+    }
+
+    setMessage(null);
+    try {
+      const result = await cancelAdminMarket(settlementMarketId.trim());
+      setSettlementResult(result);
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not cancel market");
+    }
+  }
+
   if (authStatus === "loading") {
     return <AdminShell title="Admin">Checking session...</AdminShell>;
   }
@@ -136,7 +179,7 @@ export function AdminPage({
           <ShieldCheck size={18} />
           {user?.role}
         </span>
-        <span>Transfers are not available yet.</span>
+        <span>Withdrawal requests are reviewed before processing.</span>
         {status === "loading" ? <span>Loading...</span> : null}
         {message ? <span className="text-[#d78282]">{message}</span> : null}
       </div>
@@ -192,6 +235,56 @@ export function AdminPage({
               ))
             )}
           </div>
+        </Panel>
+
+        <Panel title="Market settlement">
+          <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
+            <input
+              className="h-12 min-w-0 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 text-sm font-semibold text-[#dee3e7] outline-none"
+              placeholder="Market id"
+              value={settlementMarketId}
+              onChange={(event) => setSettlementMarketId(event.target.value)}
+            />
+            <select
+              className="h-12 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 text-sm font-semibold text-[#dee3e7] outline-none"
+              value={winningSide}
+              onChange={(event) => setWinningSide(event.target.value as "yes" | "no")}
+            >
+              <option value="yes">Yes wins</option>
+              <option value="no">No wins</option>
+            </select>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <button
+              className="flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#30a159] px-4 text-sm font-semibold text-white"
+              onClick={() => void resolveMarket()}
+              type="button"
+            >
+              Resolve
+            </button>
+            <button
+              className="flex h-12 items-center justify-center gap-2 rounded-2xl border border-[#242b32] px-4 text-sm font-semibold text-[#dee3e7]"
+              onClick={() => void cancelMarket()}
+              type="button"
+            >
+              Cancel / refund
+            </button>
+          </div>
+
+          {settlementResult ? (
+            <div className="mt-4 grid gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] p-4 text-sm font-semibold text-[#7b8996]">
+              <strong className="text-[#dee3e7]">
+                {settlementResult.settlement.status} · {settlementResult.settlement.marketId}
+              </strong>
+              <span>Total pool: {formatUsdt(settlementResult.settlement.totalPool)}</span>
+              <span>Platform fee: {formatUsdt(settlementResult.settlement.platformFee)}</span>
+              <span>Payout total: {formatUsdt(settlementResult.balancing.payoutTotal)}</span>
+              <span>
+                Balancing check: {settlementResult.balancing.balanced ? "balanced" : "mismatch"}
+              </span>
+              <span>Payout rows: {settlementResult.payouts.length}</span>
+            </div>
+          ) : null}
         </Panel>
 
         <Panel title="Market moderation">

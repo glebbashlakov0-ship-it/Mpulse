@@ -1,6 +1,6 @@
 import { Bookmark } from "lucide-react";
 import * as React from "react";
-import { formatMoney, formatPercent } from "../lib/format";
+import { formatMoney } from "../lib/format";
 import { getMarketKind } from "../lib/market";
 import type { Market, Outcome } from "../lib/types";
 import { MarketImage } from "./MarketMedia";
@@ -308,13 +308,6 @@ export function MarketCard({
           <BinaryMarketBody market={market} />
         )}
 
-        {isUpDownCard ? (
-          <FloatingAmount side="left" values={["+ $5", "+ $10"]} />
-        ) : null}
-        {isUpDownCard ? (
-          <FloatingAmount side="right" values={["+ $5"]} />
-        ) : null}
-
         <div className="relative flex w-full items-center text-[13px] font-medium leading-4 tracking-[-0.1px] text-[var(--pm-text-secondary)]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
             {isUpDownCard ? <LiveFooterLabel label={getFooterLabel(market)} /> : <MarketFooterMeta market={market} />}
@@ -480,16 +473,13 @@ function MatchCard({
 
 function HeadToHeadTeamRow({ team }: { team: SportsTeam }) {
   return (
-    <div className="group flex h-9 w-full items-center justify-between">
+    <div className="group flex h-9 w-full items-center">
       <div className="flex w-full min-w-0 items-center gap-2">
         <TeamMark image={team.image} label={team.label} market={team.market} />
         <p className="truncate text-[16px] font-medium leading-5 tracking-[-0.09px] text-[var(--pm-text-primary)] decoration-2 group-hover:underline">
           {team.label}
         </p>
       </div>
-      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold leading-none tracking-[-0.18px] text-[var(--pm-text-primary)]">
-        {formatPercent(team.price)}
-      </p>
     </div>
   );
 }
@@ -502,7 +492,7 @@ function MatchTeamRow({
   team: SportsTeam;
 }) {
   return (
-    <div className="group flex h-9 w-full items-center justify-between">
+    <div className="group flex h-9 w-full items-center">
       <div className="flex w-full min-w-0 items-center gap-2">
         <TeamMark image={team.image} label={team.label} market={team.market} />
         <span className="w-4 shrink-0 text-center text-[16px] font-medium tracking-[-0.09px] text-[var(--pm-text-primary)]">
@@ -513,9 +503,6 @@ function MatchTeamRow({
           {team.label}
         </p>
       </div>
-      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold leading-none tracking-[-0.18px] text-[var(--pm-text-primary)]">
-        {formatPercent(team.price)}
-      </p>
     </div>
   );
 }
@@ -734,8 +721,8 @@ function UpDownMarketBody({ market }: { market: Market }) {
 
   return (
     <div className="flex h-[62px] items-end justify-between gap-2">
-      <DirectionalTradeButton label={up?.name ?? "Up"} tone="up" amount="+ $10" />
-      <DirectionalTradeButton label={down?.name ?? "Down"} tone="down" amount="+ $5" />
+      <DirectionalTradeButton label={up?.name ?? "Up"} tone="up" />
+      <DirectionalTradeButton label={down?.name ?? "Down"} tone="down" />
     </div>
   );
 }
@@ -772,9 +759,6 @@ function OutcomeRow({ row }: { row: CardRow }) {
       </div>
       <div className="shrink-0">
         <div className="flex items-center justify-end gap-1">
-          <p className="mr-1 text-[16px] font-semibold leading-5 tracking-[-0.09px] text-[var(--pm-text-primary)]">
-            {formatPercent(row.yesPrice)}
-          </p>
           <MiniTradeButton label="Yes" tone="yes" />
           <MiniTradeButton label="No" tone="no" />
         </div>
@@ -809,15 +793,7 @@ function TradeSide({
   );
 }
 
-function DirectionalTradeButton({
-  amount,
-  label,
-  tone,
-}: {
-  amount: string;
-  label: string;
-  tone: "up" | "down";
-}) {
+function DirectionalTradeButton({ label, tone }: { label: string; tone: "up" | "down" }) {
   return (
     <button
       className={`relative h-10 min-w-0 flex-1 overflow-hidden rounded-sm px-2 text-center text-[16px] font-semibold tracking-[-0.09px] transition hover:text-white ${
@@ -829,13 +805,6 @@ function DirectionalTradeButton({
       type="button"
     >
       <span className="block truncate">{label}</span>
-      <span
-        className={`pointer-events-none absolute top-1/2 hidden -translate-y-1/2 text-[13px] font-bold opacity-90 sm:block ${
-          tone === "up" ? "left-4" : "right-4"
-        }`}
-      >
-        {amount}
-      </span>
     </button>
   );
 }
@@ -987,32 +956,6 @@ function getGaugePercent(value: number | null) {
   return value === null ? 0 : Math.min(100, Math.max(0, value * 100));
 }
 
-function FloatingAmount({ side, values }: { side: "left" | "right"; values: string[] }) {
-  return (
-    <div
-      className={`pointer-events-none absolute bottom-12 z-10 flex flex-col ${
-        side === "left" ? "left-5 items-start" : "right-5 items-end"
-      }`}
-    >
-      {values.map((value, index) => (
-        <span
-          className={`absolute whitespace-nowrap text-[12px] font-semibold ${
-            side === "left" ? "text-[#30a159]" : "text-[#e23939]"
-          }`}
-          key={`${side}-${value}-${index}`}
-          style={{
-            bottom: `${index * 24}px`,
-            opacity: index === 0 ? 0.75 : 0.35,
-            transform: `translateY(${-4 - index * 5}px) scale(${0.96 - index * 0.03})`,
-          }}
-        >
-          {value}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function LiveFooterLabel({ label }: { label: string }) {
   return (
     <div className="flex min-w-0 flex-row items-center gap-1">
@@ -1113,7 +1056,7 @@ function MatchFooterMeta({
         </span>
       </div>
       <span className="min-w-0 truncate text-[var(--pm-text-secondary)]">
-        {formatMoney(market.volume)} Our Vol.
+        {formatMoney(market.volume)} Vol.
       </span>
       {label ? (
         <>
@@ -1220,28 +1163,9 @@ function isUpDownMarket(market: Market) {
 }
 
 export function getMarketProbabilityGaugeVariant(market: Market): ProbabilityGaugeVariant | null {
-  const layout = getCardLayout(market);
-  const rows = getCardRows(market);
-  const hasGroupedRows = (market.group_markets?.length ?? 0) > 1;
-  const isUpDownCard = isUpDownMarket(market);
-  const isSportsMatchCard = isSportsMatchMarket(market, layout);
-  const isHeadToHeadCard = isHeadToHeadMarket(market, layout, isSportsMatchCard);
-  const shouldShowRows =
-    !isUpDownCard &&
-    !isSportsMatchCard &&
-    !isHeadToHeadCard &&
-    rows.length > 0 &&
-    (hasGroupedRows || layout === "multi" || layout === "price" || layout === "sports");
+  void market;
 
-  if (shouldShowRows || isSportsMatchCard || isHeadToHeadCard) {
-    return null;
-  }
-
-  if (isUpDownCard) {
-    return "updown";
-  }
-
-  return layout === "binary" || layout === "chance" ? "chance" : null;
+  return null;
 }
 
 function getSportsTeams(market: Market): SportsTeam[] {
@@ -1567,7 +1491,7 @@ function getPreviewRowPrice(row: CardRow) {
 }
 
 function getMarketFooterItems(market: Market) {
-  const items = [`${formatMoney(market.volume)} Our Vol.`];
+  const items = [`${formatMoney(market.volume)} Vol.`];
   const label = getFooterLabel(market);
 
   if (label) {
@@ -1579,7 +1503,7 @@ function getMarketFooterItems(market: Market) {
 
 function getHeadToHeadFooterItems(market: Market) {
   const items: Array<{ kind: "date" | "league" | "volume"; value: string }> = [
-    { kind: "volume", value: `${formatMoney(market.volume)} Our Vol.` },
+    { kind: "volume", value: `${formatMoney(market.volume)} Vol.` },
   ];
   const label = getFooterLabel(market);
   const startLabel = getMarketStartFooterLabel(market);

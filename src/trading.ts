@@ -2,11 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { NormalizedMarketDetail } from "./types.js";
 import type { LedgerService } from "./ledger.js";
 import type { PortfolioRepository, PositionRecord, TradeRecord } from "./portfolioRepository.js";
-import {
-  calculateGrossFromNetStake,
-  calculateNetStake,
-  calculatePlatformFee,
-} from "./tradingEconomics.js";
+import type { SettlementPayoutRecord } from "./settlement.js";
+import { calculatePlatformFee, roundMoney } from "./tradingEconomics.js";
 
 export type TradeSide = "yes" | "no";
 export type TradeAction = "buy" | "sell";
@@ -54,12 +51,27 @@ export type LocalPosition = {
 
 export type PortfolioSummary = {
   cash: number;
+  heldBalance: number;
   positionValue: number;
   invested: number;
   equity: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
   pnl: number;
   pnlPercent: number;
   openPositions: number;
+};
+
+export type SettlementHistoryItem = {
+  id: string;
+  marketId: string | null;
+  settlementId: string | null;
+  side: TradeSide | null;
+  originalStake: number;
+  payout: number;
+  profit: number;
+  kind: string | null;
+  createdAt: string;
 };
 
 export type PortfolioResponse = {
@@ -67,6 +79,7 @@ export type PortfolioResponse = {
   wallet: { balance: number };
   positions: LocalPosition[];
   trades: Trade[];
+  settlements: SettlementHistoryItem[];
   summary: PortfolioSummary;
 };
 
@@ -88,6 +101,7 @@ export type TradingQuoteInput = {
   userId?: string;
   ledger: LedgerService;
   portfolioRepository?: PortfolioRepository;
+  settlementRepository?: SettlementHistoryRepository;
 };
 
 export type TradingOrderInput = TradingQuoteInput & {
@@ -101,22 +115,35 @@ export type TradingQuote = {
   side: TradeSide;
   action: TradeAction;
   price: number;
+  currentOdds: number;
   shares: number;
   amount: number;
   stakeAmount: number;
   platformFee: number;
+  fee: number;
   estimatedCost: number;
   estimatedProceeds: number;
+  estimatedPayout: number;
+  estimatedProfit: number;
   availableCash: number;
+  balanceAfterBet: number;
   availableShares: number;
+  poolBefore: number;
+  poolAfter: number;
+  outcomePoolBefore: number;
+  outcomePoolAfter: number;
+  priceImpact: number;
+  nextOdds: number;
   status: "quoted";
   createdAt: string;
 };
 
 type TradingErrorCode =
   | "MARKET_NOT_TRADABLE"
+  | "MARKET_CLOSED"
   | "PRICE_UNAVAILABLE"
   | "INVALID_AMOUNT"
+  | "ORDER_AMOUNT_OUT_OF_RANGE"
   | "INSUFFICIENT_BALANCE"
   | "INSUFFICIENT_SHARES";
 
@@ -134,8 +161,14 @@ type TradingOrderSuccess = {
   idempotent: boolean;
 };
 
+type SettlementHistoryRepository = {
+  listPayoutsByUserId?(userId: string, limit?: number): Promise<SettlementPayoutRecord[]>;
+};
+
 const INITIAL_MOCK_BALANCE = 10_000;
 const DEMO_USER_ID = "local-user";
+const MIN_ORDER_AMOUNT = 1;
+const MAX_ORDER_AMOUNT = 100_000;
 
 type PortfolioState = {
   user: LocalUser;
@@ -289,18 +322,80 @@ function isMarketTradable(market: NormalizedMarketDetail) {
     market.active &&
     !market.closed &&
     !market.archived &&
-    market.dates.status === "live"
+    market.dates.status !== "closed" &&
+    market.dates.status !== "expired" &&
+    !hasMarketCloseTimePassed(market)
   );
+}
+
+function hasMarketCloseTimePassed(market: NormalizedMarketDetail) {
+  const endsAtMs = market.dates.ends_at_ms;
+
+  return endsAtMs !== null && Number.isFinite(endsAtMs) && endsAtMs <= Date.now();
 }
 
 function normalizePositiveNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function buildPoolQuote({
+  market,
+  side,
+  action,
+  stakeAmount,
+  currentOdds,
+}: {
+  market: NormalizedMarketDetail;
+  side: TradeSide;
+  action: TradeAction;
+  stakeAmount: number;
+  currentOdds: number;
+}) {
+  const poolBefore = Math.max(0, market.volume_detail?.liquidity ?? market.liquidity ?? 0);
+  const outcomePoolBefore = poolBefore > 0 ? poolBefore * currentOdds : 0;
+  const poolAfter =
+    action === "buy"
+      ? poolBefore + stakeAmount
+      : Math.max(0, poolBefore - stakeAmount);
+  const outcomePoolAfter =
+    action === "buy"
+      ? outcomePoolBefore + stakeAmount
+      : Math.max(0, outcomePoolBefore - stakeAmount);
+  const nextOdds =
+    poolAfter > 0
+      ? Math.min(1, Math.max(0, outcomePoolAfter / poolAfter))
+      : currentOdds;
+  const platformFee = calculatePlatformFee(poolAfter);
+  const distributablePool = Math.max(0, poolAfter - platformFee);
+  const estimatedPayout =
+    action === "buy" && outcomePoolAfter > 0
+      ? roundMoney((stakeAmount / outcomePoolAfter) * distributablePool)
+      : action === "sell"
+        ? roundMoney(stakeAmount)
+        : 0;
+  const estimatedProfit =
+    action === "buy"
+      ? roundMoney(estimatedPayout - stakeAmount)
+      : 0;
+
+  return {
+    side,
+    poolBefore: roundMoney(poolBefore),
+    poolAfter: roundMoney(poolAfter),
+    outcomePoolBefore: roundMoney(outcomePoolBefore),
+    outcomePoolAfter: roundMoney(outcomePoolAfter),
+    priceImpact: nextOdds - currentOdds,
+    nextOdds,
+    estimatedPayout,
+    estimatedProfit,
+  };
+}
+
 async function getPortfolioSummary(
   state: PortfolioState,
   ledger: LedgerService,
   userId: string,
+  settlements: SettlementHistoryItem[],
 ): Promise<PortfolioSummary> {
   const positions = state.positions.map(withComputedPosition);
   const positionValue = positions.reduce(
@@ -315,14 +410,23 @@ async function getPortfolioSummary(
     walletId: null,
   });
   const cash = balance.availableBalance;
+  const ledgerHeldBalance = Math.max(0, balance.totalHeld - balance.totalReleased);
+  const heldBalance = roundMoney(ledgerHeldBalance + invested);
   const equity = cash + positionValue;
-  const pnl = positionValue - invested;
+  const unrealizedPnl = positionValue - invested;
+  const realizedPnl =
+    state.trades.reduce((total, trade) => total + (trade.realizedPnl ?? 0), 0) +
+    settlements.reduce((total, settlement) => total + settlement.profit, 0);
+  const pnl = unrealizedPnl + realizedPnl;
 
   return {
     cash,
+    heldBalance,
     positionValue,
     invested,
     equity,
+    unrealizedPnl,
+    realizedPnl,
     pnl,
     pnlPercent: invested > 0 ? pnl / invested : 0,
     openPositions: state.positions.length,
@@ -333,17 +437,20 @@ export async function getPortfolio(
   userId = DEMO_USER_ID,
   ledger: LedgerService,
   portfolioRepository?: PortfolioRepository,
+  settlementRepository?: SettlementHistoryRepository,
 ): Promise<PortfolioResponse> {
   const state = await getTradingState(userId, portfolioRepository);
   const positions = state.positions.map(withComputedPosition);
   const balance = await ensureLocalBalance(userId, ledger);
+  const settlements = await getSettlementHistory(userId, ledger, settlementRepository);
 
   return {
     user: state.user,
     wallet: { balance: balance.availableBalance },
     positions,
     trades: state.trades,
-    summary: await getPortfolioSummary(state, ledger, userId),
+    settlements,
+    summary: await getPortfolioSummary(state, ledger, userId, settlements),
   };
 }
 
@@ -351,6 +458,7 @@ export async function resetPortfolio(
   userId = DEMO_USER_ID,
   ledger: LedgerService,
   portfolioRepository?: PortfolioRepository,
+  settlementRepository?: SettlementHistoryRepository,
 ): Promise<PortfolioResponse> {
   portfoliosByUserId.set(userId, createInitialState(userId));
   await portfolioRepository?.clearUserPortfolio(userId);
@@ -381,7 +489,63 @@ export async function resetPortfolio(
     });
   }
 
-  return getPortfolio(userId, ledger, portfolioRepository);
+  return getPortfolio(userId, ledger, portfolioRepository, settlementRepository);
+}
+
+async function getSettlementHistory(
+  userId: string,
+  ledger: LedgerService,
+  settlementRepository?: SettlementHistoryRepository,
+) {
+  const payoutRows = await settlementRepository?.listPayoutsByUserId?.(userId, 200);
+
+  if (payoutRows) {
+    return payoutRows.map((payout) => ({
+      id: payout.id,
+      marketId: payout.marketId,
+      settlementId: payout.settlementId,
+      side: payout.side,
+      originalStake: payout.originalStake,
+      payout: payout.payout,
+      profit: payout.profit,
+      kind: payout.kind,
+      createdAt: payout.createdAt,
+    }));
+  }
+
+  const entries = await ledger
+    .listEntries({
+      userId,
+      asset: "USDT",
+      walletId: null,
+      limit: 200,
+    })
+    .catch(() => []);
+
+  return entries
+    .filter((entry) => entry.referenceType === "market_settlement")
+    .map((entry) => {
+      const metadata = entry.metadata;
+
+      return {
+        id: entry.id,
+        marketId: typeof metadata.marketId === "string" ? metadata.marketId : null,
+        settlementId:
+          typeof metadata.settlementId === "string"
+            ? metadata.settlementId
+            : entry.referenceId,
+        side: metadata.side === "yes" || metadata.side === "no" ? metadata.side : null,
+        originalStake: toMetadataNumber(metadata.originalStake),
+        payout: toMetadataNumber(metadata.payout) || entry.amount,
+        profit: toMetadataNumber(metadata.profit),
+        kind: typeof metadata.kind === "string" ? metadata.kind : null,
+        createdAt: entry.createdAt,
+      } satisfies SettlementHistoryItem;
+    });
+}
+
+function toMetadataNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export async function createTradingQuote({
@@ -396,6 +560,14 @@ export async function createTradingQuote({
 }: TradingQuoteInput): Promise<{ ok: true; quote: TradingQuote } | TradingError> {
   const state = await getTradingState(userId, portfolioRepository);
 
+  if (hasMarketCloseTimePassed(market)) {
+    return {
+      ok: false,
+      code: "MARKET_CLOSED",
+      message: "This market is already closed for Pulse Market trading.",
+    };
+  }
+
   if (!isMarketTradable(market)) {
     return {
       ok: false,
@@ -406,7 +578,7 @@ export async function createTradingQuote({
 
   const price = getOutcomePrice(market, side);
 
-  if (price === null || price <= 0) {
+  if (price === null || price < 0 || (action === "sell" && price <= 0)) {
     return {
       ok: false as const,
       code: "PRICE_UNAVAILABLE",
@@ -425,25 +597,41 @@ export async function createTradingQuote({
     };
   }
 
+  const balance = await ensureLocalBalance(userId, ledger);
   const stakeAmount =
     action === "buy"
       ? inputShares !== null
         ? inputShares * price
-        : calculateNetStake(inputAmount!)
+        : inputAmount!
       : inputShares !== null
         ? inputShares * price
         : inputAmount!;
-  const quoteShares = inputShares ?? stakeAmount / price;
+
+  if (stakeAmount < MIN_ORDER_AMOUNT || stakeAmount > MAX_ORDER_AMOUNT) {
+    return {
+      ok: false,
+      code: "ORDER_AMOUNT_OUT_OF_RANGE",
+      message: `Order amount must be between ${MIN_ORDER_AMOUNT} and ${MAX_ORDER_AMOUNT} USDT.`,
+    };
+  }
+
+  const quoteShares = inputShares ?? (price > 0 ? stakeAmount / price : stakeAmount);
   const quoteAmount =
     action === "buy"
-      ? inputAmount ?? calculateGrossFromNetStake(stakeAmount)
+      ? inputAmount ?? stakeAmount
       : inputAmount ?? quoteShares * price;
   const platformFee = action === "buy" ? calculatePlatformFee(quoteAmount) : 0;
   const estimatedCost = action === "buy" ? quoteAmount : 0;
   const estimatedProceeds = action === "sell" ? quoteAmount : 0;
   const existingPosition = state.positions.find((position) => position.marketId === market.id);
   const availableShares = getSideShares(existingPosition, side);
-  const balance = await ensureLocalBalance(userId, ledger);
+  const poolQuote = buildPoolQuote({
+    market,
+    side,
+    action,
+    stakeAmount,
+    currentOdds: price,
+  });
 
   return {
     ok: true,
@@ -454,14 +642,28 @@ export async function createTradingQuote({
       side,
       action,
       price,
+      currentOdds: price,
       shares: quoteShares,
       amount: quoteAmount,
       stakeAmount,
       platformFee,
+      fee: platformFee,
       estimatedCost,
       estimatedProceeds,
+      estimatedPayout: poolQuote.estimatedPayout,
+      estimatedProfit: poolQuote.estimatedProfit,
       availableCash: balance.availableBalance,
+      balanceAfterBet:
+        action === "buy"
+          ? roundMoney(balance.availableBalance - estimatedCost)
+          : roundMoney(balance.availableBalance + estimatedProceeds),
       availableShares,
+      poolBefore: poolQuote.poolBefore,
+      poolAfter: poolQuote.poolAfter,
+      outcomePoolBefore: poolQuote.outcomePoolBefore,
+      outcomePoolAfter: poolQuote.outcomePoolAfter,
+      priceImpact: poolQuote.priceImpact,
+      nextOdds: poolQuote.nextOdds,
       status: "quoted",
       createdAt: new Date().toISOString(),
     },
@@ -485,7 +687,12 @@ export async function placeLocalOrder(
         normalizedIdempotencyKey,
       );
       if (previousTrade) {
-        const portfolio = await getPortfolio(userId, input.ledger, input.portfolioRepository);
+        const portfolio = await getPortfolio(
+          userId,
+          input.ledger,
+          input.portfolioRepository,
+          input.settlementRepository,
+        );
         const trade = mapTradeRecord(previousTrade);
         return {
           ok: true,
@@ -502,7 +709,12 @@ export async function placeLocalOrder(
       // Return fresh portfolio data for idempotent requests
       return {
         ...previous,
-        portfolio: await getPortfolio(userId, input.ledger, input.portfolioRepository),
+        portfolio: await getPortfolio(
+          userId,
+          input.ledger,
+          input.portfolioRepository,
+          input.settlementRepository,
+        ),
         idempotent: true,
       };
     }
@@ -564,8 +776,10 @@ export async function placeLocalOrder(
     createdAt: now,
   };
 
-  const yesPrice = getOutcomePrice(input.market, "yes");
-  const noPrice = getOutcomePrice(input.market, "no");
+  const yesPrice =
+    quote.side === "yes" ? quote.nextOdds : quote.side === "no" ? 1 - quote.nextOdds : getOutcomePrice(input.market, "yes");
+  const noPrice =
+    quote.side === "no" ? quote.nextOdds : quote.side === "yes" ? 1 - quote.nextOdds : getOutcomePrice(input.market, "no");
   const nextPositionBase: LocalPosition = existingPosition
     ? updateExistingPosition({
         position: existingPosition,
@@ -639,7 +853,12 @@ export async function placeLocalOrder(
     ok: true,
     quote,
     trade,
-    portfolio: await getPortfolio(userId, input.ledger, input.portfolioRepository),
+    portfolio: await getPortfolio(
+      userId,
+      input.ledger,
+      input.portfolioRepository,
+      input.settlementRepository,
+    ),
     idempotent: false,
   };
 
@@ -722,21 +941,36 @@ function mapTradeRecord(row: TradeRecord, marketTitle?: string): Trade {
 }
 
 function quoteFromTrade(trade: Trade): TradingQuote {
+  const price = trade.price;
+  const amount = trade.amount;
+  const fee = trade.platformFee ?? 0;
+
   return {
     id: trade.id,
     marketId: trade.marketId,
     marketTitle: trade.marketTitle,
     side: trade.side,
     action: trade.action,
-    price: trade.price,
+    price,
+    currentOdds: price,
     shares: trade.shares,
-    amount: trade.amount,
-    stakeAmount: trade.stakeAmount ?? trade.amount,
-    platformFee: trade.platformFee ?? 0,
-    estimatedCost: trade.action === "buy" ? trade.amount : 0,
-    estimatedProceeds: trade.action === "sell" ? trade.amount : 0,
+    amount,
+    stakeAmount: trade.stakeAmount ?? amount,
+    platformFee: fee,
+    fee,
+    estimatedCost: trade.action === "buy" ? amount : 0,
+    estimatedProceeds: trade.action === "sell" ? amount : 0,
+    estimatedPayout: 0,
+    estimatedProfit: 0,
     availableCash: 0,
+    balanceAfterBet: 0,
     availableShares: 0,
+    poolBefore: 0,
+    poolAfter: 0,
+    outcomePoolBefore: 0,
+    outcomePoolAfter: 0,
+    priceImpact: 0,
+    nextOdds: price,
     status: "quoted",
     createdAt: trade.createdAt,
   };

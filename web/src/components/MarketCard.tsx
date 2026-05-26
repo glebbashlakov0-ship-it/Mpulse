@@ -1,12 +1,190 @@
-import { Bookmark, Gift } from "lucide-react";
-import type * as React from "react";
+import { Bookmark } from "lucide-react";
+import * as React from "react";
 import { formatMoney, formatPercent } from "../lib/format";
 import { getMarketKind } from "../lib/market";
 import type { Market, Outcome } from "../lib/types";
 import { MarketImage } from "./MarketMedia";
 
 const tradeButton =
-  "inline-flex h-[27px] w-10 items-center justify-center rounded-md text-[13px] font-bold transition hover:text-white";
+  "inline-flex h-[27px] w-10 items-center justify-center rounded-[5.2px] px-3.5 text-[13px] font-medium leading-4 tracking-[-0.1px] transition duration-150";
+
+const matchChoiceAccentPalette = [
+  "#2296ff",
+  "#ff3f72",
+  "#35f0d0",
+  "#f4bd3f",
+  "#a56eff",
+  "#30d158",
+  "#ff8a3d",
+  "#00c2a8",
+  "#e255ff",
+  "#7bdc35",
+];
+
+const matchChoiceAccentOverrides: Record<string, string> = {
+  "afc bournemouth": "#991616",
+  "baltimore orioles": "#c04000",
+  "bodo/glimt": "#4c4c4c",
+  "bodø/glimt": "#4c4c4c",
+  bournemouth: "#991616",
+  forest: "#aa1830",
+  orioles: "#c04000",
+  rays: "#0f4b9c",
+  rosenborg: "#4c4c4c",
+  "t machac": "#c02121",
+  "t. machac": "#c02121",
+  "tampa bay rays": "#0f4b9c",
+  "z bergs": "#e0bf3e",
+  "z. bergs": "#e0bf3e",
+};
+
+const polymarketUploadBase = "https://polymarket-upload.s3.us-east-2.amazonaws.com";
+
+const nbaTeamCodes: Record<string, string> = {
+  "atlanta hawks": "ATL",
+  hawks: "ATL",
+  "boston celtics": "BOS",
+  celtics: "BOS",
+  "brooklyn nets": "BKN",
+  nets: "BKN",
+  "charlotte hornets": "CHA",
+  hornets: "CHA",
+  "chicago bulls": "CHI",
+  bulls: "CHI",
+  "cleveland cavaliers": "CLE",
+  cavaliers: "CLE",
+  "dallas mavericks": "DAL",
+  mavericks: "DAL",
+  "denver nuggets": "DEN",
+  nuggets: "DEN",
+  "detroit pistons": "DET",
+  pistons: "DET",
+  "golden state warriors": "GSW",
+  warriors: "GSW",
+  "houston rockets": "HOU",
+  rockets: "HOU",
+  "indiana pacers": "IND",
+  pacers: "IND",
+  "los angeles clippers": "LAC",
+  clippers: "LAC",
+  "la clippers": "LAC",
+  "los angeles lakers": "LAL",
+  lakers: "LAL",
+  "memphis grizzlies": "MEM",
+  grizzlies: "MEM",
+  "miami heat": "MIA",
+  heat: "MIA",
+  "milwaukee bucks": "MIL",
+  bucks: "MIL",
+  "minnesota timberwolves": "MIN",
+  timberwolves: "MIN",
+  "new orleans pelicans": "NOP",
+  pelicans: "NOP",
+  "new york knicks": "NYK",
+  knicks: "NYK",
+  "oklahoma city thunder": "OKC",
+  thunder: "OKC",
+  "orlando magic": "ORL",
+  magic: "ORL",
+  "philadelphia 76ers": "PHI",
+  "76ers": "PHI",
+  sixers: "PHI",
+  "phoenix suns": "PHX",
+  suns: "PHX",
+  "portland trail blazers": "POR",
+  blazers: "POR",
+  "sacramento kings": "SAC",
+  kings: "SAC",
+  "san antonio spurs": "SAS",
+  spurs: "SAS",
+  "toronto raptors": "TOR",
+  raptors: "TOR",
+  "utah jazz": "UTA",
+  jazz: "UTA",
+  "washington wizards": "WAS",
+  wizards: "WAS",
+};
+
+const mlbTeamCodes: Record<string, string> = {
+  "arizona diamondbacks": "ARI",
+  diamondbacks: "ARI",
+  "atlanta braves": "ATL",
+  braves: "ATL",
+  "baltimore orioles": "BAL",
+  orioles: "BAL",
+  "boston red sox": "BOS",
+  "red sox": "BOS",
+  "chicago cubs": "CHC",
+  cubs: "CHC",
+  "chicago white sox": "CWS",
+  "white sox": "CWS",
+  "cincinnati reds": "CIN",
+  reds: "CIN",
+  "cleveland guardians": "CLE",
+  guardians: "CLE",
+  "colorado rockies": "COL",
+  rockies: "COL",
+  "detroit tigers": "DET",
+  tigers: "DET",
+  "houston astros": "HOU",
+  astros: "HOU",
+  "kansas city royals": "KC",
+  royals: "KC",
+  "los angeles angels": "LAA",
+  angels: "LAA",
+  "los angeles dodgers": "LAD",
+  dodgers: "LAD",
+  "miami marlins": "MIA",
+  marlins: "MIA",
+  "milwaukee brewers": "MIL",
+  brewers: "MIL",
+  "minnesota twins": "MIN",
+  twins: "MIN",
+  "new york mets": "NYM",
+  mets: "NYM",
+  "new york yankees": "NYY",
+  yankees: "NYY",
+  "athletics": "ATH",
+  "oakland athletics": "ATH",
+  "philadelphia phillies": "PHI",
+  phillies: "PHI",
+  "pittsburgh pirates": "PIT",
+  pirates: "PIT",
+  "san diego padres": "SD",
+  padres: "SD",
+  "san francisco giants": "SF",
+  giants: "SF",
+  "seattle mariners": "SEA",
+  mariners: "SEA",
+  "st louis cardinals": "STL",
+  "saint louis cardinals": "STL",
+  cardinals: "STL",
+  "tampa bay rays": "TB",
+  rays: "TB",
+  "texas rangers": "TEX",
+  rangers: "TEX",
+  "toronto blue jays": "TOR",
+  "blue jays": "TOR",
+  "washington nationals": "WSH",
+  nationals: "WSH",
+};
+
+const lolTeamLogos: Record<string, string> = {
+  "dplus kia": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_dplus%20kia_132531.png`,
+  drx: `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_drx_126370.png`,
+  "g2 esports": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_g2%20esports_88.png`,
+  "hanwha life esports": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_hanwha%20life%20esports_2883.png`,
+  "kiwoom drx": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_drx_126370.png`,
+  "kt rolster": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_kt%20rolster_63.png`,
+  los: `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_los_133796.png`,
+  loud: `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_loud_128313.png`,
+  "movistar koi": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_movistar%20koi_126536.png`,
+  "nongshim red force": `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_nongshim%20red%20force_128217.png`,
+  t1: `${polymarketUploadBase}/team_logos/esports/lol/league-of-legends_t1_126061.png`,
+};
+
+const polymarketCardShell =
+  "group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-[15.2px] border border-[var(--pm-border)] bg-[var(--pm-surface-1)] pt-3 text-[var(--pm-text-primary)] shadow-[0_8px_16px_rgba(0,0,0,0.04)] outline-none transition duration-150 hover:-translate-y-px hover:bg-[var(--pm-surface-2)] hover:shadow-[0_8px_16px_rgba(0,0,0,0.08)] focus-visible:border-[var(--pm-brand)] focus-visible:ring-1 focus-visible:ring-[var(--pm-brand)]";
 
 type CardLayout = "binary" | "multi" | "sports" | "price" | "chance";
 type ProbabilityGaugeVariant = "updown" | "chance";
@@ -25,6 +203,10 @@ type SportsTeam = {
   price: number | null;
   market: Market | null;
   image: string | null;
+};
+type MatchScoreDisplay = {
+  hasExplicitScore: boolean;
+  scores: [string, string];
 };
 
 export function MarketCard({
@@ -89,7 +271,7 @@ export function MarketCard({
 
   return (
     <article
-      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#242b32] bg-[#1e2428] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#0093fd]/45 hover:bg-[#242b32] hover:shadow-black/20 focus-visible:border-[#0093fd] focus-visible:ring-2 focus-visible:ring-[#0093fd]/35"
+      className={polymarketCardShell}
       onClick={onOpen}
       onKeyDown={handleKeyDown}
       role="button"
@@ -106,7 +288,7 @@ export function MarketCard({
         <div className="flex min-w-0 flex-1 cursor-default justify-between gap-4">
           <div className="min-w-0 flex-1">
             <div className="flex min-h-[36px] flex-col justify-center">
-              <h2 className="line-clamp-3 w-fit min-w-0 text-[15px] font-semibold leading-[1.18] text-[#dee3e7] decoration-2 group-hover/card:underline">
+              <h2 className="line-clamp-3 w-fit min-w-0 text-[15px] font-semibold leading-[1.18] tracking-[-0.09px] text-[var(--pm-text-primary)] decoration-2 group-hover/card:underline">
                 {market.title}
               </h2>
             </div>
@@ -133,14 +315,12 @@ export function MarketCard({
           <FloatingAmount side="right" values={["+ $5"]} />
         ) : null}
 
-        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#7b8996]">
+        <div className="relative flex w-full items-center text-[13px] font-medium leading-4 tracking-[-0.1px] text-[var(--pm-text-secondary)]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
             {isUpDownCard ? <LiveFooterLabel label={getFooterLabel(market)} /> : <MarketFooterMeta market={market} />}
             <CardActionIcons
               isWatched={isWatched}
-              market={market}
               onWatchlistToggle={onWatchlistToggle}
-              showRewards={!isUpDownCard}
             />
           </div>
         </div>
@@ -167,53 +347,16 @@ function HeadToHeadCard({
   const second = teams[1] ?? { label: "Team 2", price: null, market: null, image: null };
 
   return (
-    <article
-      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#242b32] bg-[#1e2428] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#0093fd]/45 hover:bg-[#242b32] hover:shadow-black/20 focus-visible:border-[#0093fd] focus-visible:ring-2 focus-visible:ring-[#0093fd]/35"
-      onClick={onOpen}
+    <MatchCard
+      first={first}
+      isWatched={isWatched}
+      market={market}
       onKeyDown={onKeyDown}
-      role="button"
-      tabIndex={0}
-      aria-label={`Open ${market.title}`}
-    >
-      <div className="flex w-full flex-col items-center gap-1 px-3">
-        <HeadToHeadTeamRow team={first} />
-        <HeadToHeadTeamRow team={second} />
-      </div>
-
-      <div className="flex flex-col justify-end gap-1.5 px-3 pb-2">
-        <div className="flex h-fit items-end justify-between gap-2">
-          <TeamChoiceButton label={first.label} color={getTeamColor(first.label, 0)} />
-          <TeamChoiceButton label={second.label} color={getTeamColor(second.label, 1)} />
-        </div>
-
-        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#7b8996]">
-          <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
-            <MarketFooterMeta market={market} />
-            <CardActionIcons
-              isWatched={isWatched}
-              market={market}
-              onWatchlistToggle={onWatchlistToggle}
-            />
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function HeadToHeadTeamRow({ team }: { team: SportsTeam }) {
-  return (
-    <div className="group flex h-9 w-full items-center justify-between">
-      <div className="flex min-w-0 items-center gap-2">
-        <TeamMark image={team.image} label={team.label} market={team.market} />
-        <p className="truncate text-[16px] font-medium text-[#dee3e7] decoration-2 group-hover:underline">
-          {team.label}
-        </p>
-      </div>
-      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold text-[#dee3e7]">
-        {formatPercent(team.price)}
-      </p>
-    </div>
+      onOpen={onOpen}
+      onWatchlistToggle={onWatchlistToggle}
+      second={second}
+      variant="headToHead"
+    />
   );
 }
 
@@ -235,8 +378,46 @@ function SportsMatchCard({
   const second = teams[1] ?? { label: "Away", price: null, market: null, image: null };
 
   return (
+    <MatchCard
+      first={first}
+      isWatched={isWatched}
+      market={market}
+      onKeyDown={onKeyDown}
+      onOpen={onOpen}
+      onWatchlistToggle={onWatchlistToggle}
+      second={second}
+      variant="threeWay"
+    />
+  );
+}
+
+function MatchCard({
+  first,
+  isWatched,
+  market,
+  onKeyDown,
+  onOpen,
+  onWatchlistToggle,
+  second,
+  variant,
+}: {
+  first: SportsTeam;
+  isWatched: boolean;
+  market: Market;
+  onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void;
+  onOpen: () => void;
+  onWatchlistToggle?: () => void;
+  second: SportsTeam;
+  variant: "headToHead" | "threeWay";
+}) {
+  const scoreDisplay = getMatchScoreDisplay(market, first.label, second.label);
+  const shouldShowScoreRows = scoreDisplay.hasExplicitScore;
+  const firstAccent = getMatchChoiceAccent(first.label, 0);
+  const secondAccent = getMatchChoiceAccent(second.label, 1, [firstAccent]);
+
+  return (
     <article
-      className="home-soft-card group/card relative flex h-full min-h-[180px] cursor-pointer flex-col justify-between overflow-hidden rounded-xl border border-[#242b32] bg-[#1e2428] pt-3 shadow-md shadow-black/10 outline-none transition hover:-translate-y-px hover:border-[#0093fd]/45 hover:bg-[#242b32] hover:shadow-black/20 focus-visible:border-[#0093fd] focus-visible:ring-2 focus-visible:ring-[#0093fd]/35"
+      className={polymarketCardShell}
       onClick={onOpen}
       onKeyDown={onKeyDown}
       role="button"
@@ -244,29 +425,50 @@ function SportsMatchCard({
       aria-label={`Open ${market.title}`}
     >
       <div className="flex w-full flex-col items-center gap-1 px-3">
-        <SportsTeamRow team={first} />
-        <SportsTeamRow team={second} />
+        {shouldShowScoreRows ? (
+          <>
+            <MatchTeamRow score={scoreDisplay.scores[0]} team={first} />
+            <MatchTeamRow score={scoreDisplay.scores[1]} team={second} />
+          </>
+        ) : (
+          <>
+            <HeadToHeadTeamRow team={first} />
+            <HeadToHeadTeamRow team={second} />
+          </>
+        )}
       </div>
 
       <div className="flex flex-col justify-end gap-1.5 px-3 pb-2">
-        <div className="flex h-fit items-center justify-center gap-2">
-          <SportsSideButton label={first.label} side="home" />
-          <button
-            className="flex h-10 w-18 shrink-0 items-center justify-center overflow-hidden rounded-md border border-[#242b32] px-4 py-2 text-sm font-bold text-[#7b8996] transition hover:border-[#7b8996]/60 hover:bg-[#242b32] hover:text-[#dee3e7]"
-            onClick={(event) => event.stopPropagation()}
-            type="button"
-          >
-            DRAW
-          </button>
-          <SportsSideButton label={second.label} side="away" />
+        <div
+          className={
+            variant === "threeWay"
+              ? "flex h-fit items-center justify-center gap-2"
+              : "flex h-fit items-end justify-between gap-2"
+          }
+        >
+          {variant === "threeWay" ? (
+            <>
+              <MatchChoiceButton accent={firstAccent} label={first.label} onSelect={onOpen} />
+              <MatchDrawButton onSelect={onOpen} />
+              <MatchChoiceButton accent={secondAccent} label={second.label} onSelect={onOpen} />
+            </>
+          ) : (
+            <>
+              <MatchChoiceButton accent={firstAccent} label={first.label} onSelect={onOpen} />
+              <MatchChoiceButton accent={secondAccent} label={second.label} onSelect={onOpen} />
+            </>
+          )}
         </div>
 
-        <div className="relative flex w-full items-center text-[13px] font-semibold text-[#7b8996]">
+        <div className="relative flex w-full items-center text-[13px] font-medium leading-4 tracking-[-0.1px] text-[var(--pm-text-secondary)]">
           <div className="flex w-full items-center justify-between gap-2 overflow-visible whitespace-nowrap">
-            <MarketFooterMeta market={market} />
+            {shouldShowScoreRows ? (
+              <MatchFooterMeta market={market} variant={variant} />
+            ) : (
+              <HeadToHeadFooterMeta market={market} />
+            )}
             <CardActionIcons
               isWatched={isWatched}
-              market={market}
               onWatchlistToggle={onWatchlistToggle}
             />
           </div>
@@ -276,22 +478,42 @@ function SportsMatchCard({
   );
 }
 
-function SportsTeamRow({
+function HeadToHeadTeamRow({ team }: { team: SportsTeam }) {
+  return (
+    <div className="group flex h-9 w-full items-center justify-between">
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <TeamMark image={team.image} label={team.label} market={team.market} />
+        <p className="truncate text-[16px] font-medium leading-5 tracking-[-0.09px] text-[var(--pm-text-primary)] decoration-2 group-hover:underline">
+          {team.label}
+        </p>
+      </div>
+      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold leading-none tracking-[-0.18px] text-[var(--pm-text-primary)]">
+        {formatPercent(team.price)}
+      </p>
+    </div>
+  );
+}
+
+function MatchTeamRow({
+  score,
   team,
 }: {
+  score: string;
   team: SportsTeam;
 }) {
   return (
     <div className="group flex h-9 w-full items-center justify-between">
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex w-full min-w-0 items-center gap-2">
         <TeamMark image={team.image} label={team.label} market={team.market} />
-        <span className="w-4 text-center text-[16px] font-medium text-[#dee3e7]">0</span>
-        <span className="h-3 w-0.5 shrink-0 rounded-full bg-[#242b32]" />
-        <p className="truncate text-[16px] font-medium text-[#dee3e7] decoration-2 group-hover:underline">
+        <span className="w-4 shrink-0 text-center text-[16px] font-medium tracking-[-0.09px] text-[var(--pm-text-primary)]">
+          {score}
+        </span>
+        <span className="h-3 w-0.5 shrink-0 rounded-full bg-[var(--pm-border)]" />
+        <p className="truncate text-[16px] font-medium leading-5 tracking-[-0.09px] text-[var(--pm-text-primary)] decoration-2 group-hover:underline">
           {team.label}
         </p>
       </div>
-      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold text-[#dee3e7]">
+      <p className="shrink-0 whitespace-nowrap text-[22px] font-semibold leading-none tracking-[-0.18px] text-[var(--pm-text-primary)]">
         {formatPercent(team.price)}
       </p>
     </div>
@@ -308,65 +530,202 @@ function TeamMark({
   market: Market | null;
 }) {
   const resolvedImage = image ?? knownTeamImage(label);
+  const [failedImage, setFailedImage] = React.useState<string | null>(null);
 
-  if (resolvedImage) {
+  if (resolvedImage && failedImage !== resolvedImage) {
     return (
       <img
         alt=""
-        className="size-7 shrink-0 rounded-md object-contain"
+        className="size-7 shrink-0 rounded-sm object-contain"
         loading="lazy"
+        onError={() => setFailedImage(resolvedImage)}
         src={resolvedImage}
       />
     );
   }
 
   if (market) {
-    return <MarketImage market={market} className="size-7 rounded-md object-contain" />;
+    return <MarketImage market={market} className="size-7 rounded-sm object-contain" />;
   }
 
   return (
-    <span className="grid size-7 shrink-0 place-items-center rounded-md bg-[#15191d] text-[11px] font-bold text-[#7b8996]">
+    <span className="grid size-7 shrink-0 place-items-center rounded-sm bg-[var(--pm-surface-2)] text-[11px] font-bold text-[var(--pm-text-secondary)]">
       {label.slice(0, 2).toUpperCase()}
     </span>
   );
 }
 
-function TeamChoiceButton({ color, label }: { color: string; label: string }) {
+function MatchChoiceButton({
+  accent,
+  label,
+  onSelect,
+}: {
+  accent: string;
+  label: string;
+  onSelect: () => void;
+}) {
   return (
     <button
-      className="group relative h-10 min-w-0 flex-1 overflow-hidden rounded-lg px-2 text-center text-[16px] font-bold transition hover:text-white"
-      onClick={(event) => event.stopPropagation()}
+      className="group relative inline-flex h-10 min-w-0 w-10 flex-1 cursor-pointer items-center justify-center overflow-hidden rounded-sm px-2 text-center text-[16px] font-semibold tracking-[-0.09px] transition duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--pm-brand)]"
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+      style={{ "--match-choice-color": accent } as React.CSSProperties}
       type="button"
     >
-      <span className="relative z-[1] block truncate transition group-hover:text-white" style={{ color }}>
-        {shortTeamLabel(label)}
+      <span className="relative z-[1] flex min-w-0 items-center gap-x-1.5">
+        <span className="block min-w-0 truncate text-[var(--match-choice-color)] transition duration-150 group-hover:!text-white">
+          {label}
+        </span>
       </span>
-      <span
-        className="absolute inset-0 z-0 rounded-lg opacity-20 transition group-hover:opacity-100"
-        style={{ backgroundColor: color }}
-      />
+      <span className="absolute inset-0 z-0 rounded-sm bg-[var(--match-choice-color)] opacity-10 transition duration-150 group-hover:opacity-100" />
     </button>
   );
 }
 
-function SportsSideButton({ label, side }: { label: string; side: "home" | "away" }) {
-  const color = side === "home" ? "rgb(247, 208, 34)" : "rgb(0, 147, 253)";
-
+function MatchDrawButton({ onSelect }: { onSelect: () => void }) {
   return (
     <button
-      className="group relative h-10 min-w-0 flex-1 overflow-hidden rounded-md px-2 text-center text-[16px] font-bold transition hover:text-white"
-      onClick={(event) => event.stopPropagation()}
+      className="inline-flex h-10 min-w-0 w-[72px] shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-sm border border-[var(--pm-border)] bg-transparent px-4 text-center text-[14px] font-semibold tracking-[-0.09px] text-[var(--pm-text-secondary)] transition duration-150 active:scale-[0.97] hover:bg-[var(--pm-surface-2)] hover:text-[var(--pm-text-primary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--pm-brand)]"
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
       type="button"
     >
-      <span className="relative z-[1] block truncate transition group-hover:text-white" style={{ color }}>
-        {label}
-      </span>
-      <span
-        className="absolute inset-0 z-0 rounded-md opacity-20 transition group-hover:opacity-100"
-        style={{ backgroundColor: color }}
-      />
+      DRAW
     </button>
   );
+}
+
+function getMatchChoiceAccent(label: string, index: number, usedAccents: string[] = []) {
+  const normalized = normalizeMatchChoiceLabel(label) || `choice-${index}`;
+  const override = matchChoiceAccentOverrides[normalized];
+
+  if (override) {
+    return override;
+  }
+
+  let paletteIndex =
+    (getStableHash(normalized) + index * 3) % matchChoiceAccentPalette.length;
+  let accent = matchChoiceAccentPalette[paletteIndex];
+  let attempts = 0;
+
+  while (usedAccents.includes(accent) && attempts < matchChoiceAccentPalette.length) {
+    paletteIndex = (paletteIndex + 1) % matchChoiceAccentPalette.length;
+    accent = matchChoiceAccentPalette[paletteIndex];
+    attempts += 1;
+  }
+
+  return accent;
+}
+
+function normalizeMatchChoiceLabel(label: string) {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[’`]/g, "'")
+    .replace(/\s+/g, " ");
+}
+
+function getStableHash(value: string) {
+  let hash = 0;
+
+  for (const character of value) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+
+  return hash;
+}
+
+function getMatchScoreDisplay(market: Market, firstLabel: string, secondLabel: string): MatchScoreDisplay {
+  const text = normalizeScoreText(
+    [
+      market.title,
+      market.event_title,
+      market.groupItemTitle,
+      ...(market.group_markets?.map((groupMarket) => getGroupMarketLabel(groupMarket)) ?? []),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const first = getScoreLabelVariants(firstLabel);
+  const second = getScoreLabelVariants(secondLabel);
+  const compactScore = findCompactScoreBetweenTeams(text, first, second);
+
+  if (compactScore) {
+    return { hasExplicitScore: true, scores: compactScore };
+  }
+
+  const firstScore = findScoreAfterTeam(text, first);
+  const secondScore = findScoreAfterTeam(text, second);
+
+  return {
+    hasExplicitScore: Boolean(firstScore && secondScore),
+    scores: [firstScore ?? "0", secondScore ?? "0"],
+  };
+}
+
+function findCompactScoreBetweenTeams(
+  text: string,
+  firstLabels: string[],
+  secondLabels: string[],
+): [string, string] | null {
+  for (const first of firstLabels) {
+    for (const second of secondLabels) {
+      const pattern = new RegExp(
+        `(?:^|\\b)${escapeRegExp(first)}(?:\\b|$)\\s+(\\d{1,2})\\s*[-:]\\s*(\\d{1,2})\\s+(?:${escapeRegExp(second)})(?:\\b|$)`,
+      );
+      const match = text.match(pattern);
+
+      if (match) {
+        return [match[1], match[2]];
+      }
+    }
+  }
+
+  return null;
+}
+
+function findScoreAfterTeam(text: string, labels: string[]) {
+  for (const label of labels) {
+    const match = text.match(
+      new RegExp(`(?:^|\\b)${escapeRegExp(label)}(?:\\b|$)\\s+(\\d{1,2})(?!\\d)`),
+    );
+
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return null;
+}
+
+function getScoreLabelVariants(label: string) {
+  const normalized = normalizeScoreText(cleanTeamLabel(label));
+  const words = normalized.split(" ").filter(Boolean);
+  const variants = [normalized];
+
+  if (words.length > 1) {
+    variants.push(words.slice(-2).join(" "));
+    variants.push(words.at(-1) ?? normalized);
+  }
+
+  return [...new Set(variants.filter(Boolean))];
+}
+
+function normalizeScoreText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[’`]/g, "'")
+    .replace(/[^a-z0-9'\-: ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function UpDownMarketBody({ market }: { market: Market }) {
@@ -407,13 +766,13 @@ function OutcomeRow({ row }: { row: CardRow }) {
   return (
     <div className="mb-2 flex w-full shrink-0 items-center justify-between gap-4">
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <p className="line-clamp-1 break-all text-[15px] font-medium leading-5 text-[#d2d8df] group-hover/card:underline">
+        <p className="line-clamp-1 break-all text-[14px] font-medium leading-5 tracking-[-0.09px] text-[var(--pm-text-primary)] group-hover/card:underline">
           {row.label}
         </p>
       </div>
       <div className="shrink-0">
         <div className="flex items-center justify-end gap-1">
-          <p className="mr-1 text-[15px] font-semibold text-[#dee3e7]">
+          <p className="mr-1 text-[16px] font-semibold leading-5 tracking-[-0.09px] text-[var(--pm-text-primary)]">
             {formatPercent(row.yesPrice)}
           </p>
           <MiniTradeButton label="Yes" tone="yes" />
@@ -437,10 +796,10 @@ function TradeSide({
 
   return (
     <button
-      className={`h-[46px] min-w-0 rounded-lg px-3 text-center text-[15px] font-bold transition hover:brightness-110 ${
+      className={`h-[46px] min-w-0 rounded-sm px-3 text-center text-[15px] font-semibold tracking-[-0.09px] transition hover:brightness-105 ${
         tone === "yes"
-          ? "bg-[#3db468]/15 text-[#5fbe82] hover:bg-[#30a159] hover:text-white"
-          : "bg-[#cb3131]/15 text-[#d05959] hover:bg-[#cb3131] hover:text-white"
+          ? "bg-[#30a159]/15 text-[#30a159] hover:bg-[#30a159] hover:text-white"
+          : "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939] hover:text-white"
       }`}
       onClick={(event) => event.stopPropagation()}
       type="button"
@@ -461,10 +820,10 @@ function DirectionalTradeButton({
 }) {
   return (
     <button
-      className={`relative h-10 min-w-0 flex-1 overflow-hidden rounded-md px-2 text-center text-[16px] font-bold transition hover:text-white ${
+      className={`relative h-10 min-w-0 flex-1 overflow-hidden rounded-sm px-2 text-center text-[16px] font-semibold tracking-[-0.09px] transition hover:text-white ${
         tone === "up"
-          ? "bg-[#3db468]/15 text-[#5fbe82] hover:bg-[#30a159]"
-          : "bg-[#cb3131]/15 text-[#d05959] hover:bg-[#cb3131]"
+          ? "bg-[#30a159]/15 text-[#30a159] hover:bg-[#30a159]"
+          : "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939]"
       }`}
       onClick={(event) => event.stopPropagation()}
       type="button"
@@ -486,8 +845,8 @@ function MiniTradeButton({ label, tone }: { label: "Yes" | "No"; tone: "yes" | "
     <button
       className={`${tradeButton} ${
         tone === "yes"
-          ? "bg-[#3db468]/15 text-[#5fbe82] hover:bg-[#30a159]"
-          : "bg-[#cb3131]/15 text-[#d05959] hover:bg-[#cb3131]"
+          ? "bg-[#30a159]/15 text-[#30a159] hover:bg-[#30a159] hover:text-white"
+          : "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939] hover:text-white"
       }`}
       onClick={(event) => event.stopPropagation()}
       type="button"
@@ -517,7 +876,7 @@ function MarketProbabilityGauge({ market, variant }: { market: Market; variant: 
           <path
             d={paths.track}
             fill="none"
-            stroke="#242b32"
+            stroke="var(--pm-border)"
             strokeLinecap="round"
             strokeWidth="4.5"
           />
@@ -532,10 +891,10 @@ function MarketProbabilityGauge({ market, variant }: { market: Market; variant: 
         </svg>
       </div>
       <div className="flex w-full -translate-y-[28px] flex-col items-center">
-        <p className="text-center text-[22px] font-medium leading-none text-[#dee3e7]">
+        <p className="text-center text-[22px] font-medium leading-none tracking-[-0.18px] text-[var(--pm-text-primary)]">
           {display.value === null ? "--" : `${percent}%`}
         </p>
-        <p className="line-clamp-2 text-center text-[13px] font-semibold leading-tight text-[#7b8996]">
+        <p className="line-clamp-2 text-center text-[13px] font-semibold leading-tight tracking-[-0.1px] text-[var(--pm-text-secondary)]">
           {display.label}
         </p>
       </div>
@@ -569,14 +928,14 @@ export function getGaugeStroke(value: number | null) {
   const percent = getGaugePercent(value);
 
   if (percent < 30) {
-    return "#cb3131";
+    return "#e23939";
   }
 
   if (percent < 50) {
     return "#f7d022";
   }
 
-  return "#3db468";
+  return "#30a159";
 }
 
 export function getGaugeStrokeOpacity(value: number | null) {
@@ -638,7 +997,7 @@ function FloatingAmount({ side, values }: { side: "left" | "right"; values: stri
       {values.map((value, index) => (
         <span
           className={`absolute whitespace-nowrap text-[12px] font-semibold ${
-            side === "left" ? "text-[#5fbe82]" : "text-[#d05959]"
+            side === "left" ? "text-[#30a159]" : "text-[#e23939]"
           }`}
           key={`${side}-${value}-${index}`}
           style={{
@@ -659,10 +1018,10 @@ function LiveFooterLabel({ label }: { label: string }) {
     <div className="flex min-w-0 flex-row items-center gap-1">
       <div className="relative ml-1 flex h-5 items-center gap-1.5">
         <div className="relative flex items-center justify-center">
-          <span className="relative z-10 size-[7px] rounded-full bg-[#cb3131]" />
-          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#cb3131] opacity-75" />
+          <span className="relative z-10 size-[7px] rounded-full bg-[#e23939]" />
+          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#e23939] opacity-75" />
         </div>
-        <p className="text-[13px] font-semibold uppercase leading-none text-[#cb3131]">Live</p>
+        <p className="text-[13px] font-semibold uppercase leading-none tracking-[-0.1px] text-[#e23939]">Активные</p>
       </div>
       <span className="mx-px opacity-50">·</span>
       <span className="truncate">{label}</span>
@@ -695,33 +1054,24 @@ function getFooterItemClassName(index: number) {
     return `${base} hidden xl:inline`;
   }
 
-  return `${base} before:mx-1 before:text-[#586879] before:content-['•']`;
+  return `${base} before:mx-1 before:text-[#a6adb7] before:content-['·']`;
 }
 
 function CardActionIcons({
   isWatched,
-  market,
   onWatchlistToggle,
-  showRewards = true,
 }: {
   isWatched: boolean;
-  market: Market;
   onWatchlistToggle?: () => void;
-  showRewards?: boolean;
 }) {
   return (
     <div className="flex shrink-0 items-center">
-      {showRewards && hasMarketRewards(market) ? (
-        <IconBadge label="Rewards">
-          <Gift size={16} />
-        </IconBadge>
-      ) : null}
       {onWatchlistToggle ? (
         <button
           className={`relative z-[1] grid h-7 w-7 place-items-center rounded-full transition ${
             isWatched
-              ? "bg-[#0093fd]/20 text-[#0093fd]"
-              : "text-[#7b8996] hover:bg-white/5 hover:text-[#dee3e7]"
+              ? "bg-[var(--pm-brand-muted)] text-[var(--pm-brand)]"
+              : "text-[var(--pm-text-secondary)] hover:bg-[var(--pm-surface-2)] hover:text-[var(--pm-text-primary)]"
           }`}
           aria-label={isWatched ? "Remove from watchlist" : "Add to watchlist"}
           aria-pressed={isWatched}
@@ -742,41 +1092,58 @@ function CardActionIcons({
   );
 }
 
-function SportsFooterLabel({ market }: { market: Market }) {
+function MatchFooterMeta({
+  market,
+  variant,
+}: {
+  market: Market;
+  variant: "headToHead" | "threeWay";
+}) {
+  const label = getFooterLabel(market);
+
   return (
-    <div className="flex min-w-0 flex-row items-center gap-1">
-      <div className="relative ml-1 flex h-5 min-w-0 items-center gap-1.5">
-        <div className="relative flex shrink-0 items-center justify-center">
-          <span className="relative z-10 size-[7px] rounded-full bg-[#cb3131]" />
-          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#cb3131] opacity-75" />
+    <div className="flex min-w-0 flex-row items-center gap-1 overflow-hidden">
+      <div className="relative ml-1 flex h-5 shrink-0 items-center gap-1.5">
+        <div className="relative flex items-center justify-center">
+          <span className="relative z-10 size-[7px] rounded-full bg-[#e43b43]" />
+          <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#e43b43] opacity-75" />
         </div>
-        <p className="shrink-0 text-[14px] font-semibold leading-none text-[#dee3e7]">
-          {getSportsClockLabel(market)}
-        </p>
-        <p className="ml-1 truncate text-[#7b8996]">
-          <span>{formatMoney(market.volume)} </span>Vol.
-        </p>
+        <span className="shrink-0 text-[14px] font-semibold leading-none tracking-[-0.09px] text-[var(--pm-text-primary)]">
+          {getMatchClockLabel(market, variant)}
+        </span>
       </div>
-      <span className="mx-px opacity-50">·</span>
-      <span className="truncate">{getFooterLabel(market)}</span>
+      <span className="min-w-0 truncate text-[var(--pm-text-secondary)]">
+        {formatMoney(market.volume)} Our Vol.
+      </span>
+      {label ? (
+        <>
+          <span className="mx-px shrink-0 opacity-50">·</span>
+          <span className="min-w-0 truncate">{label}</span>
+        </>
+      ) : null}
     </div>
   );
 }
 
-function HeadToHeadFooterLabel({ market }: { market: Market }) {
+function HeadToHeadFooterMeta({ market }: { market: Market }) {
+  const items = getHeadToHeadFooterItems(market);
+
   return (
-    <div className="flex min-w-0 flex-row items-center gap-1">
-      <p className="truncate">
-        <span>{formatMoney(market.volume)} </span>Vol.
-      </p>
-      <span className="mx-px opacity-50">·</span>
-      <span className="truncate">{getFooterLabel(market)}</span>
-      {getMatchTimeLabel(market) ? (
-        <>
-          <span className="mx-px opacity-50">·</span>
-          <span className="shrink-0">{getMatchTimeLabel(market)}</span>
-        </>
-      ) : null}
+    <div className="flex min-w-0 flex-row items-center gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {items.map((item, index) => (
+        <React.Fragment key={`${item.value}-${index}`}>
+          {index > 0 ? <span className="mx-px shrink-0 opacity-50">·</span> : null}
+          {item.kind === "league" ? (
+            <span className="shrink-0 text-[var(--pm-text-secondary)] transition hover:text-[var(--pm-text-primary)]">
+              {item.value}
+            </span>
+          ) : (
+            <span className="shrink-0 text-[var(--pm-text-secondary)]">
+              {item.value}
+            </span>
+          )}
+        </React.Fragment>
+      ))}
     </div>
   );
 }
@@ -784,7 +1151,7 @@ function HeadToHeadFooterLabel({ market }: { market: Market }) {
 function IconBadge({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <span
-      className="grid h-7 w-7 place-items-center rounded-full text-[#7b8996] transition hover:bg-white/5 hover:text-[#dee3e7]"
+      className="grid h-7 w-7 place-items-center rounded-full text-[var(--pm-text-secondary)] transition hover:bg-[var(--pm-surface-2)] hover:text-[var(--pm-text-primary)]"
       aria-label={label}
       title={label}
     >
@@ -805,9 +1172,12 @@ function isHeadToHeadMarket(market: Market, layout: CardLayout, isSportsMatchCar
   }
 
   const teams = getHeadToHeadTeams(market);
-  const hasMatchCue = /\b(vs\.?|v\.?|at|game|bo[1357]|match|lol|dota|cs2|counter-strike|esports|indian league)\b/.test(
-    text,
-  );
+  const hasMatchCue =
+    /\b(vs\.?|v\.?|at|game|bo[1357]|match|lol|dota|cs2|counter-strike|esports|indian league|mlb|nba|nfl|nhl|atp|wta)\b/.test(
+      text,
+    ) ||
+    /\b(?:top|bot|bottom)\s+(?:extra|\d{1,2})\b/.test(text) ||
+    /\b\d{1,2}\s*[-:]\s*\d{1,2}\b/.test(text);
 
   return teams.length >= 2 && hasMatchCue;
 }
@@ -959,53 +1329,63 @@ function getTeamImage(teamMarket: Market, parentMarket: Market) {
 }
 
 function knownTeamImage(label: string) {
-  const normalized = label.toLowerCase().replace(/\s+cf\b/, "").trim();
+  const normalized = label
+    .toLowerCase()
+    .replace(/\s+(cf|fc)\b/, "")
+    .replace(/\./g, "")
+    .trim();
 
-  if (normalized === "kiwoom drx" || normalized === "drx") {
-    return "https://polymarket-upload.s3.us-east-2.amazonaws.com/team_logos/esports/lol/league-of-legends_drx_126370.png";
+  const lolLogo = lolTeamLogos[normalized];
+
+  if (lolLogo) {
+    return lolLogo;
   }
 
-  if (normalized === "kt rolster") {
-    return "https://polymarket-upload.s3.us-east-2.amazonaws.com/team_logos/esports/lol/league-of-legends_kt%20rolster_63.png";
+  const nbaCode = nbaTeamCodes[normalized];
+
+  if (nbaCode) {
+    return `${polymarketUploadBase}/NBA+Team+Logos/${nbaCode}.png`;
+  }
+
+  const mlbCode = mlbTeamCodes[normalized];
+
+  if (mlbCode) {
+    return `${polymarketUploadBase}/MLB+Team+Logos/${mlbCode}.png`;
+  }
+
+  if (normalized === "rosenborg") {
+    return `${polymarketUploadBase}/team_logos/soccer/nor/nor1_rbk_90000831.png`;
+  }
+
+  if (normalized === "bodø/glimt" || normalized === "bodo/glimt" || normalized === "fk bodø/glimt") {
+    return `${polymarketUploadBase}/FK%20Bod%C3%B8%2FGlimt-63354af4b3.png`;
   }
 
   if (normalized === "real madrid" || normalized === "real madrid cf") {
-    return "https://polymarket-upload.s3.us-east-2.amazonaws.com/Real%20Madrid%20CF-766f4e0266.png";
+    return `${polymarketUploadBase}/Real%20Madrid%20CF-766f4e0266.png`;
   }
 
   if (normalized === "oviedo" || normalized === "real oviedo") {
-    return "https://polymarket-upload.s3.us-east-2.amazonaws.com/Real%20Oviedo-bfdc21095c.png";
+    return `${polymarketUploadBase}/Real%20Oviedo-bfdc21095c.png`;
+  }
+
+  if (normalized === "team spirit") {
+    return "https://commons.wikimedia.org/wiki/Special:FilePath/Team_Spirit_new_em.svg";
+  }
+
+  if (normalized === "aurora" || normalized === "aurora gaming") {
+    return "https://commons.wikimedia.org/wiki/Special:FilePath/Aurora_Gaming_logo.svg";
+  }
+
+  if (normalized === "palace" || normalized === "crystal palace") {
+    return "https://upload.wikimedia.org/wikipedia/en/a/a2/Crystal_Palace_FC_logo_%282022%29.svg";
+  }
+
+  if (normalized === "arsenal") {
+    return "https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg";
   }
 
   return null;
-}
-
-function getTeamColor(label: string, index: number) {
-  const normalized = label.toLowerCase();
-
-  if (normalized.includes("drx") || normalized.includes("oviedo") || normalized.includes("mumbai")) {
-    return "rgb(0, 147, 253)";
-  }
-
-  if (
-    normalized.includes("kt") ||
-    normalized.includes("weibo") ||
-    normalized.includes("jd gaming") ||
-    normalized.includes("punjab")
-  ) {
-    return "rgb(203, 49, 49)";
-  }
-
-  return index === 0 ? "rgb(0, 147, 253)" : "rgb(203, 49, 49)";
-}
-
-function shortTeamLabel(label: string) {
-  return label
-    .replace(/\bGaming\b/i, "")
-    .replace(/\bKings\b/i, "")
-    .replace(/\bIndians\b/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function getGroupMarketLabel(groupMarket: Market & { label?: string }) {
@@ -1039,40 +1419,48 @@ function isDrawLabel(label: string) {
 }
 
 function isBinaryOutcomeLabel(label: string) {
-  return /^(yes|no|up|down)$/i.test(label.trim());
+  return /^(yes|no|up|down|over|under|odd|even|o\/?u|both|neither)$/i.test(label.trim());
 }
 
-function getSportsClockLabel(market: Market) {
+function getMatchClockLabel(market: Market, variant: "headToHead" | "threeWay") {
   const text = getMarketSearchText(market);
+  const period = text.match(/\b([12]h)\s*[-–]\s*(\d{1,3})\s*'?/i);
 
-  if (/\b1h\s*-\s*\d+\b/i.test(text)) {
-    return text.match(/\b1h\s*-\s*\d+\b/i)?.[0].toUpperCase() ?? "1H - 30";
+  if (period) {
+    return `${period[1].toUpperCase()} - ${period[2]}'`;
+  }
+
+  const baseballExtra = text.match(/\b(bot|bottom|top)\s+extra\b/i);
+
+  if (baseballExtra) {
+    return `${getBaseballHalfLabel(baseballExtra[1])} Extra`;
+  }
+
+  const baseballInning = text.match(/\b(bot|bottom|top)\s+(\d{1,2})\b/i);
+
+  if (baseballInning) {
+    return `${getBaseballHalfLabel(baseballInning[1])} ${baseballInning[2]}`;
+  }
+
+  const game = text.match(/\b(?:game|map)\s*(\d+)\b/i);
+
+  if (game) {
+    return `Игра ${game[1]}`;
+  }
+
+  if (variant === "headToHead" || /\b(esports|dota|lol|league of legends|counter-strike|cs2|gaming)\b/.test(text)) {
+    return "Игра 1";
   }
 
   if (market.status === "live" || market.dates?.status === "live" || market.active) {
-    return "1H - 30";
+    return "1H - 45'";
   }
 
   return "Game";
 }
 
-function getMatchTimeLabel(market: Market) {
-  const date = market.starts_at ?? market.ends_at;
-
-  if (!date) {
-    return null;
-  }
-
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(parsed);
+function getBaseballHalfLabel(value: string) {
+  return value.toLowerCase().startsWith("top") ? "Top" : "Bot";
 }
 
 function getCardLayout(market: Market): CardLayout {
@@ -1179,7 +1567,7 @@ function getPreviewRowPrice(row: CardRow) {
 }
 
 function getMarketFooterItems(market: Market) {
-  const items = [`${formatMoney(market.volume)} Vol.`];
+  const items = [`${formatMoney(market.volume)} Our Vol.`];
   const label = getFooterLabel(market);
 
   if (label) {
@@ -1189,11 +1577,48 @@ function getMarketFooterItems(market: Market) {
   return items;
 }
 
-function hasMarketRewards(market: Market): boolean {
-  return Boolean(
-    market.rewards?.enabled ||
-      market.group_markets?.some((groupMarket) => groupMarket.rewards?.enabled),
-  );
+function getHeadToHeadFooterItems(market: Market) {
+  const items: Array<{ kind: "date" | "league" | "volume"; value: string }> = [
+    { kind: "volume", value: `${formatMoney(market.volume)} Our Vol.` },
+  ];
+  const label = getFooterLabel(market);
+  const startLabel = getMarketStartFooterLabel(market);
+
+  if (label) {
+    items.push({ kind: "league", value: label });
+  }
+
+  if (startLabel) {
+    items.push({ kind: "date", value: startLabel });
+  }
+
+  return items;
+}
+
+function getMarketStartFooterLabel(market: Market) {
+  const value = market.game_start_time ?? market.starts_at ?? market.ends_at;
+
+  if (!value) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const month = new Intl.DateTimeFormat("ru", { month: "short" })
+    .format(parsed)
+    .replace(".", "");
+  const day = new Intl.DateTimeFormat("ru", { day: "numeric" }).format(parsed);
+  const time = new Intl.DateTimeFormat("ru", {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+  }).format(parsed);
+
+  return `${month} ${day}, ${time}`;
 }
 
 function getFooterLabel(market: Market) {
@@ -1223,8 +1648,17 @@ function getFooterLabel(market: Market) {
     return "La Liga";
   }
 
-  if (text.includes("premier league") || text.includes("premier-league")) {
-    return "Premier League";
+  if (text.includes("epl") || text.includes("premier league") || text.includes("premier-league")) {
+    return "EPL";
+  }
+
+  if (
+    text.includes("norway eliteserien") ||
+    text.includes("eliteserien") ||
+    text.includes("nor-rbk") ||
+    text.includes("rbk-bog")
+  ) {
+    return "Norway Eliteserien";
   }
 
   if (text.includes("nba")) {
@@ -1251,6 +1685,14 @@ function getFooterLabel(market: Market) {
     return "Soccer";
   }
 
+  if (text.includes("atp")) {
+    return "ATP";
+  }
+
+  if (text.includes("wta")) {
+    return "WTA";
+  }
+
   if (text.includes("tennis")) {
     return "Tennis";
   }
@@ -1267,7 +1709,7 @@ function getFooterLabel(market: Market) {
 }
 
 function getMarketSearchText(market: Market) {
-  return `${market.title} ${market.category ?? ""} ${market.category_label ?? ""} ${market.topics.join(" ")} ${
+  return `${market.title} ${market.slug ?? ""} ${market.category ?? ""} ${market.category_label ?? ""} ${market.topics.join(" ")} ${
     market.event_title ?? ""
-  }`.toLowerCase();
+  } ${market.event_slug ?? ""} ${market.canonical_event_slug ?? ""} ${market.groupItemTitle ?? ""}`.toLowerCase();
 }

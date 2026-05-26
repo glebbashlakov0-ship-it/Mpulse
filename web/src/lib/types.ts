@@ -60,13 +60,6 @@ export type Market = {
   liquidity: number;
   comment_count?: number;
   game_start_time?: string | null;
-  rewards?: {
-    enabled: boolean;
-    daily_rate: number;
-    holding: boolean;
-    min_size: number | null;
-    max_spread: number | null;
-  };
   outcomes: Outcome[];
   trading: {
     order_book_enabled: boolean;
@@ -186,6 +179,8 @@ export type Trade = {
   side: "yes" | "no";
   action: "buy" | "sell";
   amount: number;
+  stakeAmount?: number;
+  platformFee?: number;
   price: number;
   shares: number;
   realizedPnl: number | null;

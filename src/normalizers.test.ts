@@ -27,10 +27,10 @@ test("normalizes market fields with stable nulls, arrays, category, and fallback
   assert.equal(market.category_label, "Crypto");
   assert.match(market.image ?? "", /^https:\/\/images\.unsplash\.com\//);
   assert.deepEqual(market.outcomes, []);
-  assert.equal(market.trading.best_bid, 0.6);
+  assert.equal(market.trading.best_bid, null);
 });
 
-test("normalizes price summary for binary markets", () => {
+test("normalizes own default price summary for binary markets", () => {
   const market = normalizeMarket(
     marketFixture({
       outcomePrices: JSON.stringify(["0.7", "0.3"]),
@@ -40,10 +40,10 @@ test("normalizes price summary for binary markets", () => {
   );
   const prices = normalizePriceSummary(market);
 
-  assert.equal(prices.yes, 0.7);
-  assert.equal(prices.no, 0.3);
-  assert.equal(prices.midpoint, 0.7);
-  assert.ok(prices.spread !== null && Math.abs(prices.spread - 0.04) < 0.000001);
+  assert.equal(prices.yes, 0.5);
+  assert.equal(prices.no, 0.5);
+  assert.equal(prices.midpoint, null);
+  assert.equal(prices.spread, null);
 });
 
 test("normalizes Polymarket card metadata for rewards and footers", () => {
@@ -59,15 +59,15 @@ test("normalizes Polymarket card metadata for rewards and footers", () => {
     }),
   );
 
-  assert.equal(market.volume_24h, 25000);
+  assert.equal(market.volume_24h, 0);
   assert.equal(market.comment_count, 62);
   assert.equal(market.game_start_time, "2026-05-17T18:00:00.000Z");
   assert.deepEqual(market.rewards, {
-    enabled: true,
-    daily_rate: 1000,
+    enabled: false,
+    daily_rate: 0,
     holding: false,
-    min_size: 200,
-    max_spread: 5.5,
+    min_size: null,
+    max_spread: null,
   });
 });
 
@@ -88,6 +88,19 @@ test("normalizes date summary without throwing on missing dates", () => {
   assert.equal(dates.status, "closed");
 });
 
+test("keeps Polymarket-active markets live even when their end date has passed", () => {
+  const market = normalizeMarket(
+    marketFixture({
+      active: true,
+      closed: false,
+      archived: false,
+      endDate: new Date(Date.now() - 60_000).toISOString(),
+    }),
+  );
+
+  assert.equal(normalizeDateSummary(market).status, "live");
+});
+
 test("detail includes related markets and synthetic price history by default", () => {
   const detail = normalizeMarketDetail(marketFixture());
 
@@ -96,7 +109,7 @@ test("detail includes related markets and synthetic price history by default", (
   assert.equal(detail.history.snapshots.length, 12);
   assert.equal(detail.history.price_history.length, 12);
   assert.equal(detail.history.price_history[0]?.outcomes?.length, detail.outcomes.length);
-  assert.equal(detail.volume_detail.volume, 125000);
+  assert.equal(detail.volume_detail.volume, 0);
 });
 
 test("normalizes grouped event context and child market labels", () => {
@@ -137,8 +150,8 @@ test("normalizes grouped event context and child market labels", () => {
   assert.deepEqual(
     detail.group_markets.map((market) => [market.id, market.label, market.yes_price]),
     [
-      ["roy-cooper", "Roy Cooper", 0.61],
-      ["oprah", "Oprah Winfrey", 0.08],
+      ["roy-cooper", "Roy Cooper", 0.5],
+      ["oprah", "Oprah Winfrey", 0.5],
     ],
   );
   assert.deepEqual(
@@ -179,8 +192,8 @@ test("compacts market list payloads without removing card-critical grouped data"
   assert.equal(compact.description, null);
   assert.equal(compact.group_markets?.length, 8);
   assert.equal(child?.description, null);
-  assert.equal(child?.label, "Child 9");
-  assert.equal(child?.yes_price, 0.55);
+  assert.equal(child?.label, "Child 0");
+  assert.equal(child?.yes_price, 0.5);
   assert.equal(child?.trading.accepting_orders, true);
   assert.deepEqual(child?.outcomes, []);
   assert.deepEqual(child?.clobTokenIds, []);

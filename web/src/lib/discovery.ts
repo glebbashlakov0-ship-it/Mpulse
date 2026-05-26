@@ -112,8 +112,8 @@ export function buildTopicTabsFromTags(tags: MarketTag[]): TopicTab[] {
 
 export const sortOptions = [
   { label: "Trending", value: "trending" },
-  { label: "Volume", value: "volume" },
-  { label: "Liquidity", value: "liquidity" },
+  { label: "Our volume", value: "volume" },
+  { label: "Pool", value: "liquidity" },
   { label: "Newest", value: "newest" },
   { label: "Closing soon", value: "closing_soon" },
   { label: "Relevance", value: "relevance" },

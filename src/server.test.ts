@@ -739,7 +739,7 @@ test("POST /api/markets/:id/snapshots/collect stores real history for detail", a
     assert.equal(detail.statusCode, 200);
     assert.equal(body.data.history.is_synthetic, false);
     assert.equal(body.data.history.snapshots.length, 1);
-    assert.equal(body.data.history.price_history[0]?.yes, 0.66);
+    assert.equal(body.data.history.price_history[0]?.yes, 0.5);
   } finally {
     await app.close();
     globalThis.fetch = originalFetch;
@@ -1700,16 +1700,24 @@ test("POST /api/trading/quote returns a backend quote without mutating portfolio
       url: "/api/trading/positions",
     });
     const quoteBody = JSON.parse(quoteResponse.body) as {
-      data: { price: number; shares: number; estimatedCost: number };
+      data: {
+        price: number;
+        shares: number;
+        estimatedCost: number;
+        platformFee: number;
+        stakeAmount: number;
+      };
     };
     const portfolioBody = JSON.parse(portfolioResponse.body) as {
       data: { wallet: { balance: number }; trades: unknown[] };
     };
 
     assert.equal(quoteResponse.statusCode, 200);
-    assert.equal(quoteBody.data.price, 0.61);
-    assert.equal(quoteBody.data.shares, 100);
+    assert.equal(quoteBody.data.price, 0.5);
+    assert.equal(quoteBody.data.shares, 119.56);
     assert.equal(quoteBody.data.estimatedCost, 61);
+    assert.equal(quoteBody.data.platformFee, 1.22);
+    assert.equal(quoteBody.data.stakeAmount, 59.78);
     assert.equal(portfolioBody.data.wallet.balance, 10000);
     assert.equal(portfolioBody.data.trades.length, 0);
   } finally {
@@ -1739,7 +1747,7 @@ test("POST /api/trading/orders buys shares and updates backend portfolio", async
     });
     const body = JSON.parse(response.body) as {
       data: {
-        trade: { action: string; shares: number };
+        trade: { action: string; shares: number; platformFee: number; stakeAmount: number };
         portfolio: {
           wallet: { balance: number };
           positions: Array<{ yesShares: number; totalCost: number }>;
@@ -1750,9 +1758,11 @@ test("POST /api/trading/orders buys shares and updates backend portfolio", async
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.trade.action, "buy");
-    assert.equal(body.data.trade.shares, 100);
+    assert.equal(body.data.trade.shares, 119.56);
+    assert.equal(body.data.trade.platformFee, 1.22);
+    assert.equal(body.data.trade.stakeAmount, 59.78);
     assert.equal(body.data.portfolio.wallet.balance, 9939);
-    assert.equal(body.data.portfolio.positions[0]?.yesShares, 100);
+    assert.equal(body.data.portfolio.positions[0]?.yesShares, 119.56);
     assert.equal(body.data.portfolio.positions[0]?.totalCost, 61);
     assert.equal(body.data.portfolio.trades.length, 1);
   } finally {
@@ -1831,11 +1841,11 @@ test("POST /api/trading/orders sells shares and reduces the position", async () 
 
     assert.equal(response.statusCode, 200);
     assert.equal(body.data.trade.action, "sell");
-    assert.equal(body.data.trade.amount, 24.4);
-    assert.equal(body.data.trade.realizedPnl, 0);
-    assert.equal(body.data.portfolio.wallet.balance, 9963.4);
-    assert.equal(body.data.portfolio.positions[0]?.yesShares, 60);
-    assert.equal(body.data.portfolio.positions[0]?.totalCost, 36.6);
+    assert.equal(body.data.trade.amount, 20);
+    assert.ok(Math.abs(body.data.trade.realizedPnl + 0.408163265306122) < 0.000001);
+    assert.equal(body.data.portfolio.wallet.balance, 9959);
+    assert.equal(body.data.portfolio.positions[0]?.yesShares, 79.56);
+    assert.ok(Math.abs((body.data.portfolio.positions[0]?.totalCost ?? 0) - 40.59183673469388) < 0.000001);
   } finally {
     await app.close();
     restoreFetch();

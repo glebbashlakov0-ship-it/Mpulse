@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   Clock3,
   Code2,
-  Gift,
   Info,
   Link2,
   MessageCircle,
@@ -49,6 +48,7 @@ import type {
 import { usePortfolio } from "../hooks/usePortfolio";
 import { MarketChart } from "./MarketChart";
 import { MarketImage, OutcomeAvatar } from "./MarketMedia";
+import { MarketActivitySkeleton } from "./MarketSkeleton";
 
 type GroupMarket = NonNullable<Market["group_markets"]>[number];
 type DetailTab = "rules" | "context";
@@ -71,12 +71,15 @@ type LocalComment = {
   positionLabel?: string;
 };
 
-const panel = "rounded-3xl border border-[#242b32] bg-[#1e2428]";
+const detailPageShell = "mx-auto w-full max-w-[1350px] overflow-x-clip px-4 py-4 text-[#0e0f11] lg:px-6";
+const detailGrid = "grid min-w-0 gap-12 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start";
+const panel = "rounded-xl border border-[#e6e8ea] bg-white";
 const iconButton =
-  "grid h-10 w-10 place-items-center rounded-2xl border border-[#242b32] text-[#7b8996] transition hover:border-[#0093fd]/50 hover:text-[#dee3e7]";
-const tabButton = "rounded-2xl px-4 py-2 text-sm font-semibold transition";
-const activeTextTabClass = "text-[#dee3e7]";
-const inactiveTextTabClass = "text-[#7b8996] transition hover:text-[#dee3e7]";
+  "grid h-9 w-9 place-items-center rounded-full text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]";
+const tabButton = "rounded-md px-3 py-1.5 text-sm font-semibold transition";
+const activeTextTabClass = "text-[#0e0f11]";
+const inactiveTextTabClass = "text-[#77808d] transition hover:text-[#4b5563]";
+const platformFeeRate = 0.02;
 const emptyMarketActivity: MarketActivityPayload = {
   comments: [],
   topHolders: [],
@@ -155,15 +158,29 @@ export function MarketDetail({
   const amountValue = Number(amount);
   const hasValidAmount = Number.isFinite(amountValue) && amountValue > 0;
   const usesShareInput = action === "sell" || orderType === "limit";
+  const estimatedStake =
+    action === "buy" && selectedPrice && hasValidAmount
+      ? usesShareInput
+        ? amountValue * selectedPrice
+        : amountValue * (1 - platformFeeRate)
+      : 0;
+  const estimatedFee =
+    action === "buy" && selectedPrice && hasValidAmount
+      ? usesShareInput
+        ? estimatedStake / (1 - platformFeeRate) - estimatedStake
+        : amountValue * platformFeeRate
+      : 0;
   const estimatedShares =
     selectedPrice && hasValidAmount
-      ? usesShareInput
-        ? amountValue
-        : amountValue / selectedPrice
+      ? action === "buy"
+        ? usesShareInput
+          ? amountValue
+          : estimatedStake / selectedPrice
+        : amountValue
       : 0;
   const estimatedCost = action === "buy" && selectedPrice
     ? usesShareInput
-      ? estimatedShares * selectedPrice
+      ? estimatedStake + estimatedFee
       : amountValue
     : 0;
   const estimatedProceeds = action === "sell" && selectedPrice ? estimatedShares * selectedPrice : 0;
@@ -479,65 +496,66 @@ export function MarketDetail({
   }
 
   function renderTradeTicket() {
-    const sideLabel = getTradeSideLabel(side);
     const ticketPrimaryLabel = isGroupedEvent
       ? selectedVariantLabel
       : formatRussianDate(market.dates?.ends_at ?? market.ends_at) ?? selectedOutcomeLabel;
-    const tradeButtonLabel = orderType === "limit"
-      ? `Place ${action === "sell" ? "sell" : "buy"} order`
-      : `${action === "sell" ? "Sell" : "Buy"} ${sideLabel}`;
+    const tradeButtonLabel = !canTrade
+      ? "Пройти верификацию"
+      : isPlacingTrade
+        ? "Размещаем..."
+        : "Сделка";
 
     return (
       <>
-        <div className="flex h-full w-full flex-col gap-5 overflow-visible rounded-xl border border-[#242b32] bg-[#1e2428] px-4 py-4 shadow-md">
+        <div className="flex h-full w-full flex-col gap-5 overflow-visible rounded-xl border border-[#e6e8ea] bg-white px-4 py-4 shadow-[0_8px_16px_rgba(0,0,0,0.04)]">
           <div className="flex w-full flex-col gap-5">
             <div className="flex w-full items-center gap-3">
               <MarketImage market={tradeMarket} className="h-12 w-12 min-w-12 rounded-[7px]" />
               <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm font-medium text-[#7b8996]">{market.title}</span>
-                <span className="flex min-w-0 items-center text-base font-semibold text-[#dee3e7]">
+                <span className="truncate text-sm font-medium text-[#77808d]">{market.title}</span>
+                <span className="flex min-w-0 items-center text-base font-semibold text-[#0e0f11]">
                   <span className="min-w-0 truncate">{ticketPrimaryLabel}</span>
-                  <span className="mx-1.5 shrink-0 text-[#7b8996]">·</span>
-                  <span className={side === "yes" ? "shrink-0 text-[#5fbe82]" : "shrink-0 text-[#d78282]"}>
-                    {sideLabel}
+                  <span className="mx-1.5 shrink-0 text-[#a6adb7]">·</span>
+                  <span className={side === "yes" ? "shrink-0 text-[#30a159]" : "shrink-0 text-[#e23939]"}>
+                    {side === "yes" ? "Да" : "Нет"}
                   </span>
                 </span>
               </div>
             </div>
 
-            <div className="-ml-4 flex w-[calc(100%+32px)] items-end justify-between border-b border-[#242b32] px-4 pb-2">
-              <div className="flex gap-3 text-[22px] font-semibold">
+            <div className="-ml-4 flex w-[calc(100%+32px)] items-end justify-between border-b border-[#e6e8ea] px-4 pb-0">
+              <div className="flex gap-4 text-base font-semibold">
                 <button
-                  className={`relative bg-transparent ${
-                    action === "buy" ? "text-[#dee3e7]" : "text-[#7b8996] hover:text-[#97a5b4]"
+                  className={`relative bg-transparent pb-3 ${
+                    action === "buy" ? "text-[#0e0f11]" : "text-[#77808d] hover:text-[#4b5563]"
                   }`}
                   onClick={() => changeAction("buy")}
                   type="button"
                 >
-                  Buy
+                  Купить
                   {action === "buy" ? (
-                    <span className="absolute -bottom-[9px] left-0 h-0.5 w-full bg-[#dee3e7]" />
+                    <span className="absolute bottom-0 left-0 h-0.5 w-full bg-[#0e0f11]" />
                   ) : null}
                 </button>
                 <button
-                  className={`relative bg-transparent ${
-                    action === "sell" ? "text-[#dee3e7]" : "text-[#7b8996] hover:text-[#97a5b4]"
+                  className={`relative bg-transparent pb-3 ${
+                    action === "sell" ? "text-[#0e0f11]" : "text-[#77808d] hover:text-[#4b5563]"
                   }`}
                   onClick={() => changeAction("sell")}
                   type="button"
                 >
-                  Sell
+                  Продать
                   {action === "sell" ? (
-                    <span className="absolute -bottom-[9px] left-0 h-0.5 w-full bg-[#dee3e7]" />
+                    <span className="absolute bottom-0 left-0 h-0.5 w-full bg-[#0e0f11]" />
                   ) : null}
                 </button>
               </div>
               <button
-                className="flex w-[90px] items-center justify-end gap-1 text-base font-medium capitalize text-[#dee3e7] transition hover:text-white"
+                className="flex w-[90px] items-center justify-end gap-1 pb-3 text-sm font-medium capitalize text-[#0e0f11] transition hover:text-[#4b5563]"
                 onClick={toggleOrderType}
                 type="button"
               >
-                {orderType === "market" ? "Market" : "Limit"}
+                {orderType === "market" ? "Рынок" : "Лимит"}
                 <ChevronDown
                   className={`ml-1 transition-transform ${orderType === "limit" ? "rotate-180" : ""}`}
                   size={18}
@@ -549,38 +567,38 @@ export function MarketDetail({
           <div className="flex w-full flex-col gap-5">
             <div className="grid w-full grid-cols-2 gap-3">
               <button
-                className={`h-12 min-w-0 rounded-2xl px-3 text-base font-semibold transition ${
+                className={`h-12 min-w-0 rounded-[7.2px] px-3 text-base font-semibold transition ${
                   side === "yes"
-                    ? "bg-[#3db468]/80 text-white shadow-[0_5px_0_rgba(0,0,0,0.28)]"
-                    : "bg-[#242b32] text-[#7b8996] hover:text-[#dee3e7]"
+                    ? "bg-[#30a159] text-white shadow-[0_4px_0_rgba(24,126,63,0.95)]"
+                    : "bg-[#f4f5f6] text-[#77808d] shadow-[0_4px_0_rgba(0,0,0,0.18)] hover:text-[#0e0f11]"
                 }`}
                 onClick={() => setSide("yes")}
                 type="button"
               >
-                <span className="block truncate">Yes {formatCents(yesDisplayPrice)}</span>
+                <span className="block truncate">Да {formatCents(yesDisplayPrice)}</span>
               </button>
               <button
-                className={`h-12 min-w-0 rounded-2xl px-3 text-base font-semibold transition ${
+                className={`h-12 min-w-0 rounded-[7.2px] px-3 text-base font-semibold transition ${
                   side === "no"
-                    ? "bg-[#cb3131]/75 text-white shadow-[0_5px_0_rgba(0,0,0,0.28)]"
-                    : "bg-[#242b32] text-[#7b8996] hover:text-[#dee3e7]"
+                    ? "bg-[#e23939] text-white shadow-[0_4px_0_rgba(168,30,30,0.95)]"
+                    : "bg-[#f4f5f6] text-[#77808d] shadow-[0_4px_0_rgba(0,0,0,0.18)] hover:text-[#0e0f11]"
                 }`}
                 onClick={() => setSide("no")}
                 type="button"
               >
-                <span className="block truncate">No {formatCents(noDisplayPrice)}</span>
+                <span className="block truncate">Нет {formatCents(noDisplayPrice)}</span>
               </button>
             </div>
 
             {orderType === "limit" ? (
               <>
                 <div className="flex w-full items-center">
-                  <span className="flex-1 text-base font-medium text-[#dee3e7]">
-                    Limit price
+                  <span className="flex-1 text-base font-medium text-[#0e0f11]">
+                    Лимитная цена
                   </span>
-                  <div className="flex h-10 items-center overflow-hidden rounded-md border border-[#242b32] bg-[#1e2428] text-center text-lg font-semibold text-[#dee3e7]">
+                  <div className="flex h-10 items-center overflow-hidden rounded-md border border-[#e6e8ea] bg-white text-center text-lg font-semibold text-[#0e0f11]">
                     <button
-                      className="grid h-full aspect-square place-items-center text-[#dee3e7] transition hover:bg-[#242b32]"
+                      className="grid h-full aspect-square place-items-center text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                       onClick={() => adjustLimitPrice(-1)}
                       type="button"
                     >
@@ -598,7 +616,7 @@ export function MarketDetail({
                       <span>¢</span>
                     </div>
                     <button
-                      className="grid h-full aspect-square place-items-center text-[#dee3e7] transition hover:bg-[#242b32]"
+                      className="grid h-full aspect-square place-items-center text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                       onClick={() => adjustLimitPrice(1)}
                       type="button"
                     >
@@ -607,13 +625,13 @@ export function MarketDetail({
                   </div>
                 </div>
 
-                <div className="-ml-4 h-px w-[calc(100%+32px)] bg-[#242b32]" />
+                <div className="-ml-4 h-px w-[calc(100%+32px)] bg-[#e6e8ea]" />
 
                 <div className="flex w-full flex-col gap-2">
                   <div className="flex w-full items-center">
-                    <span className="flex-1 text-base font-medium text-[#dee3e7]">Shares</span>
+                    <span className="flex-1 text-base font-medium text-[#0e0f11]">Акции</span>
                     <input
-                      className="h-10 min-w-[118px] rounded-md border border-[#242b32] bg-transparent px-3 text-right text-lg font-semibold text-[#dee3e7] outline-none"
+                      className="h-10 min-w-[118px] rounded-md border border-[#e6e8ea] bg-transparent px-3 text-right text-lg font-semibold text-[#0e0f11] outline-none"
                       inputMode="decimal"
                       onChange={(event) => setAmount(event.target.value)}
                       placeholder="0"
@@ -625,7 +643,7 @@ export function MarketDetail({
                     <div className="flex gap-1">
                       {(action === "sell" ? [0.25, 0.5, 0.75] : [-100, -10, 10, 20, 100]).map((value) => (
                         <button
-                          className="h-8 rounded-md bg-[#242b32] px-2.5 text-xs font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
+                          className="h-8 rounded-md border border-[#e6e8ea] bg-white px-2.5 text-xs font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                           key={value}
                           onClick={() => {
                             if (action === "sell") {
@@ -644,7 +662,7 @@ export function MarketDetail({
                         </button>
                       ))}
                       <button
-                        className="h-8 rounded-md bg-[#242b32] px-2.5 text-xs font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
+                        className="h-8 rounded-md border border-[#e6e8ea] bg-white px-2.5 text-xs font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                         onClick={setMaxAmount}
                         type="button"
                       >
@@ -655,24 +673,26 @@ export function MarketDetail({
                   <div className="h-6" />
                 </div>
 
-                <div className="-ml-4 h-px w-[calc(100%+32px)] bg-[#242b32]" />
+                <div className="-ml-4 h-px w-[calc(100%+32px)] bg-[#e6e8ea]" />
 
                 <div className="grid gap-3">
                   <div className="flex items-center justify-between gap-4">
-                    <span className="text-sm font-medium text-[#7b8996]">
-                      Expires
+                    <span className="text-sm font-medium text-[#77808d]">
+                      Истекает
                     </span>
                     <button
-                      className="flex items-center gap-1 text-sm font-medium text-[#7b8996]"
+                      className="flex items-center gap-1 text-sm font-medium text-[#77808d]"
                       type="button"
                     >
-                      Never
+                      Никогда
                       <ChevronDown size={14} />
                     </button>
                   </div>
                   {action === "buy" ? (
                     <>
                       <TradeInfoRow label="Total" value={formatUsd(estimatedCost)} tone="blue" />
+                      <TradeInfoRow label="Into market" value={formatUsd(estimatedStake)} />
+                      <TradeInfoRow label="Platform fee" value={formatUsd(estimatedFee)} />
                       <TradeInfoRow
                         label="To win"
                         value={formatUsd(Math.max(0, estimatedShares - estimatedCost))}
@@ -694,17 +714,12 @@ export function MarketDetail({
               <>
                 <div className="mt-4 flex min-h-[112px] items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <span className="block text-[22px] font-medium text-[#dee3e7]">
-                      {action === "buy" ? "Amount" : "Shares"}
+                    <span className="block text-[22px] font-medium text-[#0e0f11]">
+                      {action === "buy" ? "Сумма" : "Акции"}
                     </span>
-                    {action === "buy" ? (
-                      <span className="mt-1 block text-sm font-semibold text-[#7b8996]">
-                        {formatUsd(portfolio.wallet.balance)} cash
-                      </span>
-                    ) : null}
                   </div>
                   <input
-                    className="min-w-0 flex-1 bg-transparent text-right text-[64px] font-semibold leading-none text-[#607083] outline-none"
+                    className="min-w-0 flex-1 bg-transparent text-right text-[64px] font-semibold leading-none text-[#a6adb7] outline-none"
                     inputMode="decimal"
                     onChange={(event) => setAmount(event.target.value.replace(/^\$/, ""))}
                     placeholder={usesShareInput ? "0" : "$0"}
@@ -716,7 +731,7 @@ export function MarketDetail({
                   {action === "sell" ? (
                     [0.25, 0.5, 0.75].map((value) => (
                       <button
-                        className="h-8 rounded-md bg-[#242b32] px-3 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
+                        className="h-8 rounded-md border border-[#e6e8ea] bg-white px-3 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                         key={value}
                         onClick={() => setSellSharePercent(value)}
                         type="button"
@@ -727,7 +742,7 @@ export function MarketDetail({
                   ) : (
                     [1, 5, 10, 100].map((value) => (
                       <button
-                        className="h-8 rounded-md bg-[#242b32] px-3 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
+                        className="h-8 rounded-md border border-[#e6e8ea] bg-white px-3 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                         key={value}
                         onClick={() => addQuickAmount(value)}
                         type="button"
@@ -737,7 +752,7 @@ export function MarketDetail({
                     ))
                   )}
                   <button
-                    className="h-8 rounded-md bg-[#242b32] px-3 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
+                    className="h-8 rounded-md border border-[#e6e8ea] bg-white px-3 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
                     onClick={setMaxAmount}
                     type="button"
                   >
@@ -748,7 +763,7 @@ export function MarketDetail({
             )}
 
             <button
-              className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#0093fd] px-5 text-base font-semibold text-white shadow-[0_5px_0_rgba(0,0,0,0.28)] transition hover:bg-[#26a3fd] disabled:opacity-50"
+              className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-[7.2px] bg-[#1f55f5] px-5 text-base font-semibold text-white shadow-[0_4px_0_#0d3dc9] transition hover:bg-[#1648df] disabled:opacity-50"
               disabled={canTrade && !canPlaceTrade}
               onClick={() => {
                 if (canTrade) {
@@ -769,7 +784,7 @@ export function MarketDetail({
                     ? "bg-[#3db468]/10 text-[#a6d2b6]"
                     : tradeMessage.tone === "error"
                       ? "bg-[#cb3131]/10 text-[#daa]"
-                      : "bg-[#15191d] text-[#dee3e7]"
+                      : "bg-[#f4f5f6] text-[#0e0f11]"
                 }`}
               >
                 {tradeMessage.tone === "success" ? (
@@ -783,10 +798,10 @@ export function MarketDetail({
           </div>
         </div>
 
-        <p className="mt-5 px-3 text-center text-sm font-medium leading-5 text-[#7b8996]">
-          By trading, you agree to the{" "}
-          <a className="underline hover:text-[#dee3e7]" href="#terms">
-            Terms of Use
+        <p className="mt-5 px-3 text-center text-sm font-medium leading-5 text-[#77808d]">
+          Совершая торговые операции, ты соглашаешься с{" "}
+          <a className="underline hover:text-[#0e0f11]" href="#terms">
+            Условиями использования
           </a>
           .
         </p>
@@ -798,11 +813,11 @@ export function MarketDetail({
     const marketEndDate = selectedGroupMarket?.ends_at ?? market.ends_at;
 
     return (
-      <section className="mx-auto w-full max-w-[1500px] overflow-x-clip px-4 py-4 md:px-6 xl:px-8">
-        <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
+      <section className={detailPageShell}>
+        <div className={detailGrid}>
           <article className="min-w-0 overflow-hidden">
             {detailStatus === "error" ? (
-              <div className="mb-5 flex items-start gap-3 rounded-lg border border-[#cb3131]/30 bg-[#cb3131]/10 p-4 text-sm font-semibold text-[#daa]">
+              <div className="mb-5 flex items-start gap-3 rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-sm font-semibold text-[#991b1b]">
                 <AlertCircle className="mt-0.5 shrink-0" size={18} />
                 <span>
                   The market detail request failed. Showing the latest available market preview.
@@ -810,11 +825,11 @@ export function MarketDetail({
               </div>
             ) : null}
 
-            <div className="mb-2 flex items-center justify-between gap-4 bg-[#15191d] py-1">
+            <div className="mb-3 flex items-center justify-between gap-4 bg-white py-1">
               <div className="flex min-w-0 flex-1 items-center gap-4">
                 <MarketImage market={market} className="h-16 w-16 min-w-16 rounded-sm" />
                 <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex max-h-6 flex-wrap items-center gap-1.5 overflow-hidden text-sm font-semibold text-[#7b8996]">
+                  <div className="mb-1 flex max-h-6 flex-wrap items-center gap-1.5 overflow-hidden text-sm font-medium text-[#77808d]">
                     {eyebrowParts.map((part, index) => (
                       <React.Fragment key={`${part}-${index}`}>
                         {index > 0 ? <span>·</span> : null}
@@ -822,7 +837,7 @@ export function MarketDetail({
                       </React.Fragment>
                     ))}
                   </div>
-                  <h1 className="break-words text-[28px] font-semibold leading-tight tracking-normal text-[#dee3e7]">
+                  <h1 className="break-words text-[24px] font-semibold leading-7 tracking-normal text-[#0e0f11]">
                     {market.title}
                   </h1>
                 </div>
@@ -830,7 +845,7 @@ export function MarketDetail({
 
               <div className="hidden shrink-0 items-center gap-1 sm:flex">
                 <button
-                  className="grid h-9 w-9 place-items-center rounded-full text-[#afbac5] transition hover:bg-[#181d21] hover:text-white"
+                  className={iconButton}
                   aria-label="Embed market"
                   onClick={() => void copyEmbedCode()}
                   type="button"
@@ -838,7 +853,7 @@ export function MarketDetail({
                   <Code2 size={18} />
                 </button>
                 <button
-                  className="grid h-9 w-9 place-items-center rounded-full text-[#afbac5] transition hover:bg-[#181d21] hover:text-white"
+                  className={iconButton}
                   aria-label="Copy market link"
                   onClick={() => void copyMarketLink()}
                   type="button"
@@ -846,8 +861,8 @@ export function MarketDetail({
                   <Link2 size={18} />
                 </button>
                 <button
-                  className={`grid h-9 w-9 place-items-center rounded-full transition hover:bg-[#181d21] hover:text-white ${
-                    isSaved ? "text-[#0093fd]" : "text-[#afbac5]"
+                  className={`${iconButton} ${
+                    isSaved ? "text-[#1f55f5]" : ""
                   }`}
                   aria-label={isSaved ? "Unsave market" : "Save market"}
                   onClick={toggleSavedMarket}
@@ -858,24 +873,24 @@ export function MarketDetail({
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-4 pb-2 pt-2 text-[13px] font-medium tracking-[-0.09px] text-[#7b8996]">
+            <div className="flex items-center justify-between gap-4 border-b border-[#e6e8ea] pb-4 pt-2 text-[14px] font-medium tracking-[-0.09px] text-[#77808d]">
               <div className="flex min-w-0 items-center gap-2.5">
-                <span className="whitespace-nowrap text-[#d2d8df]">{formatMoney(market.volume_detail?.volume ?? market.volume)} Vol.</span>
-                <span className="h-2.5 w-[1.5px] shrink-0 rounded-full bg-[#242b32]" />
+                <span className="whitespace-nowrap text-[#0e0f11]">{formatMoney(market.volume_detail?.volume ?? market.volume)} Объем</span>
+                <span className="h-1 w-1 shrink-0 rounded-full bg-[#a6adb7]" />
                 <Clock3 className="shrink-0" size={12} />
                 <span className="whitespace-nowrap">{formatDate(marketEndDate)}</span>
               </div>
-              <span className="hidden text-lg font-semibold tracking-normal text-[#242b32] sm:block">Polymarket</span>
+              <span className="hidden text-lg font-semibold tracking-normal text-[#c2c8d0] sm:block">Polymarket</span>
             </div>
 
-            <div className="clear-both divide-y divide-[#242b32] border-y border-[#242b32]">
+            <div className="clear-both divide-y divide-[#e6e8ea]">
               {visibleGroupMarkets.map((groupMarket) => {
                 const isSelected = groupMarket.id === tradeMarket.id;
                 const change = getGroupMarketPriceChange(market, groupMarket);
 
                 return (
                   <div
-                    className="relative grid min-w-0 gap-3 py-3 md:min-h-18 md:grid-cols-[minmax(0,1fr)_112px_280px] md:items-center"
+                    className="group relative grid min-w-0 gap-3 py-3 transition hover:bg-[#f7f8fa] md:min-h-[72px] md:grid-cols-[minmax(0,1fr)_132px_280px] md:items-center"
                     key={groupMarket.id}
                   >
                     <button
@@ -887,24 +902,23 @@ export function MarketDetail({
                         <MarketImage market={groupMarket} className="size-12 rounded-full" />
                       ) : null}
                       <span className="min-w-0">
-                        <span className="block max-w-full truncate text-xl font-semibold leading-tight text-[#dce2ea]">
+                        <span className="block max-w-full truncate text-[16px] font-semibold leading-5 text-[#18181b]">
                           {groupMarket.label}
                         </span>
-                        <span className="mt-1.5 flex items-center gap-2 text-sm font-medium leading-none text-[#7b8996]">
-                          {formatMoney(groupMarket.volume)} Vol.
-                          {groupMarket.trading.accepting_orders ? <Gift size={16} /> : null}
+                        <span className="mt-1.5 flex items-center gap-2 text-[14px] font-medium leading-none text-[#77808d]">
+                          {formatMoney(groupMarket.volume)} Объем
                         </span>
                       </span>
                     </button>
 
                     <div className="flex items-baseline gap-2 md:justify-center">
-                      <strong className="text-[28px] font-semibold leading-none text-[#dee3e7]">
+                      <strong className="text-[28px] font-semibold leading-none text-[#0e0f11]">
                         {formatPercent(groupMarket.yes_price)}
                       </strong>
                       {change !== null && change !== 0 ? (
                         <span
                           className={`text-xs font-semibold ${
-                            change > 0 ? "text-[#5fbe82]" : "text-[#d05959]"
+                            change > 0 ? "text-[#30a159]" : "text-[#e23939]"
                           }`}
                         >
                           {change > 0 ? "▲" : "▼"} {formatPercent(Math.abs(change))}
@@ -914,10 +928,10 @@ export function MarketDetail({
 
                     <div className="grid min-w-0 grid-cols-2 gap-2 md:flex md:justify-end">
                       <button
-                        className={`h-12 min-w-0 rounded-sm px-4 text-base font-semibold transition md:w-[136px] ${
+                        className={`h-12 min-w-0 rounded-[7.2px] px-4 text-sm font-semibold transition md:w-[136px] ${
                           isSelected && side === "yes"
-                            ? "bg-[#3db468]/85 text-white"
-                            : "bg-[#3db468]/18 text-[#a6d2b6] hover:bg-[#3db468]/28"
+                            ? "bg-[#30a159] text-white shadow-[0_4px_0_rgba(24,126,63,0.95)]"
+                            : "bg-[#30a159]/12 text-[#30a159] hover:bg-[#30a159] hover:text-white"
                         } disabled:cursor-not-allowed disabled:opacity-40`}
                         disabled={groupMarket.yes_price === null}
                         onClick={() => {
@@ -926,15 +940,15 @@ export function MarketDetail({
                         }}
                       >
                         <span className="block truncate">
-                          {getTradeActionLabel(action)} Yes{" "}
+                          {getTradeActionLabel(action)} Да{" "}
                           {formatCents(getActionDisplayPrice(groupMarket.yes_price, action))}
                         </span>
                       </button>
                       <button
-                        className={`h-12 min-w-0 rounded-sm px-4 text-base font-semibold transition md:w-[136px] ${
+                        className={`h-12 min-w-0 rounded-[7.2px] px-4 text-sm font-semibold transition md:w-[136px] ${
                           isSelected && side === "no"
-                            ? "bg-[#cb3131]/80 text-white"
-                            : "bg-[#cb3131]/16 text-[#d78282] hover:bg-[#cb3131]/25"
+                            ? "bg-[#e23939] text-white shadow-[0_4px_0_rgba(168,30,30,0.95)]"
+                            : "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939] hover:text-white"
                         } disabled:cursor-not-allowed disabled:opacity-40`}
                         disabled={groupMarket.no_price === null}
                         onClick={() => {
@@ -943,7 +957,7 @@ export function MarketDetail({
                         }}
                       >
                         <span className="block truncate">
-                          {getTradeActionLabel(action)} No{" "}
+                          {getTradeActionLabel(action)} Нет{" "}
                           {formatCents(getActionDisplayPrice(groupMarket.no_price, action))}
                         </span>
                       </button>
@@ -955,7 +969,7 @@ export function MarketDetail({
 
             {resolvedGroupMarkets.length > 0 ? (
               <button
-                className="mb-5 mt-2 flex h-8 items-center gap-2 p-0 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
+                className="mb-5 mt-2 flex h-8 items-center gap-2 p-0 text-sm font-semibold text-[#77808d] transition hover:text-[#0e0f11]"
                 onClick={() => setShowResolvedGroups((current) => !current)}
               >
                 {showResolvedGroups ? "Hide resolved" : "View resolved"}
@@ -997,19 +1011,19 @@ export function MarketDetail({
   }
 
   return (
-    <section className="mx-auto w-full max-w-[1500px] overflow-x-clip px-4 py-6 md:px-6 md:py-8 xl:px-8">
+    <section className={detailPageShell}>
       <button
-        className="flex w-fit items-center gap-2 rounded-2xl border border-[#242b32] px-4 py-2 text-sm font-semibold text-[#7b8996] transition hover:border-[#0093fd]/50 hover:text-[#dee3e7]"
+        className="mb-5 flex w-fit items-center gap-2 rounded-md border border-[#e6e8ea] px-3 py-2 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
         onClick={onBack}
       >
         <ArrowLeft size={18} />
         All markets
       </button>
 
-      <div className="mt-6 grid min-w-0 gap-7 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className={detailGrid}>
         <article className="min-w-0 overflow-hidden">
           {detailStatus === "error" ? (
-            <div className="mb-5 flex items-start gap-3 rounded-2xl border border-[#cb3131]/30 bg-[#cb3131]/10 p-4 text-sm font-semibold text-[#daa]">
+            <div className="mb-5 flex items-start gap-3 rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-sm font-semibold text-[#991b1b]">
               <AlertCircle className="mt-0.5 shrink-0" size={18} />
               <span>
                 The market detail request failed. Showing the latest available market preview.
@@ -1021,7 +1035,7 @@ export function MarketDetail({
             <div className="flex min-w-0 gap-3 sm:gap-4">
               <MarketImage market={market} className="h-14 w-14 sm:h-16 sm:w-16" />
               <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#7b8996]">
+                <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium text-[#77808d]">
                   {eyebrowParts.map((part, index) => (
                     <React.Fragment key={`${part}-${index}`}>
                       {index > 0 ? <span>·</span> : null}
@@ -1031,7 +1045,7 @@ export function MarketDetail({
                   <span>·</span>
                   <span>{detailStatus === "ready" ? "Live detail" : "Market preview"}</span>
                 </div>
-                <h1 className="max-w-4xl break-words text-2xl font-semibold leading-tight tracking-normal text-[#dee3e7] sm:text-3xl md:text-4xl">
+                <h1 className="max-w-4xl break-words text-[24px] font-semibold leading-7 tracking-normal text-[#0e0f11]">
                   {market.title}
                 </h1>
               </div>
@@ -1064,9 +1078,9 @@ export function MarketDetail({
             </div>
           </div>
 
-          <div className="mt-7 grid gap-4 rounded-2xl border border-[#242b32] bg-[#1e2428] p-4 sm:grid-cols-2 lg:grid-cols-4">
-            <DetailStat label="Volume" value={formatMoney(market.volume_detail?.volume ?? market.volume)} />
-            <DetailStat label="Liquidity" value={formatMoney(market.volume_detail?.liquidity ?? market.liquidity)} />
+          <div className="mt-6 grid gap-4 border-y border-[#e6e8ea] py-4 sm:grid-cols-2 lg:grid-cols-4">
+            <DetailStat label="Объем" value={formatMoney(market.volume_detail?.volume ?? market.volume)} />
+            <DetailStat label="Pool" value={formatMoney(market.volume_detail?.liquidity ?? market.liquidity)} />
             <DetailStat label="Starts" value={formatDate(market.dates?.starts_at ?? market.starts_at)} />
             <DetailStat label="Closes" value={formatDate(market.dates?.ends_at ?? market.ends_at)} />
           </div>
@@ -1076,23 +1090,23 @@ export function MarketDetail({
               <button
                 className={`${tabButton} ${
                   index === 0
-                    ? "bg-[#dee3e7] text-[#15191d]"
-                    : "bg-[#1e2428] text-[#7b8996] hover:text-[#dee3e7]"
+                    ? "bg-[#0e0f11] text-white"
+                    : "bg-[#f4f5f6] text-[#77808d] hover:text-[#0e0f11]"
                 }`}
                 key={date}
               >
                 {date}
               </button>
             )) : (
-              <span className={`${tabButton} bg-[#1e2428] text-[#7b8996]`}>Dates TBD</span>
+              <span className={`${tabButton} bg-[#f4f5f6] text-[#77808d]`}>Dates TBD</span>
             )}
-            <span className={`${tabButton} bg-[#1e2428] text-[#7b8996]`}>
+            <span className={`${tabButton} bg-[#f4f5f6] text-[#77808d]`}>
               {priceHistory.length} price points
               <ChevronRight className="ml-1 inline" size={15} />
             </span>
           </div>
 
-          <div className="mt-6 flex flex-wrap gap-4 text-sm font-semibold text-[#7b8996]">
+          <div className="mt-6 flex flex-wrap gap-4 text-sm font-semibold text-[#77808d]">
             {displayOutcomes.slice(0, 4).map((outcome, index) => (
               <span className="flex min-w-0 max-w-full items-center gap-2" key={`${outcome.name}-${index}`}>
                 <span
@@ -1114,26 +1128,25 @@ export function MarketDetail({
 
           <MarketChart outcomes={displayOutcomes} history={market.history} />
 
-          <div className="mt-5 flex flex-col gap-4 border-b border-[#242b32] pb-5 text-sm font-semibold text-[#7b8996] md:flex-row md:items-center md:justify-between">
+          <div className="mt-5 flex flex-col gap-4 border-b border-[#e6e8ea] pb-5 text-sm font-semibold text-[#77808d] md:flex-row md:items-center md:justify-between">
             <div className="flex flex-wrap items-center gap-3">
-              <Gift size={17} />
-              <span>{formatMoney(market.volume)} Vol.</span>
-              <span className="h-1 w-1 rounded-full bg-[#7b8996]/50" />
-              <span>{formatMoney(market.liquidity)} Liq.</span>
-              <span className="h-1 w-1 rounded-full bg-[#7b8996]/50" />
+              <span>{formatMoney(market.volume)} Объем</span>
+              <span className="h-1 w-1 rounded-full bg-[#a6adb7]" />
+              <span>{formatMoney(market.liquidity)} Pool</span>
+              <span className="h-1 w-1 rounded-full bg-[#a6adb7]" />
               <Clock3 size={17} />
               <span>{formatDate(market.ends_at)}</span>
             </div>
           </div>
 
-          <div className="mt-4 grid gap-0 divide-y divide-[#242b32]">
+          <div className="mt-4 grid gap-0 divide-y divide-[#e6e8ea]">
             {isGroupedEvent ? groupMarkets.map((groupMarket, index) => {
               const isSelected = groupMarket.id === tradeMarket.id;
 
               return (
                 <div
-                  className={`grid min-w-0 gap-3 py-4 md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center ${
-                    isSelected ? "bg-[#2e3841]/45 px-3" : ""
+                  className={`grid min-w-0 gap-3 py-4 transition hover:bg-[#f7f8fa] md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center ${
+                    isSelected ? "bg-[#f4f5f6] px-3" : ""
                   }`}
                   key={groupMarket.id}
                 >
@@ -1142,25 +1155,25 @@ export function MarketDetail({
                       <MarketImage market={groupMarket} className="h-12 w-12 rounded-full" />
                     ) : null}
                     <div className="min-w-0">
-                      <strong className="block truncate text-base font-semibold text-[#dee3e7]">
+                      <strong className="block truncate text-base font-semibold text-[#0e0f11]">
                         {groupMarket.label}
                       </strong>
-                      <span className="text-sm font-semibold text-[#7b8996]">
-                        {formatMoney(groupMarket.volume)} Vol.
+                      <span className="text-sm font-semibold text-[#77808d]">
+                        {formatMoney(groupMarket.volume)} Объем
                       </span>
                     </div>
                   </div>
                   <div>
-                    <strong className="block text-3xl font-semibold text-[#dee3e7]">
+                    <strong className="block text-3xl font-semibold text-[#0e0f11]">
                       {formatPercent(groupMarket.yes_price)}
                     </strong>
-                    <span className="text-sm font-semibold text-[#7b8996]">
+                    <span className="text-sm font-semibold text-[#77808d]">
                       Yes price
                     </span>
                   </div>
                   <div className="grid min-w-0 grid-cols-2 gap-2">
                     <button
-                      className="min-w-0 rounded-2xl bg-[#3db468]/20 px-3 py-3 text-sm font-semibold text-[#a6d2b6] transition hover:bg-[#3db468]/30 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="min-w-0 rounded-[7.2px] bg-[#30a159]/12 px-3 py-3 text-sm font-semibold text-[#30a159] transition hover:bg-[#30a159] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={groupMarket.yes_price === null}
                       onClick={() => {
                         setSelectedMarketId(groupMarket.id);
@@ -1168,12 +1181,12 @@ export function MarketDetail({
                       }}
                     >
                       <span className="block truncate">
-                        {getTradeActionLabel(action)} Yes{" "}
+                        {getTradeActionLabel(action)} Да{" "}
                         {formatCents(getActionDisplayPrice(groupMarket.yes_price, action))}
                       </span>
                     </button>
                     <button
-                      className="min-w-0 rounded-2xl bg-[#cb3131]/20 px-3 py-3 text-sm font-semibold text-[#d78282] transition hover:bg-[#cb3131]/30 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="min-w-0 rounded-[7.2px] bg-[#e23939]/10 px-3 py-3 text-sm font-semibold text-[#e23939] transition hover:bg-[#e23939] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
                       disabled={groupMarket.no_price === null}
                       onClick={() => {
                         setSelectedMarketId(groupMarket.id);
@@ -1181,7 +1194,7 @@ export function MarketDetail({
                       }}
                     >
                       <span className="block truncate">
-                        {getTradeActionLabel(action)} No{" "}
+                        {getTradeActionLabel(action)} Нет{" "}
                         {formatCents(getActionDisplayPrice(groupMarket.no_price, action))}
                       </span>
                     </button>
@@ -1210,27 +1223,27 @@ export function MarketDetail({
                   <div className="flex min-w-0 items-center gap-3">
                     <OutcomeAvatar market={market} outcome={outcome} index={index} />
                     <div className="min-w-0">
-                      <strong className="block truncate text-base font-semibold text-[#dee3e7]">
+                      <strong className="block truncate text-base font-semibold text-[#0e0f11]">
                         {outcome.name}
                       </strong>
-                      <span className="text-sm font-semibold text-[#7b8996]">
-                        {formatMoney(Math.max(market.volume / (index + 1.8), 25000))} Vol.
+                      <span className="text-sm font-semibold text-[#77808d]">
+                        {formatMoney(Math.max(market.volume / (index + 1.8), 0))} Объем
                       </span>
                     </div>
                   </div>
                   <div>
-                    <strong className="block text-3xl font-semibold text-[#dee3e7]">
+                    <strong className="block text-3xl font-semibold text-[#0e0f11]">
                       {formatPercent(price)}
                     </strong>
-                    <span className="text-sm font-semibold text-[#7b8996]">
+                    <span className="text-sm font-semibold text-[#77808d]">
                       Current market price
                     </span>
                   </div>
                   <button
                     className={`min-w-0 rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                       tradeSide === "no"
-                        ? "bg-[#cb3131]/20 text-[#d78282] hover:bg-[#cb3131]/30"
-                        : "bg-[#3db468]/20 text-[#a6d2b6] hover:bg-[#3db468]/30"
+                        ? "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939] hover:text-white"
+                        : "bg-[#30a159]/12 text-[#30a159] hover:bg-[#30a159] hover:text-white"
                     }`}
                     disabled={!isTradableOutcome || price === null}
                     onClick={() => {
@@ -1573,7 +1586,7 @@ function MarketInfoTabs({
 
   return (
     <section className={wrapperClass}>
-      <div className="flex gap-5 text-lg font-semibold">
+      <div className="flex gap-5 text-base font-semibold">
         <button
           className={activeTab === "rules" ? activeTextTabClass : inactiveTextTabClass}
           onClick={() => onTabChange("rules")}
@@ -1591,7 +1604,7 @@ function MarketInfoTabs({
       </div>
 
       {activeTab === "rules" ? (
-        <div className="mt-5 space-y-5 text-base leading-7 text-[#d2d8df]">
+        <div className="mt-5 space-y-5 text-[15px] leading-6 text-[#0e0f11]">
           {paragraphs.map((paragraph, index) => (
             <p className="break-words" key={`${paragraph.slice(0, 24)}-${index}`}>
               {paragraph}
@@ -1601,25 +1614,25 @@ function MarketInfoTabs({
       ) : (
         <div className="mt-5 grid gap-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <DetailStat label="Volume" value={formatMoney(market.volume_detail?.volume ?? market.volume)} />
-            <DetailStat label="Liquidity" value={formatMoney(market.volume_detail?.liquidity ?? market.liquidity)} />
+            <DetailStat label="Объем" value={formatMoney(market.volume_detail?.volume ?? market.volume)} />
+            <DetailStat label="Pool" value={formatMoney(market.volume_detail?.liquidity ?? market.liquidity)} />
             <DetailStat label="Opened" value={formatDate(market.dates?.starts_at ?? market.starts_at)} />
             <DetailStat label="Closes" value={formatDate(market.dates?.ends_at ?? market.ends_at)} />
           </div>
-          <div className="overflow-hidden rounded-xl border border-[#242b32] bg-[#181d21]">
-            <div className="flex items-center justify-between gap-4 border-b border-[#242b32] px-4 py-4">
-              <div className="flex items-center gap-1.5 text-sm font-medium text-[#dee3e7]">
-                <AlertCircle className="text-[#0093fd]" size={16} />
+          <div className="overflow-hidden rounded-xl border border-[#e6e8ea] bg-white">
+            <div className="flex items-center justify-between gap-4 border-b border-[#e6e8ea] px-4 py-4">
+              <div className="flex items-center gap-1.5 text-sm font-medium text-[#0e0f11]">
+                <AlertCircle className="text-[#1f55f5]" size={16} />
                 Additional context
               </div>
-              <span className="text-xs font-medium text-[#7b8996]">
+              <span className="text-xs font-medium text-[#77808d]">
                 Updated {formatShortDate(market.starts_at ?? market.ends_at)}
               </span>
             </div>
-            <p className="px-4 py-3 text-[13px] leading-6 text-[#7b8996]">
-              Pulse Market mirrors public Polymarket data for prices, outcomes, volume, and
-              resolution rules. The chart is wired for live history and falls back cleanly when
-              history is not available yet.
+            <p className="px-4 py-3 text-[13px] leading-6 text-[#77808d]">
+              Pulse Market imports the public event and resolution context, then uses our own
+              trading activity for odds, volume, and chart history. New markets start balanced
+              until our order flow moves them.
             </p>
           </div>
         </div>
@@ -1640,10 +1653,10 @@ function MarketFaqSection({
 
   return (
     <section className="mt-9 md:mt-10">
-      <h2 className="mb-3 text-[20px] font-semibold leading-tight text-[#dee3e7] sm:text-[22px]">
+      <h2 className="mb-3 text-[20px] font-semibold leading-tight text-[#0e0f11] sm:text-[22px]">
         Frequently Asked Questions
       </h2>
-      <div className="divide-y divide-[#242b32] border-b border-[#242b32]">
+      <div className="divide-y divide-[#e6e8ea] border-b border-[#e6e8ea]">
         {items.map((item) => {
           const isOpen = item.id === openItemId;
           const answerId = `market-faq-answer-${item.id}`;
@@ -1653,14 +1666,14 @@ function MarketFaqSection({
               <button
                 aria-controls={answerId}
                 aria-expanded={isOpen}
-                className="flex w-full items-center justify-between gap-5 py-5 text-left text-[16px] font-semibold leading-snug text-[#d2d8df] transition hover:text-[#dee3e7] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#0093fd]/60 sm:text-[17px] lg:py-6"
+                className="flex w-full items-center justify-between gap-5 py-5 text-left text-[16px] font-semibold leading-snug text-[#0e0f11] transition hover:text-[#4b5563] focus:outline-none focus-visible:ring-1 focus-visible:ring-[#1f55f5]/60 sm:text-[17px] lg:py-6"
                 onClick={() => setOpenItemId(isOpen ? null : item.id)}
                 type="button"
               >
                 <span className="min-w-0 break-words">{item.question}</span>
                 <ChevronDown
-                  className={`shrink-0 text-[#7b8996] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
-                    isOpen ? "rotate-180 text-[#d2d8df]" : ""
+                  className={`shrink-0 text-[#77808d] transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none ${
+                    isOpen ? "rotate-180 text-[#0e0f11]" : ""
                   }`}
                   size={16}
                 />
@@ -1673,7 +1686,7 @@ function MarketFaqSection({
                 id={answerId}
               >
                 <div className="min-h-0 overflow-hidden">
-                  <div className="max-w-4xl space-y-3 pb-6 pr-8 text-[14px] font-medium leading-6 text-[#9aa5b1] sm:text-[15px]">
+                  <div className="max-w-4xl space-y-3 pb-6 pr-8 text-[14px] font-medium leading-6 text-[#77808d] sm:text-[15px]">
                     {item.answer.map((paragraph, index) => (
                       <p className="break-words" key={`${item.id}-${index}`}>
                         {paragraph}
@@ -1741,10 +1754,10 @@ function MarketActivityTabs({
       </div>
 
       {activeTab === "comments" ? (
-        <div className="mt-5 flex items-center gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] px-4 py-3 text-[#7b8996]">
+        <div className="mt-5 flex items-center gap-3 rounded-xl border border-[#dfe3e7] bg-white px-4 py-3 text-[#77808d]">
           <input
             aria-label="Add a comment"
-            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-[#dee3e7] outline-none placeholder:text-[#7b8996]"
+            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-[#0e0f11] outline-none placeholder:text-[#77808d]"
             disabled={isPostingComment}
             onChange={(event) => onCommentTextChange(event.target.value)}
             onKeyDown={(event) => {
@@ -1758,7 +1771,7 @@ function MarketActivityTabs({
           />
           <SmilePlus className="shrink-0" size={18} />
           <button
-            className="rounded-2xl bg-[#0093fd]/25 px-4 py-2 text-sm font-semibold text-[#0093fd] transition hover:bg-[#0093fd]/35 disabled:cursor-not-allowed disabled:opacity-45"
+            className="rounded-[7.2px] bg-[#9bb7ff] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#7fa1ff] disabled:cursor-not-allowed disabled:opacity-45"
             disabled={!commentText.trim() || isPostingComment}
             onClick={() => void onPostComment()}
             type="button"
@@ -1770,37 +1783,35 @@ function MarketActivityTabs({
 
       <div className="mt-5">
         {isLoading ? (
-          <div className="rounded-2xl border border-dashed border-[#242b32] bg-[#15191d] p-4 text-sm font-semibold text-[#7b8996]">
-            Loading market activity...
-          </div>
+          <MarketActivitySkeleton rows={activeTab === "comments" ? 3 : 4} />
         ) : null}
 
-        {activeTab === "comments" ? (
-          <div className={isLoading ? "mt-4 grid gap-5" : "grid gap-5"}>
+        {!isLoading && activeTab === "comments" ? (
+          <div className="grid gap-5">
             {data.comments.length > 0 ? (
               data.comments.map((comment) => (
                 <CommentRow comment={comment} key={comment.id} />
               ))
-            ) : !isLoading ? (
+            ) : (
               <EmptyActivityState text="No comments yet." />
-            ) : null}
+            )}
           </div>
         ) : null}
 
-        {activeTab === "holders" ? (
+        {!isLoading && activeTab === "holders" ? (
           data.topHolders.length > 0 ? (
-            <div className={isLoading ? "mt-4 grid gap-3" : "grid gap-3"}>
+            <div className="grid gap-3">
               {data.topHolders.map((holder, index) => (
                 <HolderRow holder={holder} index={index} key={holder.id} />
               ))}
             </div>
-          ) : !isLoading ? (
+          ) : (
             <EmptyActivityState text="No holders yet." />
-          ) : null
+          )
         ) : null}
 
-        {activeTab === "positions" ? (
-          <div className={isLoading ? "mt-4 grid gap-3" : "grid gap-3"}>
+        {!isLoading && activeTab === "positions" ? (
+          <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-3">
               <TicketStat label="Your Yes shares" value={formatShares(currentPosition?.yesShares ?? 0)} />
               <TicketStat label="Your No shares" value={formatShares(currentPosition?.noShares ?? 0)} />
@@ -1812,22 +1823,22 @@ function MarketActivityTabs({
                   <PositionRow position={position} key={position.id} />
                 ))}
               </div>
-            ) : !isLoading ? (
+            ) : (
               <EmptyActivityState text="No public positions yet." />
-            ) : null}
+            )}
           </div>
         ) : null}
 
-        {activeTab === "activity" ? (
+        {!isLoading && activeTab === "activity" ? (
           data.activity.length > 0 ? (
-            <div className={isLoading ? "mt-4 grid gap-3" : "grid gap-3"}>
+            <div className="grid gap-3">
               {data.activity.slice(0, 12).map((item) => (
                 <ActivityRow item={item} key={`${item.type}-${item.id}`} />
               ))}
             </div>
-          ) : !isLoading ? (
+          ) : (
             <EmptyActivityState text="No activity yet." />
-          ) : null
+          )
         ) : null}
       </div>
     </section>
@@ -1837,24 +1848,24 @@ function MarketActivityTabs({
 function CommentRow({ comment }: { comment: MarketComment }) {
   return (
     <div className="flex gap-4">
-      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#242b32] text-sm font-black uppercase text-[#dee3e7]">
+      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#f4f5f6] text-sm font-black uppercase text-[#0e0f11]">
         {comment.displayName.slice(0, 1)}
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-3">
-          <strong className="text-sm font-semibold text-[#dee3e7]">{comment.displayName}</strong>
+          <strong className="text-sm font-semibold text-[#0e0f11]">{comment.displayName}</strong>
           {comment.positionLabel ? (
-            <span className="rounded-full bg-[#2e3841] px-2 py-0.5 text-xs font-semibold text-[#7b8996]">
+            <span className="rounded-full bg-[#f4f5f6] px-2 py-0.5 text-xs font-semibold text-[#77808d]">
               {comment.positionLabel}
             </span>
           ) : null}
-          <span className="text-sm font-semibold text-[#7b8996]">
+          <span className="text-sm font-semibold text-[#77808d]">
             {formatRelativeTime(comment.createdAt)}
           </span>
         </div>
-        <p className="mt-2 break-words text-base leading-7 text-[#dee3e7]">{comment.body}</p>
+        <p className="mt-2 break-words text-base leading-7 text-[#0e0f11]">{comment.body}</p>
       </div>
-      <MessageCircle className="mt-1 shrink-0 text-[#7b8996]" size={18} />
+      <MessageCircle className="mt-1 shrink-0 text-[#77808d]" size={18} />
     </div>
   );
 }
@@ -1863,26 +1874,26 @@ function HolderRow({ holder, index }: { holder: MarketHolder; index: number }) {
   const leadingSide = holder.yesShares >= holder.noShares ? "Yes" : "No";
 
   return (
-    <div className="grid gap-3 rounded-2xl bg-[#15191d] px-4 py-3 text-sm sm:grid-cols-[48px_minmax(0,1fr)_140px_120px] sm:items-center">
-      <span className="font-semibold text-[#7b8996]">#{index + 1}</span>
+    <div className="grid gap-3 rounded-xl border border-[#e6e8ea] bg-white px-4 py-3 text-sm sm:grid-cols-[48px_minmax(0,1fr)_140px_120px] sm:items-center">
+      <span className="font-semibold text-[#77808d]">#{index + 1}</span>
       <div className="min-w-0">
-        <strong className="block truncate text-[#dee3e7]">{holder.displayName}</strong>
-        <span className="text-xs font-semibold text-[#7b8996]">
+        <strong className="block truncate text-[#0e0f11]">{holder.displayName}</strong>
+        <span className="text-xs font-semibold text-[#77808d]">
           {leadingSide} heavy · updated {formatRelativeTime(holder.updatedAt)}
         </span>
       </div>
-      <strong className="text-[#dee3e7]">{formatShares(holder.shares)} shares</strong>
-      <span className="font-semibold text-[#7b8996]">{formatUsdt(holder.value)}</span>
+      <strong className="text-[#0e0f11]">{formatShares(holder.shares)} shares</strong>
+      <span className="font-semibold text-[#77808d]">{formatUsdt(holder.value)}</span>
     </div>
   );
 }
 
 function PositionRow({ position }: { position: MarketPublicPosition }) {
   return (
-    <div className="grid gap-3 rounded-2xl bg-[#15191d] px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_86px_120px_120px] sm:items-center">
+    <div className="grid gap-3 rounded-xl border border-[#e6e8ea] bg-white px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_86px_120px_120px] sm:items-center">
       <div className="min-w-0">
-        <strong className="block truncate text-[#dee3e7]">{position.displayName}</strong>
-        <span className="text-xs font-semibold text-[#7b8996]">
+        <strong className="block truncate text-[#0e0f11]">{position.displayName}</strong>
+        <span className="text-xs font-semibold text-[#77808d]">
           Updated {formatRelativeTime(position.updatedAt)}
         </span>
       </div>
@@ -1893,7 +1904,7 @@ function PositionRow({ position }: { position: MarketPublicPosition }) {
       >
         {position.side}
       </span>
-      <strong className="text-[#dee3e7]">{formatShares(position.shares)} shares</strong>
+      <strong className="text-[#0e0f11]">{formatShares(position.shares)} shares</strong>
       <span className={position.pnl >= 0 ? "font-semibold text-[#a6d2b6]" : "font-semibold text-[#d78282]"}>
         {position.pnl >= 0 ? "+" : ""}
         {formatUsdt(position.pnl)}
@@ -1905,30 +1916,30 @@ function PositionRow({ position }: { position: MarketPublicPosition }) {
 function ActivityRow({ item }: { item: MarketActivityItem }) {
   if (item.type === "comment") {
     return (
-      <div className="grid gap-2 rounded-2xl bg-[#15191d] p-3 text-sm">
+      <div className="grid gap-2 rounded-xl border border-[#e6e8ea] bg-white p-3 text-sm">
         <div className="flex items-center justify-between gap-3">
-          <strong className="font-semibold text-[#dee3e7]">{item.displayName} commented</strong>
-          <span className="font-semibold text-[#7b8996]">{formatRelativeTime(item.createdAt)}</span>
+          <strong className="font-semibold text-[#0e0f11]">{item.displayName} commented</strong>
+          <span className="font-semibold text-[#77808d]">{formatRelativeTime(item.createdAt)}</span>
         </div>
-        <p className="break-words text-[#9aa5b1]">{item.body}</p>
+        <p className="break-words text-[#77808d]">{item.body}</p>
       </div>
     );
   }
 
   return (
-    <div className="grid gap-2 rounded-2xl bg-[#15191d] p-3 text-sm">
+    <div className="grid gap-2 rounded-xl border border-[#e6e8ea] bg-white p-3 text-sm">
       <div className="flex items-center justify-between gap-3">
-        <strong className="font-semibold text-[#dee3e7]">
+        <strong className="font-semibold text-[#0e0f11]">
           {item.displayName} {item.action === "sell" ? "sold" : "bought"}{" "}
           {item.side === "yes" ? "Yes" : "No"}
         </strong>
-        <span className="font-semibold text-[#7b8996]">{formatRelativeTime(item.createdAt)}</span>
+        <span className="font-semibold text-[#77808d]">{formatRelativeTime(item.createdAt)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
-        <strong className="font-semibold text-[#dee3e7]">
+        <strong className="font-semibold text-[#0e0f11]">
           {formatShares(item.shares)} shares
         </strong>
-        <span className="font-semibold text-[#7b8996]">
+        <span className="font-semibold text-[#77808d]">
           {formatUsdt(item.amount)} @ {formatPercent(item.price)}
         </span>
       </div>
@@ -1938,7 +1949,7 @@ function ActivityRow({ item }: { item: MarketActivityItem }) {
 
 function EmptyActivityState({ text }: { text: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-[#242b32] bg-[#15191d] p-4 text-sm font-semibold text-[#7b8996]">
+    <div className="rounded-xl border border-dashed border-[#dfe3e7] bg-white p-4 text-sm font-semibold text-[#77808d]">
       {text}
     </div>
   );
@@ -2138,8 +2149,8 @@ function buildHolderRows(currentPosition: LocalPosition | undefined, market: Mar
 
   return [
     { label: "You", value: `${formatShares(userShares)} shares` },
-    { label: "Top liquidity", value: formatMoney(market.liquidity) },
-    { label: "Market volume", value: formatMoney(market.volume_detail?.volume ?? market.volume) },
+    { label: "Pool", value: formatMoney(market.liquidity) },
+    { label: "Our volume", value: formatMoney(market.volume_detail?.volume ?? market.volume) },
   ];
 }
 
@@ -2154,32 +2165,32 @@ function SummaryRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-4 text-sm font-semibold">
-      <span className="text-[#7b8996]">{label}</span>
-      <strong className={accent ? "text-[#a6d2b6]" : "text-[#dee3e7]"}>{value}</strong>
+      <span className="text-[#77808d]">{label}</span>
+      <strong className={accent ? "text-[#30a159]" : "text-[#0e0f11]"}>{value}</strong>
     </div>
   );
 }
 
 function TradeInfoRow({
   label,
-  tone,
+  tone = "blue",
   value,
   withInfo = false,
 }: {
   label: string;
-  tone: "blue" | "green";
+  tone?: "blue" | "green";
   value: string;
   withInfo?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-4">
-      <p className="flex items-center gap-1.5 text-base font-medium leading-5 text-[#dee3e7]">
+      <p className="flex items-center gap-1.5 text-base font-medium leading-5 text-[#0e0f11]">
         {label}
-        {withInfo ? <Info className="text-[#7b8996]" size={16} /> : null}
+        {withInfo ? <Info className="text-[#77808d]" size={16} /> : null}
       </p>
       <p
         className={`text-[20px] font-semibold leading-6 ${
-          tone === "green" ? "text-[#5fbe82]" : "text-[#0093fd]"
+          tone === "green" ? "text-[#30a159]" : "text-[#1f55f5]"
         }`}
       >
         {value}
@@ -2191,10 +2202,10 @@ function TradeInfoRow({
 function TicketStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <span className="block text-xs font-bold uppercase tracking-wide text-[#7b8996]">
+      <span className="block text-xs font-bold uppercase tracking-wide text-[#77808d]">
         {label}
       </span>
-      <strong className="mt-1 block break-words text-sm font-semibold text-[#dee3e7]">{value}</strong>
+      <strong className="mt-1 block break-words text-sm font-semibold text-[#0e0f11]">{value}</strong>
     </div>
   );
 }
@@ -2202,20 +2213,16 @@ function TicketStat({ label, value }: { label: string; value: string }) {
 function DetailStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <span className="block text-xs font-bold uppercase tracking-wide text-[#7b8996]">
+      <span className="block text-xs font-bold uppercase tracking-wide text-[#77808d]">
         {label}
       </span>
-      <strong className="mt-1 block break-words text-sm font-semibold text-[#dee3e7]">{value}</strong>
+      <strong className="mt-1 block break-words text-sm font-semibold text-[#0e0f11]">{value}</strong>
     </div>
   );
 }
 
 function getTradeActionLabel(action: "buy" | "sell") {
-  return action === "buy" ? "Buy" : "Sell";
-}
-
-function getTradeSideLabel(side: "yes" | "no") {
-  return side === "yes" ? "Yes" : "No";
+  return action === "buy" ? "Купить" : "Продать";
 }
 
 function getActionDisplayPrice(price: number | null, action: "buy" | "sell") {
@@ -2415,7 +2422,7 @@ function splitDescription(description: string | null) {
   if (!description?.trim()) {
     return [
       "This market resolves according to the official source event definition.",
-      "Pulse Market mirrors public market data and displays available prices, outcomes, and market activity for this contract.",
+      "Pulse Market imports the public event context and displays our own prices, market activity, and chart history for this contract.",
     ];
   }
 
@@ -2438,12 +2445,12 @@ function buildMarketFaq(market: Market, groupMarkets: GroupMarket[]): MarketFaqI
 
   const overviewAnswer = groupMarkets.length > 0
     ? [
-        `"${title}" is a prediction market on Polymarket with ${outcomeCount} possible outcomes where traders buy and sell shares based on what they believe will happen. ${buildLeadingOutcomeSentence(leadingOutcome, secondOutcome)} Prices reflect real-time crowd-sourced probabilities. ${buildPriceExample(leadingOutcome)}`,
-        "These odds shift continuously as traders react to new developments and information. Shares in the correct outcome are redeemable for $1 each upon market resolution.",
+        `"${title}" is a Pulse Market prediction market based on a public Polymarket event, with ${outcomeCount} possible outcomes where traders buy and sell shares based on what they believe will happen. ${buildLeadingOutcomeSentence(leadingOutcome, secondOutcome)} Prices reflect our own crowd-sourced probabilities. ${buildPriceExample(leadingOutcome)}`,
+        "These odds shift as our traders react to new developments and information. Shares in the correct outcome are redeemable for $1 each upon market resolution.",
       ]
     : [
-        `"${title}" is a prediction market on Polymarket where traders buy and sell "Yes" or "No" shares based on whether they believe this event will happen. ${buildBinaryProbabilitySentence(outcomes)} ${buildPriceExample(leadingOutcome)}`,
-        "The price updates in real time as traders react to new information. Shares in the correct outcome are redeemable for $1 each when the market resolves.",
+        `"${title}" is a Pulse Market prediction market based on a public Polymarket event where traders buy and sell "Yes" or "No" shares based on whether they believe this event will happen. ${buildBinaryProbabilitySentence(outcomes)} ${buildPriceExample(leadingOutcome)}`,
+        "The price updates as our traders react to new information. Shares in the correct outcome are redeemable for $1 each when the market resolves.",
       ];
 
   return [
@@ -2454,10 +2461,10 @@ function buildMarketFaq(market: Market, groupMarkets: GroupMarket[]): MarketFaqI
     },
     {
       id: "activity",
-      question: `How much trading activity has "${title}" generated on Polymarket?`,
+      question: `How much trading activity has "${title}" generated on Pulse Market?`,
       answer: [
-        `As of the latest market data, "${title}" has generated ${formatMoney(volume)} in total trading volume${openedAt ? ` since the market launched on ${formatDate(openedAt)}` : ""}. This level of trading activity reflects engagement from market participants and helps keep the displayed odds informed by live trading.`,
-        "You can track price movement, volume, and each tradable outcome directly on this page.",
+        `As of the latest Pulse Market data, "${title}" has generated ${formatMoney(volume)} in our trading volume${openedAt ? ` since the market launched on ${formatDate(openedAt)}` : ""}. This activity reflects engagement from our participants and helps move the displayed odds.`,
+        "You can track our price movement, volume, and each tradable outcome directly on this page.",
       ],
     },
     {

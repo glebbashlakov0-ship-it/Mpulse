@@ -37,7 +37,6 @@ const supportLinks = [
 ];
 
 const companyLinks = [
-  "Rewards",
   "APIs",
   "Leaderboard",
   "Accuracy",
@@ -50,7 +49,7 @@ const companyLinks = [
 export function SiteFooter() {
   return (
     <footer className="border-t border-[#242b32] bg-[#15191d]">
-      <div className="mx-auto max-w-[1500px] px-4 py-14 md:px-6 xl:px-8">
+      <div className="mx-auto max-w-[1350px] px-4 py-14 lg:px-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <img
             className="h-12 w-24 object-contain"

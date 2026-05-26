@@ -50,6 +50,37 @@ export type MarketTradeActivityRecord = {
   createdAt: string;
 };
 
+type MarketActivityIdentity = {
+  id?: string | null;
+  userId?: string | null;
+  displayName?: string | null;
+  body?: string | null;
+};
+
+const legacyDemoUserIds = new Set([
+  "11111111-1111-4111-8111-111111111111",
+  "22222222-2222-4222-8222-222222222222",
+  "33333333-3333-4333-8333-333333333333",
+]);
+
+const legacyDemoDisplayNames = new Set(["Mila Forecast", "Atlas Trader", "Pulse Demo"]);
+
+export function isLegacyDemoMarketActivity(record: MarketActivityIdentity) {
+  const id = record.id?.toLowerCase() ?? "";
+  const body = record.body?.toLowerCase() ?? "";
+
+  return (
+    id.startsWith("aaaaaaaa-") ||
+    id.startsWith("bbbbbbbb-") ||
+    id.startsWith("cccccccc-") ||
+    legacyDemoUserIds.has(record.userId ?? "") ||
+    legacyDemoDisplayNames.has(record.displayName ?? "") ||
+    body.includes("ui smoke") ||
+    body.includes("demo comment seeded") ||
+    body.includes("local setup")
+  );
+}
+
 export type MarketActivityRepository = {
   listComments(marketId: string, limit?: number): Promise<MarketCommentRecord[]>;
   createComment(comment: {

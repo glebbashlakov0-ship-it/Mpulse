@@ -15,7 +15,7 @@ export function buildKeywordVisibilityRules(blockedTerms: string[]): MarketVisib
     action: "hide",
     scope: "keyword",
     value: term.toLowerCase(),
-    reason: "Blocked for local visibility policy.",
+    reason: "Blocked by visibility policy.",
     active: true,
   }));
 }

@@ -12,7 +12,6 @@ import { WatchlistPage } from "./pages/WatchlistPage";
 import { MarketDetailPage } from "./pages/MarketDetailPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { WalletPage } from "./pages/WalletPage";
-import { RewardsPage } from "./pages/RewardsPage";
 import { KYCPage } from "./pages/KYCPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { AdminPage } from "./pages/AdminPage";
@@ -61,6 +60,23 @@ function App() {
     document.documentElement.dir = isRTL ? "rtl" : "ltr";
     document.documentElement.lang = i18n.language;
   }, [i18n.language]);
+
+  React.useEffect(() => {
+    const previousScrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+
+    return () => {
+      window.history.scrollRestoration = previousScrollRestoration;
+    };
+  }, []);
+
+  React.useLayoutEffect(() => {
+    if (location.hash) {
+      return;
+    }
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [location.hash, location.pathname, location.search]);
 
   const openAuth = React.useCallback(
     (mode: "login" | "register") => {
@@ -181,7 +197,6 @@ function App() {
           <Route path="/markets/:id" element={<MarketDetailPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/wallet" element={<WalletPage />} />
-          <Route path="/rewards" element={<RewardsPage />} />
           <Route path="/kyc" element={<KYCPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/admin" element={<AdminPage />} />
@@ -213,6 +228,10 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Root element not found");
 }
+
+const savedTheme = window.localStorage.getItem("pulse-theme") === "light" ? "light" : "dark";
+document.documentElement.dataset.theme = savedTheme;
+document.documentElement.style.colorScheme = savedTheme;
 
 const appRoot = window.marketPulseRoot ?? createRoot(root);
 window.marketPulseRoot = appRoot;

@@ -208,14 +208,15 @@ test("keeps discovery market loading focused instead of querying every known tag
   assert.equal(eventQueries.length, 3);
   assert.deepEqual(
     eventQueries.map((query) => ({
+      order: query.order,
       featured: query.featured ?? false,
       trending: query.trending ?? false,
       tag: query.tag_slug ?? null,
     })),
     [
-      { featured: false, trending: false, tag: null },
-      { featured: true, trending: false, tag: null },
-      { featured: false, trending: true, tag: null },
+      { order: "volume24hr", featured: false, trending: false, tag: null },
+      { order: "volume24hr", featured: true, trending: false, tag: null },
+      { order: "volume24hr", featured: false, trending: true, tag: null },
     ],
   );
 });
@@ -299,6 +300,124 @@ test("paginates event discovery because Polymarket cards are event-first", async
     ],
   );
   assert.equal(result.meta.total, 1);
+});
+
+test("live lists trust Polymarket active state over past end dates", async () => {
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient(
+      [],
+      marketFixture(),
+      [
+        eventFixture({
+          id: "active-past-end",
+          title: "Active sports event",
+          active: true,
+          closed: false,
+          archived: false,
+          endDate: new Date(Date.now() - 60_000).toISOString(),
+          markets: [
+            marketFixture({
+              id: "active-past-end-market",
+              question: "Will the active sports event resolve?",
+              active: true,
+              closed: false,
+              archived: false,
+              endDate: new Date(Date.now() - 60_000).toISOString(),
+            }),
+          ],
+        }),
+      ],
+    ),
+  });
+
+  const result = await service.listMarkets({ limit: 5, sort: "trending", status: "live" });
+
+  assert.equal(result.data[0]?.id, "active-past-end-market");
+  assert.equal(result.data[0]?.status, "live");
+});
+
+test("grouped event cards use the parent event status instead of the first child market", async () => {
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient(
+      [],
+      marketFixture(),
+      [
+        eventFixture({
+          id: "active-group-event",
+          title: "Active grouped event",
+          active: true,
+          closed: false,
+          archived: false,
+          markets: [
+            marketFixture({
+              id: "closed-child",
+              question: "Closed child market?",
+              groupItemTitle: "Closed child",
+              active: true,
+              closed: true,
+              archived: false,
+              volume24hr: 100,
+            }),
+            marketFixture({
+              id: "open-child",
+              question: "Open child market?",
+              groupItemTitle: "Open child",
+              active: true,
+              closed: false,
+              archived: false,
+              volume24hr: 50,
+            }),
+          ],
+        }),
+      ],
+    ),
+  });
+
+  const result = await service.listMarkets({ limit: 5, sort: "trending", status: "live" });
+
+  assert.equal(result.data[0]?.title, "Active grouped event");
+  assert.equal(result.data[0]?.status, "live");
+  assert.equal(result.data[0]?.closed, false);
+  assert.equal(
+    result.data[0]?.group_markets?.find((market) => market.id === "closed-child")?.closed,
+    true,
+  );
+});
+
+test("trending discovery preserves Polymarket event order", async () => {
+  const events = [
+    eventFixture({
+      id: "first-event",
+      title: "First upstream event",
+      markets: [marketFixture({ id: "first-market", question: "First upstream event?" })],
+    }),
+    eventFixture({
+      id: "second-event",
+      title: "Second upstream event",
+      markets: [marketFixture({ id: "second-market", question: "Second upstream event?" })],
+    }),
+    eventFixture({
+      id: "third-event",
+      title: "Third upstream event",
+      markets: [marketFixture({ id: "third-market", question: "Third upstream event?" })],
+    }),
+  ];
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient([], marketFixture(), events),
+  });
+
+  const result = await service.listMarkets({ limit: 3, sort: "trending", status: "live" });
+
+  assert.deepEqual(
+    result.data.map((market) => market.title),
+    ["First upstream event?", "Second upstream event?", "Third upstream event?"],
+  );
 });
 
 test("uses focused event tags for search pages without broad discovery fanout", async () => {
@@ -480,7 +599,7 @@ test("normalizes event-backed markets with event tags, media, and 24h volume", a
   assert.equal(result.data[0]?.category, "crypto");
   assert.equal(result.data[0]?.topics.includes("crypto"), true);
   assert.equal(result.data[0]?.image, "https://example.com/bitcoin.png");
-  assert.equal(result.data[0]?.volume_24h, 12345);
+  assert.equal(result.data[0]?.volume_24h, 0);
   assert.equal(result.data[0]?.group_markets?.length, 2);
   assert.equal(result.data[0]?.group_markets?.[0]?.image, "https://example.com/bitcoin.png");
   assert.equal(result.data[0]?.group_markets?.[1]?.image, "https://example.com/bitcoin-200.png");
@@ -559,9 +678,9 @@ test("suppresses individual child cards when an event-backed grouped card is ava
   assert.deepEqual(
     result.data[0]?.group_markets?.map((market) => [market.id, market.label, market.yes_price]),
     [
-      ["starmer-may-15", "May 15", 0.61],
-      ["starmer-may-31", "May 31", 0.11],
-      ["starmer-may-19", "May 19", 0.03],
+      ["starmer-may-15", "May 15", 0.5],
+      ["starmer-may-19", "May 19", 0.5],
+      ["starmer-may-31", "May 31", 0.5],
     ],
   );
 });
@@ -850,11 +969,11 @@ test("collector saves real snapshots and detail reads them before synthetic fall
 
   assert.equal(real.data.history.is_synthetic, false);
   assert.equal(real.data.history.snapshots.length, 1);
-  assert.equal(real.data.history.price_history[0]?.yes, 0.58);
+  assert.equal(real.data.history.price_history[0]?.yes, 0.5);
   assert.equal((await repository.listSnapshots("snapshot-market")).length, 1);
 });
 
-test("market detail uses CLOB price history before synthetic fallback", async () => {
+test("market detail ignores Polymarket CLOB price history", async () => {
   const detail = marketFixture({
     id: "clob-market",
     outcomePrices: JSON.stringify(["0.58", "0.42"]),
@@ -884,16 +1003,95 @@ test("market detail uses CLOB price history before synthetic fallback", async ()
   });
   const result = await service.getMarketDetail("clob-market");
 
+  assert.equal(result.data.history.is_synthetic, true);
+  assert.equal(result.data.history.snapshots.length, 12);
+  assert.equal(result.data.history.price_history[0]?.yes, 0.5);
+});
+
+test("market detail can resolve a market by slug", async () => {
+  const detail = marketFixture({
+    id: "slug-market",
+    slug: "slug-market-question",
+  });
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: {
+      getEvents: async <T>() => [] as T,
+      getMarkets: async <T>(query: Record<string, unknown>) => {
+        assert.equal(query.slug, "slug-market-question");
+        return [detail] as T;
+      },
+      getMarket: async <T>() => {
+        throw new UpstreamError("invalid id", 422);
+      },
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  const result = await service.getMarketDetail("slug-market-question");
+
+  assert.equal(result.data.id, "slug-market");
+  assert.equal(result.data.slug, "slug-market-question");
+});
+
+test("market detail uses Pulse Market trades for odds, volume, and chart history", async () => {
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    marketActivityRepository: {
+      listComments: async () => [],
+      createComment: async () => {
+        throw new Error("not used");
+      },
+      listTopHolders: async () => [],
+      listPositions: async () => [],
+      listTrades: async () => [
+        {
+          id: "bbbbbbbb-0000-4000-8000-000000000003",
+          marketId: "own-odds",
+          userId: "33333333-3333-4333-8333-333333333333",
+          displayName: "Pulse Demo",
+          side: "no",
+          action: "buy",
+          amount: 10000,
+          price: 0.5,
+          shares: 20000,
+          createdAt: "2026-05-20T11:00:00.000Z",
+        },
+        {
+          id: "trade-1",
+          marketId: "own-odds",
+          userId: "user-1",
+          displayName: "Trader",
+          side: "yes",
+          action: "buy",
+          amount: 100,
+          price: 0.5,
+          shares: 196,
+          createdAt: "2026-05-20T12:00:00.000Z",
+        },
+      ],
+    },
+    polymarket: {
+      getEvents: async <T>() => [] as T,
+      getMarkets: async <T>() => [] as T,
+      getMarket: async <T>() => marketFixture({ id: "own-odds" }) as T,
+      getPriceHistory: async () => ({
+        history: [{ t: 1_770_000_000, p: 0.1 }],
+      }),
+      search: async <T>() => ({ events: [] }) as T,
+    },
+  });
+
+  const result = await service.getMarketDetail("own-odds");
+
+  assert.equal(result.data.volume, 100);
+  assert.equal(result.data.volume_detail.volume, 100);
+  assert.ok(Math.abs((result.data.prices.yes ?? 0) - 198 / 298) < 0.000001);
   assert.equal(result.data.history.is_synthetic, false);
-  assert.equal(result.data.history.snapshots.length, 0);
-  assert.deepEqual(
-    result.data.history.price_history.map((point) => [point.yes, point.no, point.synthetic]),
-    [
-      [0.52, null, false],
-      [0.58, 0.42, false],
-      [0.58, 0.4, false],
-    ],
-  );
+  assert.equal(result.data.history.price_history.length, 1);
+  assert.ok(Math.abs((result.data.history.price_history[0]?.yes ?? 0) - 198 / 298) < 0.000001);
 });
 
 test("market detail falls back to stored snapshots when CLOB history is unavailable", async () => {
@@ -1059,6 +1257,57 @@ test("filters Polymarket topic slugs without widening AI into every tech market"
     result.data.map((market) => market.id).sort(),
     ["ai-market", "ai-tagged-event-market"],
   );
+});
+
+test("keeps grouped list odds at 50/50 after own activity enrichment", async () => {
+  const childMarkets = [
+    marketFixture({
+      id: "grouped-child-a",
+      question: "Will Team A win?",
+      groupItemTitle: "Team A",
+    }),
+    marketFixture({
+      id: "grouped-child-b",
+      question: "Will Team B win?",
+      groupItemTitle: "Team B",
+    }),
+  ];
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    marketActivityRepository: {
+      listComments: async () => [],
+      createComment: async () => {
+        throw new Error("not used");
+      },
+      listTopHolders: async () => [],
+      listPositions: async () => [],
+      listTrades: async () => [],
+    },
+    polymarket: localClient(
+      [],
+      childMarkets[0],
+      [
+        eventFixture({
+          id: "grouped-event",
+          title: "Grouped event",
+          markets: childMarkets,
+        }),
+      ],
+    ),
+  });
+
+  const result = await service.listMarkets({ limit: 10, sort: "trending", status: "live" });
+  const groupMarkets = result.data[0]?.group_markets ?? [];
+
+  assert.deepEqual(
+    groupMarkets.map((market) => [market.label, market.yes_price, market.no_price]),
+    [
+      ["Team A", 0.5, 0.5],
+      ["Team B", 0.5, 0.5],
+    ],
+  );
+  assert.deepEqual(groupMarkets[0]?.outcomes, []);
 });
 
 test("uses culture search fallback when Polymarket category queries are not useful", async () => {

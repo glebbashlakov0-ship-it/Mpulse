@@ -63,17 +63,12 @@ function getRewardDailyRate(market: PolymarketMarket) {
 }
 
 function normalizeRewards(market: PolymarketMarket): NormalizedMarket["rewards"] {
-  const dailyRate = getRewardDailyRate(market);
-  const holding = Boolean(market.holdingRewardsEnabled);
-  const minSize = nullableNumber(market.rewardsMinSize);
-  const maxSpread = nullableNumber(market.rewardsMaxSpread);
-
   return {
-    enabled: dailyRate > 0 || holding,
-    daily_rate: dailyRate,
-    holding,
-    min_size: minSize,
-    max_spread: maxSpread,
+    enabled: false,
+    daily_rate: 0,
+    holding: false,
+    min_size: null,
+    max_spread: null,
   };
 }
 
@@ -93,22 +88,34 @@ function parseDateMs(value: string | null): number | null {
 
 function normalizeOutcomes(market: PolymarketMarket): NormalizedOutcome[] {
   const outcomes = parseJsonArray(market.outcomes);
-  const prices = parseJsonArray(market.outcomePrices);
   const clobTokenIds = parseJsonArray(market.clobTokenIds);
+  const defaultPrices = getDefaultOutcomePrices(outcomes);
 
   return outcomes.map((name, index) => {
-    const parsedPrice = Number(prices[index]);
+    const price = defaultPrices[index] ?? null;
 
     return {
       name,
-      price: Number.isFinite(parsedPrice) ? clampProbability(parsedPrice) : null,
-      probability: Number.isFinite(parsedPrice) ? clampProbability(parsedPrice) : null,
-      price_cents: Number.isFinite(parsedPrice)
-        ? Math.round(clampProbability(parsedPrice) * 100)
-        : null,
+      price,
+      probability: price,
+      price_cents: price === null ? null : Math.round(price * 100),
       clobTokenId: clobTokenIds[index] ?? null,
     };
   });
+}
+
+function getDefaultOutcomePrices(outcomes: string[]) {
+  if (outcomes.length === 0) {
+    return [];
+  }
+
+  if (outcomes.length === 2) {
+    return [0.5, 0.5];
+  }
+
+  const equalPrice = clampProbability(1 / outcomes.length);
+
+  return outcomes.map(() => equalPrice);
 }
 
 function getPrimaryEventContext(market: PolymarketMarket) {
@@ -151,19 +158,19 @@ export function normalizeMarket(market: PolymarketMarket): NormalizedMarket {
     closed: Boolean(market.closed),
     archived: Boolean(market.archived),
     restricted: Boolean(market.restricted),
-    volume: toNumber(market.volumeNum ?? market.volume),
-    volume_24h: toNumber(market.volume24hr),
-    liquidity: toNumber(market.liquidityNum ?? market.liquidity),
+    volume: 0,
+    volume_24h: 0,
+    liquidity: 0,
     comment_count: toNumber(market.commentCount ?? eventContext?.commentCount),
     game_start_time: market.gameStartTime ?? null,
     rewards: normalizeRewards(market),
     outcomes: normalizeOutcomes(market),
     trading: {
-      order_book_enabled: Boolean(market.enableOrderBook),
-      accepting_orders: Boolean(market.acceptingOrders),
-      best_bid: nullableNumber(market.bestBid),
-      best_ask: nullableNumber(market.bestAsk),
-      last_trade_price: nullableNumber(market.lastTradePrice),
+      order_book_enabled: true,
+      accepting_orders: Boolean(market.acceptingOrders ?? market.active),
+      best_bid: null,
+      best_ask: null,
+      last_trade_price: null,
     },
     event_id: eventContext?.id ?? null,
     event_slug: eventSlug,
@@ -211,6 +218,7 @@ function normalizeDateFields(market: {
   ends_at?: string | null;
   startDate?: string;
   endDate?: string;
+  active?: boolean;
   closed?: boolean;
   archived?: boolean;
 }): NormalizedMarketDetail["dates"] {
@@ -223,9 +231,9 @@ function normalizeDateFields(market: {
 
   if (market.closed || market.archived) {
     status = "closed";
-  } else if (endsAtMs !== null && endsAtMs <= now) {
+  } else if (market.active === false && endsAtMs !== null && endsAtMs <= now) {
     status = "expired";
-  } else if (startsAtMs !== null && startsAtMs > now) {
+  } else if (market.active === false && startsAtMs !== null && startsAtMs > now) {
     status = "upcoming";
   }
 
@@ -263,12 +271,12 @@ function normalizeRelatedMarket(market: PolymarketMarket): NormalizedRelatedMark
 function buildPriceHistory(
   snapshots: MarketSnapshot[],
   fallbackMarket: NormalizedMarket,
-  clobHistory: MarketPriceHistoryPoint[] = [],
+  ownHistory: MarketPriceHistoryPoint[] = [],
 ): { snapshots: MarketSnapshot[]; price_history: MarketPriceHistoryPoint[]; is_synthetic: boolean } {
-  if (clobHistory.length > 0) {
+  if (ownHistory.length > 0) {
     return {
       snapshots,
-      price_history: clobHistory,
+      price_history: ownHistory,
       is_synthetic: false,
     };
   }
@@ -295,16 +303,6 @@ function buildPriceHistory(
   const prices = normalizePriceSummary(fallbackMarket);
   const now = Date.now();
   const syntheticSnapshots = Array.from({ length: 12 }).map((_, index) => {
-    const progress = index / 11;
-    const drift = Math.sin(index * 0.9) * 0.015;
-    const isLatest = index === 11;
-    const yes =
-      prices.yes === null
-        ? null
-        : isLatest
-          ? prices.yes
-          : clampProbability(prices.yes + (progress - 1) * 0.04 + drift);
-    const no = isLatest ? prices.no : yes === null ? prices.no : clampProbability(1 - yes);
     const capturedAt = new Date(now - (11 - index) * 60 * 60 * 1000).toISOString();
 
     return {
@@ -313,11 +311,9 @@ function buildPriceHistory(
       captured_at: capturedAt,
       prices: {
         ...prices,
-        yes,
-        no,
       },
-      volume: Math.max(0, Math.round(fallbackMarket.volume * (0.85 + progress * 0.15))),
-      liquidity: fallbackMarket.liquidity,
+      volume: 0,
+      liquidity: 0,
       source: fallbackMarket.source,
       synthetic: true,
     } satisfies MarketSnapshot;
@@ -347,22 +343,12 @@ function buildSyntheticOutcomeHistory(
   index: number,
   total: number,
 ) {
-  const progress = total <= 1 ? 1 : index / (total - 1);
-
   return outcomes.map((outcome, outcomeIndex) => {
     const basePrice = outcome.price ?? outcome.probability;
-    const isLatest = index === total - 1;
-    const drift = Math.sin((index + 1) * (outcomeIndex + 1) * 0.7) * 0.01;
-    const trend = (progress - 1) * 0.02;
 
     return {
       name: outcome.name,
-      price:
-        basePrice === null
-          ? null
-          : isLatest
-            ? basePrice
-            : clampProbability(basePrice + drift + trend),
+      price: basePrice === null ? null : clampProbability(basePrice),
     };
   });
 }
@@ -506,9 +492,9 @@ export function normalizeEvent(event: PolymarketEvent): NormalizedEvent {
     closed: Boolean(event.closed),
     archived: Boolean(event.archived),
     restricted: Boolean(event.restricted),
-    volume: toNumber(event.volume),
-    volume_24h: toNumber(event.volume24hr),
-    liquidity: toNumber(event.liquidity),
+    volume: 0,
+    volume_24h: 0,
+    liquidity: 0,
     open_interest: toNumber(event.openInterest),
     tags: (event.tags ?? []).map((tag) => ({
       id: tag.id ?? null,

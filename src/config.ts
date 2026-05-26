@@ -228,20 +228,6 @@ export function getConfig(): AppConfig {
       relatedMarkets: numberFromEnv("CACHE_TTL_RELATED_MARKETS_MS", 120_000),
       searchResults: numberFromEnv("CACHE_TTL_SEARCH_RESULTS_MS", 60_000),
     },
-    blockedMarketTerms: listFromEnv("BLOCKED_MARKET_TERMS", [
-      "christ",
-      "ceasefire",
-      "gaza",
-      "hamas",
-      "jesus",
-      "nip",
-      "prison",
-      "russia",
-      "sentenced",
-      "slip",
-      "ukraine",
-      "war",
-      "weinstein",
-    ]),
+    blockedMarketTerms: listFromEnv("BLOCKED_MARKET_TERMS", []),
   };
 }

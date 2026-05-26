@@ -6,6 +6,7 @@ import type {
   MarketCommentRecord,
   MarketTradeActivityRecord,
 } from "../marketActivityRepository.js";
+import { isLegacyDemoMarketActivity } from "../marketActivityRepository.js";
 
 type MarketActivityItem =
   | (MarketTradeActivityRecord & { type: "trade" })
@@ -42,15 +43,19 @@ async function buildMarketActivityPayload(
     repository.listPositions(marketId, 50),
     repository.listTrades(marketId, 100),
   ]);
+  const visibleComments = comments.filter((comment) => !isLegacyDemoMarketActivity(comment));
+  const visibleTopHolders = topHolders.filter((holder) => !isLegacyDemoMarketActivity(holder));
+  const visiblePositions = positions.filter((position) => !isLegacyDemoMarketActivity(position));
+  const visibleTrades = trades.filter((trade) => !isLegacyDemoMarketActivity(trade));
   const activity: MarketActivityItem[] = [
-    ...trades.map((trade) => ({ ...trade, type: "trade" as const })),
-    ...comments.map((comment) => ({ ...comment, type: "comment" as const })),
+    ...visibleTrades.map((trade) => ({ ...trade, type: "trade" as const })),
+    ...visibleComments.map((comment) => ({ ...comment, type: "comment" as const })),
   ].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 
   return {
-    comments,
-    topHolders,
-    positions,
+    comments: visibleComments,
+    topHolders: visibleTopHolders,
+    positions: visiblePositions,
     activity,
   };
 }

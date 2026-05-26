@@ -10,10 +10,15 @@ import {
   normalizePriceSummary,
   toNumber,
 } from "./normalizers.js";
+import {
+  buildOwnMarketHistory,
+  buildOwnMarketStats,
+} from "./marketOdds.js";
 import type {
   MarketSnapshot,
   NormalizedCategory,
   NormalizedEvent,
+  NormalizedGroupMarket,
   NormalizedMarket,
   NormalizedMarketDetail,
   NormalizedTag,
@@ -26,6 +31,11 @@ import type {
 import { UpstreamError } from "./polymarketClient.js";
 import { buildSnapshotFromMarket } from "./snapshots.js";
 import type { MarketRepository } from "./marketRepository.js";
+import {
+  isLegacyDemoMarketActivity,
+  type MarketActivityRepository,
+  type MarketTradeActivityRecord,
+} from "./marketActivityRepository.js";
 
 type PolymarketClient = {
   getEvents: <T>(query: Record<string, unknown>) => Promise<T>;
@@ -162,7 +172,7 @@ const maxDiscoveryMarketsPerEvent = 1;
 const polymarketDiscoveryEventLimit = 150;
 const polymarketEventPageLimit = 100;
 const polymarketMarketPageLimit = 100;
-const marketListCacheScope = "markets:list:v5";
+const marketListCacheScope = "markets:list:v7";
 const foregroundCacheLoads = new Map<string, Promise<unknown>>();
 const backgroundCacheRefreshes = new Set<string>();
 
@@ -302,11 +312,11 @@ function getStatus(market: NormalizedMarket) {
     return "closed";
   }
 
-  if (endsAtMs !== null && Number.isFinite(endsAtMs) && endsAtMs <= now) {
+  if (market.active === false && endsAtMs !== null && Number.isFinite(endsAtMs) && endsAtMs <= now) {
     return "expired";
   }
 
-  if (startsAtMs !== null && Number.isFinite(startsAtMs) && startsAtMs > now) {
+  if (market.active === false && startsAtMs !== null && Number.isFinite(startsAtMs) && startsAtMs > now) {
     return "upcoming";
   }
 
@@ -378,10 +388,14 @@ function trendingScore(market: NormalizedMarket) {
   );
 }
 
+function groupedMarketWeight(market: NormalizedMarket) {
+  return (market.group_markets?.length ?? 0) > 1 ? 1 : 0;
+}
+
 function sortMarkets(markets: NormalizedMarket[], sort: MarketSort, search: string) {
   return [...markets].sort((left, right) => {
     if (sort === "liquidity") {
-      return right.liquidity - left.liquidity;
+      return right.liquidity - left.liquidity || groupedMarketWeight(right) - groupedMarketWeight(left);
     }
 
     if (sort === "newest") {
@@ -400,7 +414,8 @@ function sortMarkets(markets: NormalizedMarket[], sort: MarketSort, search: stri
     if (sort === "relevance") {
       return (
         relevanceScore(right, search) - relevanceScore(left, search) ||
-        right.volume - left.volume
+        right.volume - left.volume ||
+        groupedMarketWeight(right) - groupedMarketWeight(left)
       );
     }
 
@@ -408,7 +423,7 @@ function sortMarkets(markets: NormalizedMarket[], sort: MarketSort, search: stri
       return trendingScore(right) - trendingScore(left);
     }
 
-    return right.volume - left.volume;
+    return right.volume - left.volume || groupedMarketWeight(right) - groupedMarketWeight(left);
   });
 }
 
@@ -713,12 +728,12 @@ function marketFromEvent(
     description: originalDescription,
     image: event.image ?? event.icon ?? market.image,
     icon: event.icon ?? event.image ?? market.icon,
-    startDate: market.startDate ?? event.startDate,
-    endDate: market.endDate ?? event.endDate,
-    active: market.active ?? event.active,
-    closed: market.closed ?? event.closed,
-    archived: market.archived ?? event.archived,
-    restricted: market.restricted ?? event.restricted,
+    startDate: event.startDate ?? market.startDate,
+    endDate: event.endDate ?? market.endDate,
+    active: event.active ?? market.active,
+    closed: event.closed ?? market.closed,
+    archived: event.archived ?? market.archived,
+    restricted: event.restricted ?? market.restricted,
     volume:
       toNumber(event.volume) > toNumber(market.volumeNum ?? market.volume)
         ? event.volume
@@ -1306,12 +1321,14 @@ export function buildMarketDataService({
   cache,
   polymarket,
   marketRepository,
+  marketActivityRepository,
   getSnapshots,
 }: {
   config: AppConfig;
   cache: CacheStore;
   polymarket: PolymarketClient;
   marketRepository?: MarketRepository;
+  marketActivityRepository?: MarketActivityRepository;
   getSnapshots?: (marketId: string, limit?: number) => MarketSnapshot[] | Promise<MarketSnapshot[]>;
 }) {
   const visibilityRules = buildKeywordVisibilityRules(config.blockedMarketTerms);
@@ -1336,7 +1353,7 @@ export function buildMarketDataService({
     const base = {
       active: params.active,
       closed: params.closed,
-      order: "volume_24hr",
+      order: "volume24hr",
       ascending: false,
     };
     const focusedTags = [
@@ -1662,13 +1679,11 @@ export function buildMarketDataService({
         return isWithinDateRange(market, filter.closingBefore, filter.closingAfter);
       });
     const sorted = sortMarkets(normalized, filter.sort, filter.search);
-    const discoverySorted =
-      !filter.search && (filter.sort === "trending" || filter.sort === "popular")
-        ? diversifyDiscoveryMarkets(sorted)
-        : sorted;
-    const data = discoverySorted
+    const discoverySorted = sorted;
+    const compactData = discoverySorted
       .slice(filter.offset, filter.offset + filter.limit)
       .map(compactMarketForList);
+    const data = await enrichMarketsWithOwnActivity(compactData);
     const nextOffset = filter.offset + filter.limit;
 
     return {
@@ -1694,6 +1709,128 @@ export function buildMarketDataService({
     });
 
     return withListCacheMeta(cached.value, cached.meta);
+  }
+
+  async function enrichMarketsWithOwnActivity(markets: NormalizedMarket[]) {
+    if (!marketActivityRepository) {
+      return markets;
+    }
+
+    return Promise.all(markets.map((market) => enrichMarketWithOwnActivity(market)));
+  }
+
+  async function enrichMarketWithOwnActivity<T extends NormalizedMarket>(market: T): Promise<T> {
+    if (!marketActivityRepository) {
+      return market;
+    }
+
+    const groupMarkets = market.group_markets ?? [];
+    if (groupMarkets.length > 0) {
+      const enrichedGroups = await Promise.all(
+        groupMarkets.map((groupMarket) => enrichGroupMarketWithOwnActivity(groupMarket)),
+      );
+      const totals = sumMarketStats(enrichedGroups);
+
+      return {
+        ...market,
+        group_markets: enrichedGroups,
+        volume: totals.volume,
+        volume_24h: totals.volume24h,
+        liquidity: totals.liquidity,
+      };
+    }
+
+    const trades = await listOwnTrades(market.id);
+    const stats = buildOwnMarketStats(market, trades);
+
+    return applyOwnStatsToMarket(market, stats);
+  }
+
+  async function enrichGroupMarketWithOwnActivity(
+    market: NormalizedGroupMarket,
+  ): Promise<NormalizedGroupMarket> {
+    const trades = await listOwnTrades(market.id);
+    const stats = buildOwnMarketStats(market, trades);
+    const enriched = applyOwnStatsToMarket(market, stats);
+
+    return {
+      ...enriched,
+      outcomes: market.outcomes.length > 0 ? enriched.outcomes : market.outcomes,
+      yes_price: stats.yes,
+      no_price: stats.no,
+    };
+  }
+
+  async function enrichMarketDetailWithOwnActivity(
+    detail: NormalizedMarketDetail,
+    marketTrades?: MarketTradeActivityRecord[],
+  ): Promise<NormalizedMarketDetail> {
+    const groupMarkets = detail.group_markets ?? [];
+    const enrichedGroups =
+      marketActivityRepository && groupMarkets.length > 0
+        ? await Promise.all(groupMarkets.map((groupMarket) => enrichGroupMarketWithOwnActivity(groupMarket)))
+        : groupMarkets;
+    const trades = marketTrades ?? (marketActivityRepository ? await listOwnTrades(detail.id) : []);
+    const stats = buildOwnMarketStats(detail, trades);
+    const market = applyOwnStatsToMarket(detail, stats);
+    const groupTotals = sumMarketStats(enrichedGroups);
+    const volume = enrichedGroups.length > 0 ? groupTotals.volume : stats.volume;
+    const volume24h = enrichedGroups.length > 0 ? groupTotals.volume24h : stats.volume24h;
+    const liquidity = enrichedGroups.length > 0 ? groupTotals.liquidity : stats.liquidity;
+
+    return {
+      ...market,
+      group_markets: enrichedGroups,
+      volume,
+      volume_24h: volume24h,
+      liquidity,
+      prices: normalizePriceSummary(market),
+      volume_detail: {
+        volume,
+        liquidity,
+      },
+    };
+  }
+
+  async function listOwnTrades(marketId: string) {
+    if (!marketActivityRepository) {
+      return [];
+    }
+
+    return marketActivityRepository
+      .listTrades(marketId, 500)
+      .then((trades) => trades.filter((trade) => !isLegacyDemoMarketActivity(trade)))
+      .catch(() => []);
+  }
+
+  function applyOwnStatsToMarket<T extends NormalizedMarket>(
+    market: T,
+    stats: ReturnType<typeof buildOwnMarketStats>,
+  ): T {
+    return {
+      ...market,
+      outcomes: stats.outcomes,
+      volume: stats.volume,
+      volume_24h: stats.volume24h,
+      liquidity: stats.liquidity,
+      trading: {
+        ...market.trading,
+        best_bid: null,
+        best_ask: null,
+        last_trade_price: null,
+      },
+    };
+  }
+
+  function sumMarketStats(markets: NormalizedMarket[]) {
+    return markets.reduce(
+      (totals, market) => ({
+        volume: totals.volume + market.volume,
+        volume24h: totals.volume24h + (market.volume_24h ?? 0),
+        liquidity: totals.liquidity + market.liquidity,
+      }),
+      { volume: 0, volume24h: 0, liquidity: 0 },
+    );
   }
 
   async function getRelatedMarkets(market: PolymarketMarket) {
@@ -1897,12 +2034,46 @@ export function buildMarketDataService({
       ]),
     }));
     const snapshots = await listStoredSnapshots(id);
-    const clobHistory = await loadClobPriceHistory(selectedMarket).catch(() => []);
+    const selectedMarketBase = normalizeMarket(selectedMarket);
+    const ownTrades = await listOwnTrades(selectedMarketBase.id);
+    const ownHistory = buildOwnMarketHistory(selectedMarketBase, ownTrades);
 
     return {
-      data: normalizeMarketDetail(selectedMarket, relatedMarkets.value, snapshots, clobHistory, groupMarkets),
+      data: await enrichMarketDetailWithOwnActivity(
+        normalizeMarketDetail(selectedMarket, relatedMarkets.value, snapshots, ownHistory, groupMarkets),
+        ownTrades,
+      ),
       meta: mergeSourceMeta(market.meta, relatedMarkets.meta),
     };
+  }
+
+  async function getRawMarketByIdOrSlug(identifier: string) {
+    return loadWithStaleFallback({
+      cache,
+      key: createCacheKey("polymarket:market-detail", { identifier }),
+      ttlMs: config.cacheTtlMs.marketDetail,
+      loader: async () => {
+        try {
+          return await polymarket.getMarket<PolymarketMarket>(identifier);
+        } catch (error) {
+          if (!(error instanceof UpstreamError && (error.statusCode === 404 || error.statusCode === 422))) {
+            throw error;
+          }
+
+          const candidates = await polymarket.getMarkets<PolymarketMarket[]>({
+            slug: identifier,
+            limit: 1,
+          });
+          const market = candidates.find((candidate) => candidate.slug === identifier) ?? candidates[0];
+
+          if (!market) {
+            throw new MarketDataError("MARKET_NOT_FOUND", "Market not found.", 404);
+          }
+
+          return market;
+        }
+      },
+    });
   }
 
   async function listStoredSnapshots(marketId: string) {
@@ -2024,22 +2195,8 @@ export function buildMarketDataService({
   }
 
   async function getMarketDetail(id: string): Promise<{ data: NormalizedMarketDetail; meta: MarketDataMeta }> {
-    const market = await loadWithStaleFallback({
-      cache,
-      key: createCacheKey("polymarket:market-detail", { id }),
-      ttlMs: config.cacheTtlMs.marketDetail,
-      loader: async () => {
-        try {
-          return await polymarket.getMarket<PolymarketMarket>(id);
-        } catch (error) {
-          if (error instanceof UpstreamError && error.statusCode === 404) {
-            throw new MarketDataError("MARKET_NOT_FOUND", "Market not found.", 404);
-          }
-
-          throw error;
-        }
-      },
-    });
+    const market = await getRawMarketByIdOrSlug(id);
+    const marketId = market.value.id || id;
 
     const relatedMarkets = await getRelatedMarkets(market.value).catch(() => ({
       value: [],
@@ -2048,8 +2205,7 @@ export function buildMarketDataService({
       ]),
     }));
     const meta = mergeSourceMeta(market.meta, relatedMarkets.meta);
-    const snapshots = await listStoredSnapshots(id);
-    const clobHistory = await loadClobPriceHistory(market.value).catch(() => []);
+    const snapshots = await listStoredSnapshots(marketId);
     const event = await findParentEventForMarket(market.value).catch(() => null);
 
     if (event) {
@@ -2057,24 +2213,39 @@ export function buildMarketDataService({
       if (groupMarkets.length > 1) {
         const selectedMarket = marketFromEvent(
           event,
-          (event.markets ?? []).find((childMarket) => childMarket.id === id) ?? market.value,
+          (event.markets ?? []).find(
+            (childMarket) => childMarket.id === marketId || childMarket.slug === id,
+          ) ?? market.value,
         );
+        const selectedMarketBase = normalizeMarket(selectedMarket);
+        const ownTrades = await listOwnTrades(selectedMarketBase.id);
+        const ownHistory = buildOwnMarketHistory(selectedMarketBase, ownTrades);
 
         return {
-          data: normalizeMarketDetail(
-            selectedMarket,
-            relatedMarkets.value,
-            snapshots,
-            clobHistory,
-            groupMarkets,
+          data: await enrichMarketDetailWithOwnActivity(
+            normalizeMarketDetail(
+              selectedMarket,
+              relatedMarkets.value,
+              snapshots,
+              ownHistory,
+              groupMarkets,
+            ),
+            ownTrades,
           ),
           meta,
         };
       }
     }
 
+    const normalizedMarket = normalizeMarket(market.value);
+    const ownTrades = await listOwnTrades(normalizedMarket.id);
+    const ownHistory = buildOwnMarketHistory(normalizedMarket, ownTrades);
+
     return {
-      data: normalizeMarketDetail(market.value, relatedMarkets.value, snapshots, clobHistory),
+      data: await enrichMarketDetailWithOwnActivity(
+        normalizeMarketDetail(market.value, relatedMarkets.value, snapshots, ownHistory),
+        ownTrades,
+      ),
       meta,
     };
   }

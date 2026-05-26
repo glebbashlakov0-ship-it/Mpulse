@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { NormalizedMarketDetail } from "./types.js";
 import type { LedgerService } from "./ledger.js";
 import type { PortfolioRepository, PositionRecord, TradeRecord } from "./portfolioRepository.js";
+import {
+  calculateGrossFromNetStake,
+  calculateNetStake,
+  calculatePlatformFee,
+} from "./tradingEconomics.js";
 
 export type TradeSide = "yes" | "no";
 export type TradeAction = "buy" | "sell";
@@ -21,6 +26,8 @@ export type Trade = {
   side: TradeSide;
   action: TradeAction;
   amount: number;
+  stakeAmount?: number;
+  platformFee?: number;
   price: number;
   shares: number;
   realizedPnl: number | null;
@@ -96,6 +103,8 @@ export type TradingQuote = {
   price: number;
   shares: number;
   amount: number;
+  stakeAmount: number;
+  platformFee: number;
   estimatedCost: number;
   estimatedProceeds: number;
   availableCash: number;
@@ -147,7 +156,7 @@ function createInitialState(userId = DEMO_USER_ID): PortfolioState {
   return {
     user: {
       id: userId,
-      displayName: "Local Trader",
+      displayName: "Pulse Trader",
       createdAt: now,
     },
     positions: [],
@@ -361,7 +370,7 @@ export async function resetPortfolio(
       asset: "USDT",
       entryType: adjustment > 0 ? "credit" : "debit",
       amount: Math.abs(adjustment),
-      reason: "Local portfolio reset",
+      reason: "Pulse Market portfolio reset",
       referenceType: "local_reset",
       referenceId: userId,
       idempotencyKey: `local-reset:${userId}:${Date.now()}`,
@@ -391,7 +400,7 @@ export async function createTradingQuote({
     return {
       ok: false,
       code: "MARKET_NOT_TRADABLE",
-      message: "This market is not accepting local trades.",
+      message: "This market is not accepting Pulse Market trades.",
     };
   }
 
@@ -416,8 +425,20 @@ export async function createTradingQuote({
     };
   }
 
-  const quoteShares = inputShares ?? inputAmount! / price;
-  const quoteAmount = inputAmount ?? inputShares! * price;
+  const stakeAmount =
+    action === "buy"
+      ? inputShares !== null
+        ? inputShares * price
+        : calculateNetStake(inputAmount!)
+      : inputShares !== null
+        ? inputShares * price
+        : inputAmount!;
+  const quoteShares = inputShares ?? stakeAmount / price;
+  const quoteAmount =
+    action === "buy"
+      ? inputAmount ?? calculateGrossFromNetStake(stakeAmount)
+      : inputAmount ?? quoteShares * price;
+  const platformFee = action === "buy" ? calculatePlatformFee(quoteAmount) : 0;
   const estimatedCost = action === "buy" ? quoteAmount : 0;
   const estimatedProceeds = action === "sell" ? quoteAmount : 0;
   const existingPosition = state.positions.find((position) => position.marketId === market.id);
@@ -435,6 +456,8 @@ export async function createTradingQuote({
       price,
       shares: quoteShares,
       amount: quoteAmount,
+      stakeAmount,
+      platformFee,
       estimatedCost,
       estimatedProceeds,
       availableCash: balance.availableBalance,
@@ -532,6 +555,8 @@ export async function placeLocalOrder(
     side: quote.side,
     action: quote.action,
     amount: quote.amount,
+    stakeAmount: quote.stakeAmount,
+    platformFee: quote.platformFee,
     price: quote.price,
     shares: quote.shares,
     realizedPnl,
@@ -576,7 +601,7 @@ export async function placeLocalOrder(
     asset: "USDT",
     entryType: quote.action === "buy" ? "trade_debit" : "trade_credit",
     amount: quote.action === "buy" ? quote.estimatedCost : quote.estimatedProceeds,
-    reason: `Local ${quote.action} trade: ${quote.shares} shares of ${quote.marketTitle} (${quote.side})`,
+    reason: `Pulse Market ${quote.action} trade: ${quote.shares} shares of ${quote.marketTitle} (${quote.side})`,
     referenceType: "local_trade",
     referenceId: trade.id,
     idempotencyKey: ledgerIdempotencyKey,
@@ -588,6 +613,8 @@ export async function placeLocalOrder(
       shares: quote.shares,
       price: quote.price,
       amount: quote.amount,
+      stakeAmount: quote.stakeAmount,
+      platformFee: quote.platformFee,
     },
   });
 
@@ -704,6 +731,8 @@ function quoteFromTrade(trade: Trade): TradingQuote {
     price: trade.price,
     shares: trade.shares,
     amount: trade.amount,
+    stakeAmount: trade.stakeAmount ?? trade.amount,
+    platformFee: trade.platformFee ?? 0,
     estimatedCost: trade.action === "buy" ? trade.amount : 0,
     estimatedProceeds: trade.action === "sell" ? trade.amount : 0,
     availableCash: 0,

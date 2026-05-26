@@ -310,9 +310,9 @@ describe("market helpers", () => {
       label: "Up",
       value: 0.49,
     });
-    assert.equal(getGaugeStroke(0.07), "#cb3131");
+    assert.equal(getGaugeStroke(0.07), "#e23939");
     assert.equal(getGaugeStroke(0.31), "#f7d022");
-    assert.equal(getGaugeStroke(0.61), "#3db468");
+    assert.equal(getGaugeStroke(0.61), "#30a159");
     assert.equal(getGaugeStrokeOpacity(0.5), 0.55);
     assert.equal(getGaugeStrokeOpacity(0.07), 0.937);
     assert.deepEqual(getGaugeArcPaths(0.07), {

@@ -135,6 +135,7 @@ export function buildApp(config: AppConfig = getConfig()) {
     cache,
     polymarket,
     marketRepository,
+    marketActivityRepository,
   });
   let snapshotCollectorTimer: ReturnType<typeof setInterval> | null = null;
 

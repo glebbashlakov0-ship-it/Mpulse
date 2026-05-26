@@ -16,7 +16,7 @@ export function createInitialPortfolio(): Portfolio {
   return {
     user: {
       id: "local-user",
-      displayName: "Local Trader",
+      displayName: "Pulse Trader",
       createdAt: now,
     },
     wallet: {

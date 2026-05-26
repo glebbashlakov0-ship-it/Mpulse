@@ -2,6 +2,7 @@ import * as React from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { MarketDetail } from "../components/MarketDetail";
+import { MarketDetailSkeleton } from "../components/MarketSkeleton";
 import { useMarketDetail } from "../hooks/useMarketDetail";
 
 export function MarketDetailPage() {
@@ -12,9 +13,9 @@ export function MarketDetailPage() {
 
   if (!id) {
     return (
-      <div className="min-h-screen bg-[#15191d] text-[#dee3e7]">
-        <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
-          <div className="rounded-2xl border border-[#cb3131]/35 bg-[#330707]/35 p-4 text-[#daa]">
+      <div className="min-h-screen bg-white text-[#0e0f11]">
+        <div className="mx-auto w-full max-w-[1350px] px-4 py-8 lg:px-6">
+          <div className="rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-[#991b1b]">
             {t("errors.notFound")}
           </div>
         </div>
@@ -23,18 +24,14 @@ export function MarketDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#15191d] text-[#dee3e7]">
+    <div className="min-h-screen bg-white text-[#0e0f11]">
       {state.status === "loading" && (
-        <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
-          <div className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-12 text-center">
-            <p className="text-[#7b8996]">{t("common.loading")}</p>
-          </div>
-        </div>
+        <MarketDetailSkeleton />
       )}
 
       {state.status === "error" && (
-        <div className="mx-auto w-full max-w-[1500px] px-4 py-8 sm:px-6 xl:px-8">
-          <div className="rounded-2xl border border-[#cb3131]/35 bg-[#330707]/35 p-4 text-[#daa]">
+        <div className="mx-auto w-full max-w-[1350px] px-4 py-8 lg:px-6">
+          <div className="rounded-xl border border-[#e23939]/25 bg-[#e23939]/10 p-4 text-[#991b1b]">
             {t("errors.generic")}
           </div>
         </div>

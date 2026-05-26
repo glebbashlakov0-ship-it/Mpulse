@@ -53,7 +53,7 @@ function toMarketsPage(params: URLSearchParams, result: Awaited<ReturnType<typeo
   const total = result.meta?.total ?? currentOffset + result.data.length;
 
   return {
-    data: withUniqueImages(result.data),
+    data: withUniqueImages(dedupeMarkets(result.data)),
     total,
     nextOffset: getNextOffset({
       currentOffset,
@@ -61,6 +61,19 @@ function toMarketsPage(params: URLSearchParams, result: Awaited<ReturnType<typeo
       total,
     }),
   };
+}
+
+function dedupeMarkets(markets: Market[]) {
+  const seen = new Set<string>();
+
+  return markets.filter((market) => {
+    if (seen.has(market.id)) {
+      return false;
+    }
+
+    seen.add(market.id);
+    return true;
+  });
 }
 
 function readMarketsPageCache(cacheKey: string) {
@@ -242,7 +255,7 @@ export function useMarkets(
 
       setState((current) => ({
         status: "ready",
-        data: withUniqueImages([...current.data, ...result.data]),
+        data: withUniqueImages(dedupeMarkets([...current.data, ...result.data])),
         total: result.total,
         nextOffset: result.nextOffset,
         message: null,

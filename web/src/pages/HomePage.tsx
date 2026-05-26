@@ -13,7 +13,6 @@ import {
   Radio,
   Search,
   SlidersHorizontal,
-  Trophy,
   TrendingUp,
   Wallet,
   Zap,
@@ -141,6 +140,15 @@ export function HomePage({
     navigate(getDiscoveryUrl(nextFilters));
   };
 
+  const clearFilters = React.useCallback(() => {
+    setHiddenMarketFilters({
+      sports: false,
+      crypto: false,
+      earnings: false,
+    });
+    navigate(getDiscoveryUrl(defaultMarketFilters));
+  }, [navigate]);
+
   const visibleMarkets = React.useMemo(
     () => markets.filter((market) => !isHiddenByCompactFilter(market, hiddenMarketFilters)),
     [hiddenMarketFilters, markets],
@@ -154,7 +162,9 @@ export function HomePage({
         marketMatchesSearch(market, search),
     );
   }, [filters.search, hiddenMarketFilters, watchlistMarkets]);
-  const displayedMarkets = showWatchlist ? visibleWatchlistMarkets : visibleMarkets;
+  const displayedMarkets = showWatchlist
+    ? visibleWatchlistMarkets
+    : visibleMarkets;
 
   const activeFilterCount = Object.entries(filters).filter(
     ([key, value]) =>
@@ -180,13 +190,8 @@ export function HomePage({
     });
   }, []);
   const handleLoadMore = React.useCallback(() => {
-    if (!user) {
-      onSignupPrompt();
-      return;
-    }
-
     void loadMore();
-  }, [loadMore, onSignupPrompt, user]);
+  }, [loadMore]);
   const openInlineSearch = React.useCallback(() => {
     setIsInlineSearchOpen(true);
     window.requestAnimationFrame(() => inlineSearchInputRef.current?.focus());
@@ -264,9 +269,9 @@ export function HomePage({
 
   return (
     <div className="home-page-shell min-h-screen bg-[#15191d] text-[#dee3e7]">
-      <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1350px] px-4 py-5 lg:px-6">
         {showPageHeader ? (
-          <section className="home-reveal space-y-4">
+          <section className="home-reveal relative z-30 space-y-4">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-semibold tracking-normal text-[#dee3e7]">
@@ -276,7 +281,7 @@ export function HomePage({
               <div className="flex items-center gap-2">
                 <div
                   ref={inlineSearchRef}
-                  className={`relative h-10 shrink-0 overflow-hidden rounded-full transition-[width] duration-300 ease-out ${
+                  className={`relative h-10 shrink-0 overflow-hidden rounded-2xl transition-[width] duration-300 ease-out ${
                     isInlineSearchOpen ? "w-[min(240px,calc(100vw-150px))]" : "w-10"
                   }`}
                 >
@@ -291,19 +296,25 @@ export function HomePage({
                     <Search size={21} />
                   </button>
                   <div
-                    className={`flex h-10 items-center gap-2 rounded-full border border-[#242b32] bg-[#1e2428] px-3 text-[#7b8996] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition-[opacity,transform] duration-200 ease-out ${
+                    className={`relative h-10 rounded-2xl text-[#7b8996] transition-[opacity,transform] duration-200 ease-out ${
                       isInlineSearchOpen
                         ? "pointer-events-auto translate-x-0 opacity-100"
                         : "pointer-events-none translate-x-2 opacity-0"
                     }`}
                   >
-                    <Search size={19} />
+                    <Search
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#7b8996]"
+                      size={18}
+                    />
+                    <kbd className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[#586879]">
+                      /
+                    </kbd>
                     <input
                       ref={inlineSearchInputRef}
                       aria-label="Search current markets"
-                      className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-[#dee3e7] outline-none placeholder:text-[#7b8996]"
+                      className="flex h-10 w-full rounded-2xl border border-transparent bg-[var(--pm-surface-2)] py-1 pl-11 pr-9 text-sm font-medium text-[var(--pm-text-primary)] outline-none placeholder:text-[var(--pm-text-secondary)] transition-[box-shadow,background-color] duration-200 hover:bg-[var(--pm-surface-2)] focus:bg-[var(--pm-surface-2)] focus:ring-0"
                       disabled={!isInlineSearchOpen}
-                      placeholder="Search..."
+                      placeholder="Search markets..."
                       type="search"
                       value={filters.search}
                       onChange={(event) => updateFilter("search", event.target.value)}
@@ -391,50 +402,54 @@ export function HomePage({
               </div>
             ) : null}
 
-            {showFilters && (
+            <div
+              aria-hidden={!showFilters}
+              className="home-filter-region"
+              data-open={showFilters}
+              inert={!showFilters}
+            >
               <div
-                className="home-filter-panel flex flex-wrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                className="home-filter-panel flex w-full flex-wrap items-center gap-x-2 gap-y-2 pt-2 lg:pt-2"
               >
                 <CompactSelect
                   ariaLabel={t("markets.sort")}
                   icon={<TrendingUp size={18} />}
                   displayValue={selectedSortLabel}
+                  options={sortOptions.map((option) => ({
+                    label: getSortOptionLabel(option.value),
+                    value: option.value,
+                  }))}
                   value={filters.sort}
                   onChange={(value) => updateFilter("sort", value as MarketFilters["sort"])}
-                >
-                  {sortOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {getSortOptionLabel(option.value)}
-                    </option>
-                  ))}
-                </CompactSelect>
+                />
 
                 <CompactSelect
                   ariaLabel={t("markets.category")}
                   displayValue={selectedCategoryLabel}
+                  options={[
+                    { label: t("markets.all"), value: "" },
+                    ...categories.map((category) => ({
+                      label: category.label,
+                      value: category.slug,
+                    })),
+                  ]}
                   value={filters.category}
                   onChange={(value) => updateFilter("category", value)}
-                >
-                  <option value="">{t("markets.all")}</option>
-                  {categories.map((category) => (
-                    <option key={category.slug} value={category.slug}>
-                      {category.label}
-                    </option>
-                  ))}
-                </CompactSelect>
+                />
 
                 <CompactSelect
                   ariaLabel={t("markets.status")}
                   displayValue={selectedStatusLabel}
+                  options={[
+                    { label: "Active", value: "live" },
+                    { label: t("markets.all"), value: "all" },
+                    { label: "Upcoming", value: "upcoming" },
+                    { label: t("markets.closed"), value: "closed" },
+                    { label: "Expired", value: "expired" },
+                  ]}
                   value={filters.status}
                   onChange={(value) => updateFilter("status", value as MarketFilters["status"])}
-                >
-                  <option value="live">Active</option>
-                  <option value="all">{t("markets.all")}</option>
-                  <option value="upcoming">Upcoming</option>
-                  <option value="closed">{t("markets.closed")}</option>
-                  <option value="expired">Expired</option>
-                </CompactSelect>
+                />
 
                 <HideToggle
                   label="Hide sports"
@@ -457,8 +472,17 @@ export function HomePage({
                     setHiddenMarketFilters((current) => ({ ...current, earnings: checked }))
                   }
                 />
+                {activeFilterCount > 0 ? (
+                  <button
+                    className="home-soft-button ml-auto h-8 rounded-full px-3 text-xs font-semibold text-[#0093fd] transition hover:bg-[#1e2428] hover:text-[#26a3fd]"
+                    onClick={clearFilters}
+                    type="button"
+                  >
+                    Clear filters
+                  </button>
+                ) : null}
               </div>
-            )}
+            </div>
           </section>
         ) : null}
 
@@ -495,9 +519,9 @@ export function HomePage({
           >
             {showWatchlist ? (
               <MarketGrid
-                columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-3"
+                columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-4"
                 markets={displayedMarkets}
-                onOpenMarket={(market) => navigate(`/markets/${market.id}`)}
+                onOpenMarket={(market) => navigate(`/markets/${encodeURIComponent(market.slug ?? market.id)}`)}
                 onWatchlistToggle={onWatchlistToggle}
                 watchlistIds={watchlistIds}
               />
@@ -508,7 +532,7 @@ export function HomePage({
                 isLoadingMore={marketsState.isLoadingMore}
                 markets={displayedMarkets}
                 onLoadMore={handleLoadMore}
-                onOpenMarket={(market) => navigate(`/markets/${market.id}`)}
+                onOpenMarket={(market) => navigate(`/markets/${encodeURIComponent(market.slug ?? market.id)}`)}
                 onWatchlistToggle={user ? onWatchlistToggle : undefined}
                 surface={surface}
                 total={marketsState.total}
@@ -553,25 +577,81 @@ function MarketSurface({
   };
 
   if (surface === "breaking") {
-    return <BreakingSurface markets={markets} onOpenMarket={onOpenMarket} />;
+    return (
+      <>
+        <BreakingSurface markets={markets} onOpenMarket={onOpenMarket} />
+        <LoadMoreControl
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          onLoadMore={onLoadMore}
+          shown={markets.length}
+          total={total}
+        />
+      </>
+    );
   }
 
   if (surface === "sports" || surface === "esports") {
-    return <SportsbookSurface esport={surface === "esports"} markets={markets} />;
+    return (
+      <>
+        <CategorySurface
+          columns="grid-cols-1 md:grid-cols-2 2xl:grid-cols-3"
+          filters={filters}
+          markets={markets}
+          onOpenMarket={onOpenMarket}
+          onWatchlistToggle={onWatchlistToggle}
+          sidebarItems={getSidebarItems(surface, markets)}
+          surface={surface}
+          topTabs={
+            surface === "esports"
+              ? ["All", "Dota 2", "LoL", "CS2", "Valorant"]
+              : ["All", "EPL", "NBA", "MLB", "UFC", "Soccer", "Tennis"]
+          }
+          watchlistIds={watchlistIds}
+        />
+        <LoadMoreControl
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          onLoadMore={onLoadMore}
+          shown={markets.length}
+          total={total}
+        />
+      </>
+    );
   }
 
   if (surface === "mentions") {
-    return <MentionsSurface markets={markets} onOpenMarket={onOpenMarket} />;
+    return (
+      <>
+        <MentionsSurface markets={markets} onOpenMarket={onOpenMarket} />
+        <LoadMoreControl
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          onLoadMore={onLoadMore}
+          shown={markets.length}
+          total={total}
+        />
+      </>
+    );
   }
 
   if (surface === "weather") {
     return (
-      <WeatherSurface
-        markets={markets}
-        onOpenMarket={onOpenMarket}
-        onWatchlistToggle={onWatchlistToggle}
-        watchlistIds={watchlistIds}
-      />
+      <>
+        <WeatherSurface
+          markets={markets}
+          onOpenMarket={onOpenMarket}
+          onWatchlistToggle={onWatchlistToggle}
+          watchlistIds={watchlistIds}
+        />
+        <LoadMoreControl
+          hasMore={hasMore}
+          isLoadingMore={isLoadingMore}
+          onLoadMore={onLoadMore}
+          shown={markets.length}
+          total={total}
+        />
+      </>
     );
   }
 
@@ -620,7 +700,7 @@ function MarketSurface({
             ),
           )}
         </div>
-        <MarketGrid {...gridProps} columns="grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4" />
+        <MarketGrid {...gridProps} columns="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" />
         <LoadMoreControl
           hasMore={hasMore}
           isLoadingMore={isLoadingMore}
@@ -750,7 +830,7 @@ function BreakingSurface({
   markets: Market[];
   onOpenMarket: (market: Market) => void;
 }) {
-  const rows = markets.slice(0, 9);
+  const rows = markets;
   const dateLabel = new Intl.DateTimeFormat("en", {
     day: "numeric",
     month: "long",
@@ -990,7 +1070,7 @@ function SportsMarketRow({
           <span className="mr-2 text-[#cb3131]">● LIVE</span>
           <span>{index % 2 === 0 ? "Today" : "Final"}</span>
           <span className="mx-1">·</span>
-          <span>{formatMoney(market.volume)} Vol.</span>
+          <span>{formatMoney(market.volume)} Our Vol.</span>
         </div>
         <span className="rounded-xl bg-[#242b32] px-3 py-1.5 text-sm font-bold text-[#d2d8df]">
           Game View <ChevronRight className="inline" size={14} />
@@ -1136,7 +1216,7 @@ function MentionsSurface({
         Live events where you can predict the words and phrases that will be said.
       </p>
       <div className="mt-8 space-y-4">
-        {markets.slice(0, 8).map((market, index) => (
+        {markets.map((market, index) => (
           <button
             className="home-stagger-item grid w-full grid-cols-[64px_76px_minmax(0,1fr)_minmax(180px,360px)_86px] items-center gap-5 rounded-xl border border-[#242b32] bg-[#181d21] p-5 text-left transition hover:border-[#0093fd]/45 hover:bg-[#1e2428] max-lg:grid-cols-[54px_64px_minmax(0,1fr)_80px] max-lg:[&_.mention-tags]:hidden"
             key={market.id}
@@ -1156,7 +1236,7 @@ function MentionsSurface({
               <span className="mt-2 flex flex-wrap items-center gap-2 text-sm font-semibold text-[#7b8996]">
                 <span className="rounded-md bg-[#2e3841] px-2 py-1">{getMentionTime(index)}</span>
                 {market.status === "live" ? <span className="text-[#cb3131]">LIVE</span> : null}
-                <span>{formatMoney(market.volume)} Vol.</span>
+                <span>{formatMoney(market.volume)} Our Vol.</span>
               </span>
             </span>
             <span className="mention-tags flex min-w-0 justify-end gap-2">
@@ -1206,7 +1286,7 @@ function WeatherSurface({
           />
         </div>
         <GroupedWeatherCards
-          markets={markets.slice(0, 10)}
+          markets={markets}
           onOpenMarket={onOpenMarket}
           onWatchlistToggle={onWatchlistToggle}
           watchlistIds={watchlistIds}
@@ -1322,11 +1402,15 @@ function MarketGrid({
         <div className="home-stagger-item" key={market.id} style={getMotionDelayStyle(index)}>
           <MarketCard
             market={market}
-            onOpen={() => onOpenMarket(market)}
+            onOpen={() => {
+              onOpenMarket(market);
+            }}
             isWatched={watchlistIds.has(market.id)}
             imageLoading={index < 8 ? "eager" : "lazy"}
             imagePriority={index < 8 ? "high" : "auto"}
-            onWatchlistToggle={onWatchlistToggle ? () => onWatchlistToggle(market) : undefined}
+            onWatchlistToggle={
+              onWatchlistToggle ? () => onWatchlistToggle(market) : undefined
+            }
           />
         </div>
       ))}
@@ -1360,9 +1444,16 @@ function LoadMoreControl({
           className="home-soft-button rounded-2xl border border-[#242b32] bg-[#1e2428] px-5 py-3 text-sm font-semibold text-[#dee3e7] transition hover:border-[#0093fd]/50 hover:bg-[#2e3841] disabled:opacity-60"
           onClick={onLoadMore}
           disabled={isLoadingMore}
+          aria-label={isLoadingMore ? "Loading more markets" : "Load more markets"}
           type="button"
         >
-          {isLoadingMore ? "Loading..." : "Load more"}
+          {isLoadingMore ? (
+            <span className="block h-5 w-24 py-0.5" aria-hidden="true">
+              <span className="pm-shimmer block h-4 w-full rounded-full bg-[#242b32]" />
+            </span>
+          ) : (
+            "Load more"
+          )}
         </button>
       ) : total !== null ? (
         <span className="text-sm font-medium text-[#7b8996]">
@@ -1636,7 +1727,6 @@ function getSidebarItems(surface: DiscoverySurface, markets: Market[]): SurfaceS
       { label: "All", count: markets.length },
       { label: "Trending", count: dynamicCount("trending", 12), icon: <TrendingUp size={18} /> },
       { label: "Live", count: dynamicCount("live", 24), icon: <CircleDot size={18} /> },
-      { label: "Rewards", count: dynamicCount("rewards", 8), icon: <Trophy size={18} /> },
       { label: "New", count: dynamicCount("new", 6), icon: <Zap size={18} /> },
       { label: "Markets", count: dynamicCount("market", 36), icon: <Wallet size={18} /> },
     ]
@@ -1829,45 +1919,118 @@ function stableHash(value: string) {
 
 function CompactSelect({
   ariaLabel,
-  children,
   displayValue,
   icon,
+  options,
   value,
   onChange,
 }: {
   ariaLabel: string;
-  children: React.ReactNode;
   displayValue: string;
   icon?: React.ReactNode;
+  options: Array<{ label: string; value: string }>;
   value: string;
   onChange: (value: string) => void;
 }) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        containerRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+
+      setIsOpen(false);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isOpen]);
+
   return (
-    <label
-      className="home-soft-button relative inline-flex h-11 min-w-fit cursor-pointer items-center gap-2 overflow-hidden rounded-full bg-[#242b32] pl-4 pr-9 text-sm font-bold text-[#d2d8df] transition hover:bg-[#2e3841] focus-within:bg-[#2e3841]"
-    >
-      {icon ? <span className="pointer-events-none relative z-10 text-[#d2d8df]">{icon}</span> : null}
-      <span className="pointer-events-none relative z-10 max-w-[180px] truncate pr-1">{displayValue}</span>
-      <select
+    <div className="relative min-w-fit" ref={containerRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
         aria-label={ariaLabel}
-        className="absolute inset-0 z-20 h-full w-full cursor-pointer appearance-none rounded-full border-0 bg-transparent opacity-0 outline-none"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+        className={`home-soft-button inline-flex h-8 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-0 ${
+          isOpen
+            ? "border-[#2e3841] bg-[#242b32] text-[#dee3e7]"
+            : "border-[#242b32] bg-[#1e2428] text-[#dee3e7] hover:bg-[#242b32]"
+        }`}
+        onClick={() => setIsOpen((current) => !current)}
+        type="button"
       >
-        {children}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-3 z-10 size-4 text-[#7b8996]" />
-    </label>
+        {icon ? <span className="text-[#7b8996]">{icon}</span> : null}
+        <span className="max-w-[180px] truncate">{displayValue}</span>
+        <ChevronDown
+          className={`size-3 text-[#7b8996] transition-transform duration-150 ${
+            isOpen ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      {isOpen ? (
+        <div
+          className="absolute left-0 top-full z-[90] mt-2 max-h-72 min-w-full overflow-y-auto rounded-2xl border border-[#242b32] bg-[#181d21] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.36)]"
+          role="menu"
+        >
+          {options.map((option) => {
+            const isSelected = option.value === value;
+
+            return (
+              <button
+                className={`flex h-9 w-full min-w-40 items-center justify-between gap-3 rounded-xl px-3 text-left text-sm font-semibold transition ${
+                  isSelected
+                    ? "bg-[#112f45] text-[#26a3fd]"
+                    : "text-[#dee3e7] hover:bg-[#1e2428]"
+                }`}
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                role="menuitemradio"
+                aria-checked={isSelected}
+                type="button"
+              >
+                <span className="truncate">{option.label}</span>
+                {isSelected ? <span className="size-1.5 rounded-full bg-[#26a3fd]" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
 function getSortOptionLabel(value: MarketFilters["sort"]) {
   if (value === "trending") {
-    return "24hr Volume";
+    return "Trending";
   }
 
   if (value === "volume") {
-    return "Total Volume";
+    return "Our volume";
   }
 
   if (value === "closing_soon") {
@@ -1906,9 +2069,9 @@ function HideToggle({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="home-soft-button inline-flex h-11 min-w-fit items-center gap-2 rounded-full px-1 pr-3 text-sm font-semibold text-[#d2d8df]">
+    <label className="home-soft-button inline-flex h-8 min-w-fit cursor-pointer items-center gap-2 rounded-full px-1 pr-2 text-xs font-medium text-[#dee3e7]">
       <span
-        className={`grid size-6 place-items-center rounded-xl border transition ${
+        className={`grid size-4 place-items-center rounded-[4px] border transition ${
           checked ? "border-[#0093fd] bg-[#0093fd]" : "border-[#2e3841] bg-[#181d21]"
         }`}
       >
@@ -1918,7 +2081,7 @@ function HideToggle({
           checked={checked}
           onChange={(event) => onChange(event.target.checked)}
         />
-        {checked ? <span className="size-2 rounded-sm bg-white" /> : null}
+        {checked ? <span className="size-1.5 rounded-[2px] bg-white" /> : null}
       </span>
       {label}
     </label>

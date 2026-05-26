@@ -1293,22 +1293,6 @@ function knownTeamImage(label: string) {
     return `${polymarketUploadBase}/Real%20Oviedo-bfdc21095c.png`;
   }
 
-  if (normalized === "team spirit") {
-    return "https://commons.wikimedia.org/wiki/Special:FilePath/Team_Spirit_new_em.svg";
-  }
-
-  if (normalized === "aurora" || normalized === "aurora gaming") {
-    return "https://commons.wikimedia.org/wiki/Special:FilePath/Aurora_Gaming_logo.svg";
-  }
-
-  if (normalized === "palace" || normalized === "crystal palace") {
-    return "https://upload.wikimedia.org/wikipedia/en/a/a2/Crystal_Palace_FC_logo_%282022%29.svg";
-  }
-
-  if (normalized === "arsenal") {
-    return "https://upload.wikimedia.org/wikipedia/en/5/53/Arsenal_FC.svg";
-  }
-
   return null;
 }
 

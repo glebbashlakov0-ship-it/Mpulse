@@ -190,8 +190,13 @@ export function HomePage({
     });
   }, []);
   const handleLoadMore = React.useCallback(() => {
+    if (!user) {
+      onSignupPrompt();
+      return;
+    }
+
     void loadMore();
-  }, [loadMore]);
+  }, [loadMore, onSignupPrompt, user]);
   const openInlineSearch = React.useCallback(() => {
     setIsInlineSearchOpen(true);
     window.requestAnimationFrame(() => inlineSearchInputRef.current?.focus());
@@ -327,11 +332,6 @@ export function HomePage({
                   onClick={() => setShowFilters(!showFilters)}
                 >
                   <SlidersHorizontal size={21} />
-                  {activeFilterCount > 0 ? (
-                    <span className="pointer-events-none absolute -right-0.5 -top-0.5 z-20 grid h-3.5 min-w-3.5 place-items-center rounded-full border border-[#15191d] bg-[#0093fd] px-0.5 text-[9px] font-black leading-none text-white shadow-[0_0_8px_rgba(0,147,253,0.55)]">
-                      {activeFilterCount > 9 ? "9+" : activeFilterCount}
-                    </span>
-                  ) : null}
                 </IconButton>
                 <IconButton
                   label="Watchlist"
@@ -533,7 +533,7 @@ export function HomePage({
                 markets={displayedMarkets}
                 onLoadMore={handleLoadMore}
                 onOpenMarket={(market) => navigate(`/markets/${encodeURIComponent(market.slug ?? market.id)}`)}
-                onWatchlistToggle={user ? onWatchlistToggle : undefined}
+                onWatchlistToggle={user ? onWatchlistToggle : onSignupPrompt}
                 surface={surface}
                 total={marketsState.total}
                 watchlistIds={watchlistIds}

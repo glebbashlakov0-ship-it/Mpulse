@@ -388,7 +388,7 @@ html[data-theme="dark"] .market-detail-page :where([class~="bg-white/95"]) {
   background-color: rgb(24 29 33 / 0.95) !important;
 }
 
-html[data-theme="dark"] .market-detail-page :where([class~="bg-[#f4f5f6]"], [class~="bg-[#eef1f4]"]) {
+html[data-theme="dark"] .market-detail-page :where([class~="bg-[#f4f5f6]"], [class~="bg-[#eef1f4]"], [class~="bg-[#f7f8fa]"]) {
   background-color: var(--pm-surface-2) !important;
 }
 

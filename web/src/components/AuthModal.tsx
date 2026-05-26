@@ -1,4 +1,3 @@
-import { X } from "lucide-react";
 import * as React from "react";
 import { AuthPage as AuthForm } from "./AuthPage";
 import type { AuthUser } from "../lib/types";
@@ -54,14 +53,6 @@ export function AuthModal({
         className="app-modal-panel relative max-h-[calc(100vh-48px)] w-full max-w-[540px] overflow-y-auto"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <button
-          aria-label="Close"
-          className="home-soft-button absolute right-3 top-3 z-10 grid size-8 place-items-center rounded-full border border-[#242b32] bg-[#15191d] text-[#7b8996] transition hover:border-[#0093fd]/60 hover:text-[#dee3e7]"
-          onClick={onClose}
-          type="button"
-        >
-          <X size={16} />
-        </button>
         <AuthForm
           mode={mode}
           onModeChange={onModeChange}

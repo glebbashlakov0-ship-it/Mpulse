@@ -33,8 +33,8 @@ export type AppConfig = {
   complianceAdminEmails: string[];
   financeAdminEmails: string[];
   superAdminEmails: string[];
-  adminPanelUsername: string;
-  adminPanelPassword: string;
+  adminPanelUsername: string | null;
+  adminPanelPassword: string | null;
   adminPanelCookieName: string;
   adminPanelTtlMs: number;
   walletDepositWebhookSecret: string | null;
@@ -128,6 +128,20 @@ function isPlaceholderSecret(value: string | null): boolean {
   return placeholderSecretTerms.some((term) => normalized.includes(term));
 }
 
+function vercelBaseUrlFromEnv(): string | null {
+  const productionUrl = stringFromEnv("VERCEL_PROJECT_PRODUCTION_URL");
+  if (productionUrl) {
+    return productionUrl.startsWith("http") ? productionUrl : `https://${productionUrl}`;
+  }
+
+  const deploymentUrl = stringFromEnv("VERCEL_URL");
+  if (deploymentUrl) {
+    return deploymentUrl.startsWith("http") ? deploymentUrl : `https://${deploymentUrl}`;
+  }
+
+  return null;
+}
+
 export function getConfig(): AppConfig {
   const nodeEnv = process.env.NODE_ENV ?? "development";
   const appMode = process.env.APP_MODE ?? "local";
@@ -171,9 +185,6 @@ export function getConfig(): AppConfig {
     }
     if (authRateLimitBackend === "memory") {
       throw new Error("AUTH_RATE_LIMIT_BACKEND must be redis or external in production.");
-    }
-    if (!adminPanelUsername || !adminPanelPassword) {
-      throw new Error("ADMIN_PANEL_USERNAME and ADMIN_PANEL_PASSWORD are required in production.");
     }
     if (adminPanelUsername === "admin" && adminPanelPassword === "admin") {
       throw new Error("ADMIN_PANEL_USERNAME and ADMIN_PANEL_PASSWORD must not use local defaults in production.");
@@ -222,8 +233,8 @@ export function getConfig(): AppConfig {
     complianceAdminEmails: listFromEnv("COMPLIANCE_ADMIN_EMAILS", []),
     financeAdminEmails: listFromEnv("FINANCE_ADMIN_EMAILS", []),
     superAdminEmails: listFromEnv("SUPER_ADMIN_EMAILS", []),
-    adminPanelUsername: adminPanelUsername ?? "admin",
-    adminPanelPassword: adminPanelPassword ?? "admin",
+    adminPanelUsername: adminPanelUsername ?? (nodeEnv === "production" ? null : "admin"),
+    adminPanelPassword: adminPanelPassword ?? (nodeEnv === "production" ? null : "admin"),
     adminPanelCookieName: process.env.ADMIN_PANEL_COOKIE_NAME ?? "pulse_admin_session",
     adminPanelTtlMs: numberFromEnv("ADMIN_PANEL_TTL_MS", 1000 * 60 * 60 * 12, { min: 60_000 }),
     walletDepositWebhookSecret,
@@ -235,7 +246,10 @@ export function getConfig(): AppConfig {
     databaseSsl: booleanFromEnv("DATABASE_SSL", nodeEnv === "production"),
     resendApiKey: stringFromEnv("RESEND_API_KEY") ?? "local",
     emailFromAddress: stringFromEnv("EMAIL_FROM_ADDRESS") ?? "Pulse Market <noreply@pulsemarket.app>",
-    appBaseUrl: urlFromEnv("APP_BASE_URL", nodeEnv === "production" ? "https://pulsemarket.app" : "http://localhost:5173"),
+    appBaseUrl: urlFromEnv(
+      "APP_BASE_URL",
+      vercelBaseUrlFromEnv() ?? (nodeEnv === "production" ? "https://pulsemarket.app" : "http://localhost:5173"),
+    ),
     cacheTtlMs: {
       activeMarkets: numberFromEnv("CACHE_TTL_ACTIVE_MARKETS_MS", 60_000),
       closedMarkets: numberFromEnv("CACHE_TTL_CLOSED_MARKETS_MS", 180_000),

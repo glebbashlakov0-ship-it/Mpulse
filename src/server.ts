@@ -568,7 +568,6 @@ const requiredProductionEnv = [
   "SESSION_COOKIE_SECURE",
   "CORS_ALLOWED_ORIGINS",
   "WALLET_DEPOSIT_WEBHOOK_SECRET",
-  "APP_BASE_URL",
 ];
 
 const isEntrypoint = process.argv[1]

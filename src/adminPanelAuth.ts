@@ -13,7 +13,10 @@ export type AdminPanelSession = {
 
 export class AdminPanelAuthError extends Error {
   constructor(
-    public readonly code: "ADMIN_PANEL_UNAUTHENTICATED" | "ADMIN_PANEL_INVALID_LOGIN",
+    public readonly code:
+      | "ADMIN_PANEL_UNAUTHENTICATED"
+      | "ADMIN_PANEL_INVALID_LOGIN"
+      | "ADMIN_PANEL_UNAVAILABLE",
     message: string,
     public readonly statusCode = 401,
   ) {
@@ -25,6 +28,14 @@ export function buildAdminPanelAuthService(config: AppConfig) {
   function login(input: { username?: unknown; password?: unknown }) {
     const username = typeof input.username === "string" ? input.username.trim() : "";
     const password = typeof input.password === "string" ? input.password : "";
+
+    if (!config.adminPanelUsername || !config.adminPanelPassword) {
+      throw new AdminPanelAuthError(
+        "ADMIN_PANEL_UNAVAILABLE",
+        "Admin panel credentials are not configured.",
+        503,
+      );
+    }
 
     if (
       !constantTimeEquals(username, config.adminPanelUsername) ||

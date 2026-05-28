@@ -27,6 +27,9 @@ const managedEnvKeys = [
   "ADMIN_PANEL_TTL_MS",
   "WALLET_DEPOSIT_WEBHOOK_SECRET",
   "DATABASE_URL",
+  "APP_BASE_URL",
+  "VERCEL_PROJECT_PRODUCTION_URL",
+  "VERCEL_URL",
 ];
 
 function withEnv(values: Record<string, string | undefined>, run: () => void) {
@@ -109,6 +112,19 @@ test("production config requires explicit secure guardrails", () => {
     assert.deepEqual(config.corsAllowedOrigins, ["https://market.example"]);
     assert.equal(config.databaseUrl, productionEnv.DATABASE_URL);
     assert.equal(config.authRateLimitBackend, "external");
+  });
+
+  withEnv({
+    ...productionEnv,
+    ADMIN_PANEL_USERNAME: undefined,
+    ADMIN_PANEL_PASSWORD: undefined,
+    VERCEL_PROJECT_PRODUCTION_URL: "mpulse.vercel.app",
+  }, () => {
+    const config = getConfig();
+
+    assert.equal(config.adminPanelUsername, null);
+    assert.equal(config.adminPanelPassword, null);
+    assert.equal(config.appBaseUrl, "https://mpulse.vercel.app");
   });
 
   withEnv({ ...productionEnv, REDIS_URL: "redis://localhost:6379" }, () => {

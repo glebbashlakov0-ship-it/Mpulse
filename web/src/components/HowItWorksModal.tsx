@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 const steps = [
   {
     image: "/how-it-works-pick.png",
-    title: "1. Pick a Pulse Market",
+    title: "1. Pick a PulseMarket",
     body:
       "Choose a market and decide whether the outcome is likely to happen. Prices update in real time as traders move the odds.",
   },

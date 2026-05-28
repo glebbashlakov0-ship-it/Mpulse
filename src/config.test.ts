@@ -21,6 +21,10 @@ const managedEnvKeys = [
   "COMPLIANCE_ADMIN_EMAILS",
   "FINANCE_ADMIN_EMAILS",
   "SUPER_ADMIN_EMAILS",
+  "ADMIN_PANEL_USERNAME",
+  "ADMIN_PANEL_PASSWORD",
+  "ADMIN_PANEL_COOKIE_NAME",
+  "ADMIN_PANEL_TTL_MS",
   "WALLET_DEPOSIT_WEBHOOK_SECRET",
   "DATABASE_URL",
 ];
@@ -94,6 +98,8 @@ test("production config requires explicit secure guardrails", () => {
     CORS_ALLOWED_ORIGINS: "https://market.example",
     WALLET_DEPOSIT_WEBHOOK_SECRET: "prod-webhook-secret-32-characters-long",
     DATABASE_URL: "postgres://market:market@localhost:5432/market_pulse",
+    ADMIN_PANEL_USERNAME: "ops",
+    ADMIN_PANEL_PASSWORD: "prod-admin-password-32-characters",
   };
 
   withEnv(productionEnv, () => {

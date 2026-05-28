@@ -1,4 +1,5 @@
 import { categoryFallbackImagePools, categoryFallbackImages } from "./constants";
+import { formatMarketText } from "./marketText";
 import type { Market, LocalPosition, PortfolioSummary, RelatedMarket } from "./types";
 
 type MarketImageLike = Pick<Market, "id" | "slug" | "title" | "category"> & {
@@ -269,7 +270,7 @@ export function getOutcomeActionLabel(outcomeName: string, isBinaryMarket: boole
   const normalizedName = trimmedName.toLowerCase();
 
   if (!isBinaryMarket) {
-    return trimmedName || "Trade";
+    return formatMarketText(trimmedName) || "Trade";
   }
 
   if (normalizedName === "yes") {
@@ -280,7 +281,7 @@ export function getOutcomeActionLabel(outcomeName: string, isBinaryMarket: boole
     return "No";
   }
 
-  return trimmedName || "Trade";
+  return formatMarketText(trimmedName) || "Trade";
 }
 
 export function getAveragePositionPrice(position: LocalPosition) {

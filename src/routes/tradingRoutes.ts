@@ -16,6 +16,7 @@ import {
 import type { PortfolioRepository } from "../portfolioRepository.js";
 import type { MarketActivityRepository } from "../marketActivityRepository.js";
 import type { SettlementRepository } from "../settlement.js";
+import { syncTradingMarketActivity } from "../tradingActivitySync.js";
 
 function getIdempotencyKey(
   request: FastifyRequest,
@@ -313,7 +314,7 @@ export function registerTradingRoutes(
     }
 
     if (!result.idempotent) {
-      await syncMarketActivity({
+      await syncTradingMarketActivity({
         repository: marketActivityRepository,
         displayName: context?.user.displayName ?? "Pulse Trader",
         result,
@@ -428,74 +429,4 @@ export function registerTradingRoutes(
       getAuthContext(request) ? settlementRepository : undefined,
     ),
   }));
-}
-
-type SuccessfulOrderResult = Extract<Awaited<ReturnType<typeof placeLocalOrder>>, { ok: true }>;
-
-async function syncMarketActivity({
-  repository,
-  displayName,
-  result,
-}: {
-  repository?: MarketActivityRepository;
-  displayName: string;
-  result: SuccessfulOrderResult;
-}) {
-  if (!repository?.recordTrade) {
-    return;
-  }
-
-  await repository.recordTrade({
-    id: result.trade.id,
-    marketId: result.trade.marketId,
-    userId: result.trade.userId,
-    displayName,
-    side: result.trade.side,
-    action: result.trade.action,
-    amount: result.trade.stakeAmount ?? result.trade.amount,
-    price: result.trade.price,
-    shares: result.trade.shares,
-    createdAt: result.trade.createdAt,
-  });
-
-  const position = result.portfolio.positions.find(
-    (candidate) => candidate.marketId === result.trade.marketId,
-  );
-
-  if (!repository.upsertPosition || !repository.deletePosition) {
-    return;
-  }
-
-  for (const side of ["yes", "no"] as const) {
-    const shares = side === "yes" ? position?.yesShares ?? 0 : position?.noShares ?? 0;
-    const totalCost = side === "yes" ? position?.yesCost ?? 0 : position?.noCost ?? 0;
-    const lastPrice =
-      side === "yes" ? position?.lastYesPrice ?? null : position?.lastNoPrice ?? null;
-
-    if (!position || shares <= 0) {
-      await repository.deletePosition({
-        marketId: result.trade.marketId,
-        userId: result.trade.userId,
-        side,
-      });
-      continue;
-    }
-
-    const price = lastPrice ?? (shares > 0 ? totalCost / shares : 0);
-    const value = shares * (price ?? 0);
-
-    await repository.upsertPosition({
-      id: `${result.trade.marketId}:${result.trade.userId}:${side}`,
-      userId: result.trade.userId,
-      displayName,
-      side,
-      shares,
-      totalCost,
-      averagePrice: shares > 0 ? totalCost / shares : null,
-      lastPrice,
-      value,
-      pnl: value - totalCost,
-      updatedAt: position.lastTradeAt,
-    });
-  }
 }

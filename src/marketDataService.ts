@@ -7,6 +7,7 @@ import {
   normalizeEvent,
   normalizeMarket,
   normalizeMarketDetail,
+  normalizeDateSummary,
   normalizePriceSummary,
   toNumber,
 } from "./normalizers.js";
@@ -38,6 +39,11 @@ import {
   type MarketActivityRepository,
   type MarketTradeActivityRecord,
 } from "./marketActivityRepository.js";
+import type {
+  MarketPriceHistoryRepository,
+  PulseMarketPriceHistoryPoint,
+} from "./marketPriceHistoryRepository.js";
+import { getMarketPriceHistoryScope } from "./marketPriceHistoryScope.js";
 
 type PolymarketClient = {
   getEvents: <T>(query: Record<string, unknown>) => Promise<T>;
@@ -174,6 +180,7 @@ const maxDiscoveryMarketsPerEvent = 1;
 const polymarketDiscoveryEventLimit = 150;
 const polymarketEventPageLimit = 100;
 const polymarketMarketPageLimit = 100;
+const maxGroupedMarketTradeLookups = 24;
 const marketListCacheScope = "markets:list:v7";
 const foregroundCacheLoads = new Map<string, Promise<unknown>>();
 const backgroundCacheRefreshes = new Set<string>();
@@ -1324,6 +1331,7 @@ export function buildMarketDataService({
   polymarket,
   marketRepository,
   marketActivityRepository,
+  priceHistoryRepository,
   getSnapshots,
 }: {
   config: AppConfig;
@@ -1331,6 +1339,7 @@ export function buildMarketDataService({
   polymarket: PolymarketClient;
   marketRepository?: MarketRepository;
   marketActivityRepository?: MarketActivityRepository;
+  priceHistoryRepository?: MarketPriceHistoryRepository;
   getSnapshots?: (marketId: string, limit?: number) => MarketSnapshot[] | Promise<MarketSnapshot[]>;
 }) {
   const visibilityRules = buildKeywordVisibilityRules(config.blockedMarketTerms);
@@ -1641,45 +1650,7 @@ export function buildMarketDataService({
     const normalized = rawMarketsResult.value
       .filter((market) => isMarketVisible(market, visibilityRules))
       .map(normalizeMarket)
-      .filter((market) => {
-        if (filter.active !== undefined && market.active !== filter.active) {
-          return false;
-        }
-
-        if (filter.closed !== undefined && market.closed !== filter.closed) {
-          return false;
-        }
-
-        if (!matchesCategoryFilter(market, filter.category)) {
-          return false;
-        }
-
-        if (!matchesTopicFilter(market, filter.topic)) {
-          return false;
-        }
-
-        if (filter.search) {
-          const text = getSearchText(market);
-          const terms = filter.search.toLowerCase().split(/\s+/).filter(Boolean);
-          if (!terms.every((term) => text.includes(term))) {
-            return false;
-          }
-        }
-
-        if (filter.status && getStatus(market) !== filter.status) {
-          return false;
-        }
-
-        if (filter.minVolume !== null && market.volume < filter.minVolume) {
-          return false;
-        }
-
-        if (filter.maxVolume !== null && market.volume > filter.maxVolume) {
-          return false;
-        }
-
-        return isWithinDateRange(market, filter.closingBefore, filter.closingAfter);
-      });
+      .filter((market) => marketMatchesListFilter(market, filter));
     const sorted = sortMarkets(normalized, filter.sort, filter.search);
     const discoverySorted = sorted;
     const compactData = discoverySorted
@@ -1701,16 +1672,105 @@ export function buildMarketDataService({
     };
   }
 
+  async function buildStoredMarketList(filter: ParsedMarketFilter): Promise<MarketListResult | null> {
+    if (!marketRepository) {
+      return null;
+    }
+
+    const storedMarkets = await marketRepository.listMarkets(
+      Math.max(filter.offset + filter.limit, config.defaultMarketLimit),
+    );
+    const filtered = storedMarkets.filter((market) => marketMatchesListFilter(market, filter));
+    const sorted = sortMarkets(filtered, filter.sort, filter.search);
+    const compactData = sorted
+      .slice(filter.offset, filter.offset + filter.limit)
+      .map(compactMarketForList);
+    const data = await enrichMarketsWithOwnActivity(compactData);
+    const nextOffset = filter.offset + filter.limit;
+
+    if (data.length === 0) {
+      return null;
+    }
+
+    return {
+      data,
+      meta: {
+        limit: filter.limit,
+        offset: filter.offset,
+        next_cursor: nextOffset < sorted.length ? encodeCursor(nextOffset) : null,
+        total: sorted.length,
+        sort: filter.sort,
+        lastSyncedAt: null,
+        isStale: true,
+        sourceStatus: "fallback",
+        warnings: ["Polymarket is unavailable; returning stored Pulse Market data."],
+      },
+    };
+  }
+
   async function listMarkets(params: MarketListParams): Promise<MarketListResult> {
     const filter = toMarketFilter(params, config);
-    const cached = await loadWithStaleFallback({
-      cache,
-      key: getListCacheKey(filter),
-      ttlMs: getListCacheTtlMs(filter, config),
-      loader: () => buildMarketList(filter),
-    });
+    let cached: { value: MarketListResult; meta: MarketDataMeta };
+
+    try {
+      cached = await loadWithStaleFallback({
+        cache,
+        key: getListCacheKey(filter),
+        ttlMs: getListCacheTtlMs(filter, config),
+        loader: () => buildMarketList(filter),
+      });
+    } catch (error) {
+      if (error instanceof MarketDataError && error.code === "UPSTREAM_UNAVAILABLE") {
+        const stored = await buildStoredMarketList(filter);
+        if (stored) {
+          return stored;
+        }
+      }
+
+      throw error;
+    }
 
     return withListCacheMeta(cached.value, cached.meta);
+  }
+
+  function marketMatchesListFilter(market: NormalizedMarket, filter: ParsedMarketFilter) {
+    if (filter.active !== undefined && market.active !== filter.active) {
+      return false;
+    }
+
+    if (filter.closed !== undefined && market.closed !== filter.closed) {
+      return false;
+    }
+
+    if (!matchesCategoryFilter(market, filter.category)) {
+      return false;
+    }
+
+    if (!matchesTopicFilter(market, filter.topic)) {
+      return false;
+    }
+
+    if (filter.search) {
+      const text = getSearchText(market);
+      const terms = filter.search.toLowerCase().split(/\s+/).filter(Boolean);
+      if (!terms.every((term) => text.includes(term))) {
+        return false;
+      }
+    }
+
+    if (filter.status && getStatus(market) !== filter.status) {
+      return false;
+    }
+
+    if (filter.minVolume !== null && market.volume < filter.minVolume) {
+      return false;
+    }
+
+    if (filter.maxVolume !== null && market.volume > filter.maxVolume) {
+      return false;
+    }
+
+    return isWithinDateRange(market, filter.closingBefore, filter.closingAfter);
   }
 
   async function enrichMarketsWithOwnActivity(markets: NormalizedMarket[]) {
@@ -1728,7 +1788,10 @@ export function buildMarketDataService({
 
     const groupMarkets = market.group_markets ?? [];
     if (groupMarkets.length > 0) {
-      const tradesByMarketId = await listOwnTradesForMarkets(groupMarkets);
+      const tradesByMarketId =
+        groupMarkets.length <= maxGroupedMarketTradeLookups
+          ? await listOwnTradesForMarkets(groupMarkets)
+          : new Map<string, MarketTradeActivityRecord[]>();
       const groupedStats = buildGroupedMarketStats(groupMarkets, tradesByMarketId);
 
       return {
@@ -1767,20 +1830,27 @@ export function buildMarketDataService({
   ): Promise<NormalizedMarketDetail> {
     const groupMarkets = detail.group_markets ?? [];
     const tradesByMarketId =
-      marketActivityRepository && groupMarkets.length > 0
+      marketActivityRepository &&
+      groupMarkets.length > 0 &&
+      groupMarkets.length <= maxGroupedMarketTradeLookups
         ? await listOwnTradesForMarkets(groupMarkets)
         : new Map<string, MarketTradeActivityRecord[]>();
+    const hasGroupedTrades = [...tradesByMarketId.values()].some((trades) => trades.length > 0);
     const groupedStats =
-      groupMarkets.length > 0
+      groupMarkets.length > 0 && hasGroupedTrades
         ? buildGroupedMarketStats(groupMarkets, tradesByMarketId)
         : null;
     const enrichedGroups = groupedStats?.markets ?? groupMarkets;
     const trades = marketTrades ?? (marketActivityRepository ? await listOwnTrades(detail.id) : []);
-    const stats = buildOwnMarketStats(detail, trades);
-    const market = applyOwnStatsToMarket(detail, stats);
-    const volume = groupedStats ? groupedStats.volume : stats.volume;
-    const volume24h = groupedStats ? groupedStats.volume24h : stats.volume24h;
-    const liquidity = groupedStats ? groupedStats.liquidity : stats.liquidity;
+    const stats = trades.length > 0 ? buildOwnMarketStats(detail, trades) : null;
+    const market = stats ? applyOwnStatsToMarket(detail, stats) : detail;
+    const volume = groupedStats ? groupedStats.volume : stats ? stats.volume : detail.volume;
+    const volume24h = groupedStats
+      ? groupedStats.volume24h
+      : stats
+        ? stats.volume24h
+        : detail.volume_24h;
+    const liquidity = groupedStats ? groupedStats.liquidity : stats ? stats.liquidity : detail.liquidity;
     const groupedHistory = groupedStats
       ? buildGroupedMarketHistory(enrichedGroups, tradesByMarketId)
       : null;
@@ -1905,6 +1975,10 @@ export function buildMarketDataService({
     });
 
     if (primary.value.length > 0) {
+      return primary;
+    }
+
+    if (primary.meta.sourceStatus === "fallback" || primary.meta.sourceStatus === "unavailable") {
       return primary;
     }
 
@@ -2060,11 +2134,12 @@ export function buildMarketDataService({
     const ownTrades = await listOwnTrades(selectedMarketBase.id);
     const ownHistory = buildOwnMarketHistory(selectedMarketBase, ownTrades);
 
+    const detail = await applyPulsePriceHistory(
+      normalizeMarketDetail(selectedMarket, relatedMarkets.value, snapshots, ownHistory, groupMarkets),
+    );
+
     return {
-      data: await enrichMarketDetailWithOwnActivity(
-        normalizeMarketDetail(selectedMarket, relatedMarkets.value, snapshots, ownHistory, groupMarkets),
-        ownTrades,
-      ),
+      data: await enrichMarketDetailWithOwnActivity(detail, ownTrades),
       meta: mergeSourceMeta(market.meta, relatedMarkets.meta),
     };
   }
@@ -2104,6 +2179,189 @@ export function buildMarketDataService({
       : await getSnapshots?.(marketId, config.marketSnapshotHistoryLimit);
 
     return (snapshots ?? []).filter((snapshot) => snapshot.synthetic !== true);
+  }
+
+  async function applyPulsePriceHistory(
+    detail: NormalizedMarketDetail,
+  ): Promise<NormalizedMarketDetail> {
+    if (!priceHistoryRepository) {
+      return detail;
+    }
+
+    const scope = getMarketPriceHistoryScope(detail);
+    const points = await priceHistoryRepository.listPoints({
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      limit: 2000,
+    });
+
+    if (points.length === 0) {
+      return detail;
+    }
+
+    return applyPulsePriceHistoryToDetail(detail, points);
+  }
+
+  function applyPulsePriceHistoryToDetail(
+    detail: NormalizedMarketDetail,
+    points: PulseMarketPriceHistoryPoint[],
+  ): NormalizedMarketDetail {
+    const priceHistory = points.map(mapPulsePointToHistoryPoint);
+    const latest = points.at(-1);
+
+    if (!latest) {
+      return detail;
+    }
+
+    const latestVolume = latest.volume;
+    const latestLiquidity = latest.liquidity;
+    const groupMarkets = detail.group_markets ?? [];
+
+    if (groupMarkets.length > 1) {
+      const enrichedGroups = applyPulsePricesToGroupMarkets(groupMarkets, latest);
+      const market = {
+        ...detail,
+        group_markets: enrichedGroups,
+        volume: latestVolume,
+        liquidity: latestLiquidity,
+        volume_detail: {
+          volume: latestVolume,
+          liquidity: latestLiquidity,
+        },
+        history: {
+          ...detail.history,
+          price_history: priceHistory,
+          is_synthetic: false,
+        },
+      };
+
+      return {
+        ...market,
+        prices: normalizePriceSummary(market),
+      };
+    }
+
+    const outcomes = applyPulsePricesToOutcomes(detail.outcomes, latest);
+    const market = {
+      ...detail,
+      outcomes,
+      volume: latestVolume,
+      liquidity: latestLiquidity,
+      volume_detail: {
+        volume: latestVolume,
+        liquidity: latestLiquidity,
+      },
+      history: {
+        ...detail.history,
+        price_history: priceHistory,
+        is_synthetic: false,
+      },
+    };
+
+    return {
+      ...market,
+      prices: normalizePriceSummary(market),
+    };
+  }
+
+  function mapPulsePointToHistoryPoint(point: PulseMarketPriceHistoryPoint): MarketPriceHistoryPoint {
+    return {
+      timestamp: point.capturedAt,
+      yes: point.yes,
+      no: point.no,
+      outcomes: point.outcomes,
+      outcomeVolumes: Object.fromEntries(
+        point.outcomes.map((outcome) => [outcome.name, outcome.volume ?? 0]),
+      ),
+      volume: point.volume,
+      liquidity: point.liquidity,
+      synthetic: false,
+    };
+  }
+
+  function applyPulsePricesToOutcomes(
+    outcomes: NormalizedMarket["outcomes"],
+    point: PulseMarketPriceHistoryPoint,
+  ) {
+    const byName = new Map(
+      point.outcomes.map((outcome) => [outcome.name.trim().toLowerCase(), outcome]),
+    );
+    const sourceOutcomes = outcomes.length > 0
+      ? outcomes
+      : point.outcomes.map((outcome) => ({
+          name: outcome.name,
+          price: outcome.price,
+          probability: outcome.price,
+          price_cents: outcome.price === null ? null : Math.round(outcome.price * 100),
+          clobTokenId: null,
+        }));
+
+    return sourceOutcomes.map((outcome, index) => {
+      const pulseOutcome =
+        byName.get(outcome.name.trim().toLowerCase()) ??
+        point.outcomes[index] ??
+        null;
+      const price = pulseOutcome?.price ?? outcome.price;
+
+      return {
+        ...outcome,
+        price,
+        probability: price,
+        price_cents: price === null ? null : Math.round(price * 100),
+      };
+    });
+  }
+
+  function applyPulsePricesToGroupMarkets(
+    groupMarkets: NormalizedGroupMarket[],
+    point: PulseMarketPriceHistoryPoint,
+  ) {
+    const byName = new Map(
+      point.outcomes.map((outcome) => [outcome.name.trim().toLowerCase(), outcome]),
+    );
+
+    return groupMarkets.map((groupMarket, index) => {
+      const pulseOutcome =
+        byName.get(groupMarket.label.trim().toLowerCase()) ??
+        point.outcomes[index] ??
+        null;
+      const yesPrice = pulseOutcome?.price ?? groupMarket.yes_price;
+      const noPrice = yesPrice === null ? null : Math.max(0, Math.min(1, 1 - yesPrice));
+
+      return {
+        ...groupMarket,
+        outcomes: applyBinaryPulsePrice(groupMarket.outcomes, yesPrice, noPrice),
+        volume: pulseOutcome?.volume ?? groupMarket.volume,
+        liquidity: groupMarket.liquidity,
+        yes_price: yesPrice,
+        no_price: noPrice,
+      };
+    });
+  }
+
+  function applyBinaryPulsePrice(
+    outcomes: NormalizedMarket["outcomes"],
+    yesPrice: number | null,
+    noPrice: number | null,
+  ) {
+    const sourceOutcomes = outcomes.length > 0
+      ? outcomes
+      : [
+          { name: "Yes", price: yesPrice, probability: yesPrice, price_cents: null, clobTokenId: null },
+          { name: "No", price: noPrice, probability: noPrice, price_cents: null, clobTokenId: null },
+        ];
+
+    return sourceOutcomes.map((outcome, index) => {
+      const normalized = outcome.name.trim().toLowerCase();
+      const price = normalized === "no" || index === 1 ? noPrice : yesPrice;
+
+      return {
+        ...outcome,
+        price,
+        probability: price,
+        price_cents: price === null ? null : Math.round(price * 100),
+      };
+    });
   }
 
   async function loadClobPriceHistory(market: PolymarketMarket): Promise<MarketPriceHistoryPoint[]> {
@@ -2216,19 +2474,112 @@ export function buildMarketDataService({
     };
   }
 
+  async function buildStoredMarketDetail(
+    market: NormalizedMarket,
+    meta: MarketDataMeta,
+  ): Promise<{ data: NormalizedMarketDetail; meta: MarketDataMeta }> {
+    const snapshots = await listStoredSnapshots(market.id);
+    const ownTrades = await listOwnTrades(market.id);
+    const ownHistory = buildOwnMarketHistory(market, ownTrades);
+    const prices = normalizePriceSummary(market);
+    const snapshotHistory = snapshots.map((snapshot) => ({
+      timestamp: snapshot.captured_at,
+      yes: snapshot.prices.yes,
+      no: snapshot.prices.no,
+      outcomes: market.outcomes.map((outcome) => ({
+        name: outcome.name,
+        price: outcome.price,
+      })),
+      volume: snapshot.volume,
+      liquidity: snapshot.liquidity,
+      synthetic: snapshot.synthetic,
+    }));
+    const fallbackHistory =
+      ownHistory.length > 0
+        ? ownHistory
+        : snapshotHistory.length > 0
+          ? snapshotHistory
+          : [
+              {
+                timestamp: new Date().toISOString(),
+                yes: prices.yes,
+                no: prices.no,
+                outcomes: market.outcomes.map((outcome) => ({
+                  name: outcome.name,
+                  price: outcome.price,
+                })),
+                volume: market.volume,
+                liquidity: market.liquidity,
+                synthetic: true,
+              },
+            ];
+
+    const detail = await applyPulsePriceHistory({
+      ...market,
+      prices,
+      dates: normalizeDateSummary(market),
+      volume_detail: {
+        volume: market.volume,
+        liquidity: market.liquidity,
+      },
+      related_markets: [],
+      history: {
+        snapshots,
+        price_history: fallbackHistory,
+        is_synthetic: ownHistory.length === 0,
+      },
+      group_markets: market.group_markets ?? [],
+    });
+
+    return {
+      data: await enrichMarketDetailWithOwnActivity(detail, ownTrades),
+      meta,
+    };
+  }
+
   async function getMarketDetail(id: string): Promise<{ data: NormalizedMarketDetail; meta: MarketDataMeta }> {
-    const market = await getRawMarketByIdOrSlug(id);
+    let market: Awaited<ReturnType<typeof getRawMarketByIdOrSlug>>;
+
+    try {
+      market = await getRawMarketByIdOrSlug(id);
+    } catch (error) {
+      if (error instanceof MarketDataError && error.code === "UPSTREAM_UNAVAILABLE") {
+        const storedMarket = await marketRepository?.getMarketById(id);
+        if (storedMarket) {
+          return buildStoredMarketDetail(storedMarket, {
+            lastSyncedAt: null,
+            isStale: true,
+            sourceStatus: "fallback",
+            warnings: ["Polymarket is unavailable; returning stored Pulse Market detail."],
+          });
+        }
+      }
+
+      throw error;
+    }
+
     const marketId = market.value.id || id;
 
-    const relatedMarkets = await getRelatedMarkets(market.value).catch(() => ({
-      value: [],
+    const emptyRelatedMarkets = {
+      value: [] as PolymarketMarket[],
       meta: buildCacheMeta(null, "fallback", [
         "Related markets unavailable; empty fallback returned.",
       ]),
-    }));
+    };
+    const [relatedMarkets, snapshots, event] = await Promise.all([
+      withTimeout(
+        getRelatedMarkets(market.value),
+        2_000,
+        "Related markets request timed out",
+      ).catch(() => emptyRelatedMarkets),
+      listStoredSnapshots(marketId),
+      withTimeout(
+        findParentEventForMarket(market.value),
+        2_000,
+        "Parent event lookup timed out",
+      ).catch(() => null),
+    ]);
     const meta = mergeSourceMeta(market.meta, relatedMarkets.meta);
-    const snapshots = await listStoredSnapshots(marketId);
-    const event = await findParentEventForMarket(market.value).catch(() => null);
 
     if (event) {
       const groupMarkets = getGroupedEventMarkets(event);
@@ -2242,18 +2593,18 @@ export function buildMarketDataService({
         const selectedMarketBase = normalizeMarket(selectedMarket);
         const ownTrades = await listOwnTrades(selectedMarketBase.id);
         const ownHistory = buildOwnMarketHistory(selectedMarketBase, ownTrades);
+        const detail = await applyPulsePriceHistory(
+          normalizeMarketDetail(
+            selectedMarket,
+            relatedMarkets.value,
+            snapshots,
+            ownHistory,
+            groupMarkets,
+          ),
+        );
 
         return {
-          data: await enrichMarketDetailWithOwnActivity(
-            normalizeMarketDetail(
-              selectedMarket,
-              relatedMarkets.value,
-              snapshots,
-              ownHistory,
-              groupMarkets,
-            ),
-            ownTrades,
-          ),
+          data: await enrichMarketDetailWithOwnActivity(detail, ownTrades),
           meta,
         };
       }
@@ -2262,12 +2613,12 @@ export function buildMarketDataService({
     const normalizedMarket = normalizeMarket(market.value);
     const ownTrades = await listOwnTrades(normalizedMarket.id);
     const ownHistory = buildOwnMarketHistory(normalizedMarket, ownTrades);
+    const detail = await applyPulsePriceHistory(
+      normalizeMarketDetail(market.value, relatedMarkets.value, snapshots, ownHistory),
+    );
 
     return {
-      data: await enrichMarketDetailWithOwnActivity(
-        normalizeMarketDetail(market.value, relatedMarkets.value, snapshots, ownHistory),
-        ownTrades,
-      ),
+      data: await enrichMarketDetailWithOwnActivity(detail, ownTrades),
       meta,
     };
   }

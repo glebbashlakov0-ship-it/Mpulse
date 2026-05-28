@@ -170,7 +170,7 @@ export function AuthPage({
 
       <div className={`${panel} ${showBackButton ? "mt-6" : ""} overflow-hidden px-7 py-7`}>
         <h1 className="text-center text-2xl font-semibold tracking-normal text-[#dee3e7]">
-          Welcome to Pulse Market
+          Welcome to PulseMarket
         </h1>
 
         <button

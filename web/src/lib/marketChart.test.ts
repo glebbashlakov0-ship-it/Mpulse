@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildChartSeries,
+  buildCurrentPriceHistory,
   downsampleHistory,
   filterPriceHistoryByRange,
   type ChartHistoryPoint,
@@ -98,6 +99,30 @@ describe("market chart helpers", () => {
       ["Candidate A", "Candidate B", "Candidate C", "Candidate D"],
     );
     assert.equal(series.every((item) => item.points.length === 2), true);
+  });
+
+  it("builds fallback chart history from current outcome prices", () => {
+    const outcomes: Outcome[] = [
+      { name: "Spain", price: 0.173, clobTokenId: null },
+      { name: "France", price: 0.17, clobTokenId: null },
+      { name: "England", price: 0.113, clobTokenId: null },
+    ];
+
+    const fallbackHistory = buildCurrentPriceHistory(outcomes, "ALL", nowMs);
+    const series = buildChartSeries({
+      priceHistory: fallbackHistory,
+      outcomes,
+      range: "ALL",
+      nowMs,
+    });
+
+    assert.equal(fallbackHistory.length, 12);
+    assert.equal(fallbackHistory.every((item) => item.synthetic), true);
+    assert.deepEqual(
+      series.map((item) => item.latest),
+      [0.173, 0.17, 0.113],
+    );
+    assert.equal(series.every((item) => item.points.length === fallbackHistory.length), true);
   });
 
   it("keeps the selected multi-outcome visible when it is outside the top series", () => {

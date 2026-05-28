@@ -70,7 +70,9 @@ export function WatchlistPage({
             <MarketCard
               key={market.id}
               market={market}
-              onOpen={() => navigate(`/markets/${encodeURIComponent(market.slug ?? market.id)}`)}
+              onOpen={() =>
+                navigate(`/markets/${encodeURIComponent(market.id)}`, { state: { market } })
+              }
               isWatched
               imageLoading={index < 6 ? "eager" : "lazy"}
               imagePriority={index < 6 ? "high" : "auto"}

@@ -48,6 +48,7 @@ export type CreateLedgerEntryInput = {
   referenceId?: string | null;
   idempotencyKey: string;
   metadata?: Record<string, unknown>;
+  createdAt?: string;
 };
 
 export type LedgerRepository = {
@@ -75,6 +76,7 @@ export class LedgerError extends Error {
   constructor(
     public readonly code:
       | "INVALID_LEDGER_AMOUNT"
+      | "INVALID_LEDGER_DATE"
       | "INVALID_LEDGER_REASON"
       | "IDEMPOTENCY_KEY_REQUIRED"
       | "IDEMPOTENCY_KEY_REUSE_MISMATCH"
@@ -206,7 +208,7 @@ export class PostgresLedgerRepository implements LedgerRepository {
         referenceId: input.referenceId?.trim() || null,
         idempotencyKey,
         metadata: input.metadata ?? {},
-        createdAt: new Date().toISOString(),
+        createdAt: input.createdAt ?? new Date().toISOString(),
       };
 
       await this.insertEntry(client, entry);
@@ -409,7 +411,7 @@ export function buildLedgerService(repository: LedgerRepository) {
       referenceId: input.referenceId?.trim() || null,
       idempotencyKey,
       metadata: input.metadata ?? {},
-      createdAt: new Date().toISOString(),
+      createdAt: input.createdAt ?? new Date().toISOString(),
     };
 
     await repository.createEntry(entry);
@@ -500,6 +502,10 @@ function validateLedgerInput(input: CreateLedgerEntryInput) {
 
   if (!input.idempotencyKey.trim()) {
     throw new LedgerError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.");
+  }
+
+  if (input.createdAt && Number.isNaN(Date.parse(input.createdAt))) {
+    throw new LedgerError("INVALID_LEDGER_DATE", "createdAt must be a valid ISO date string.");
   }
 }
 

@@ -1,9 +1,21 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { AuthError, type AuthService, getAuthContext, requireAdmin, requireAdminRole, type AdminRole } from "../auth.js";
+import { type AuthService, type AdminRole } from "../auth.js";
 import { type AdminService } from "../admin.js";
 import { type AuditService } from "../audit.js";
 import type { AppConfig } from "../config.js";
+import { createCsrfToken, setCsrfCookie } from "../csrf.js";
+import {
+  AdminPanelAuthError,
+  getAdminPanelSession,
+  type AdminPanelAuthService,
+} from "../adminPanelAuth.js";
 import type { SettlementService } from "../settlement.js";
+import { AdminLedgerActivityError, type AdminLedgerActivityService } from "../adminLedgerActivityService.js";
+import {
+  AdminEventActivitySeedError,
+  type AdminEventActivitySeedService,
+} from "../adminEventActivitySeedService.js";
+import { MarketSeedError, type MarketSeedService } from "../marketSeedService.js";
 
 function parseAdminLimit(value: unknown) {
   if (typeof value !== "string") {
@@ -37,34 +49,141 @@ export function registerAdminRoutes(
   admin: AdminService,
   config: AppConfig,
   settlement?: SettlementService,
+  marketSeed?: MarketSeedService,
+  ledgerActivity?: AdminLedgerActivityService,
+  eventActivitySeed?: AdminEventActivitySeedService,
+  adminPanelAuth?: AdminPanelAuthService,
 ) {
+  if (!adminPanelAuth) {
+    throw new Error("Admin panel auth service is required.");
+  }
+  const panelAuth = adminPanelAuth;
+
+  function getActor(request: FastifyRequest) {
+    const session = getAdminPanelSession(request);
+    if (!session) {
+      throw new AdminPanelAuthError(
+        "ADMIN_PANEL_UNAUTHENTICATED",
+        "Admin login is required.",
+      );
+    }
+
+    return {
+      username: session.username,
+      role: session.role,
+      dbUserId: null as string | null,
+      auditUserId: null as string | null,
+      auditSessionId: null as string | null,
+    };
+  }
+
   function adminPreHandler(roles?: AdminRole[]) {
     return async (request: FastifyRequest, reply: FastifyReply) => {
-      if (roles) {
-        await requireAdminRole(roles)(request, reply, auth, config);
-      } else {
-        await requireAdmin(request, reply, auth, config);
+      const session = panelAuth.requireSession(request, reply);
+      if (!session) {
+        return;
       }
 
-      if (reply.sent) {
-        const context = getAuthContext(request);
-        if (context) {
-          await audit.record({
-            eventType: "admin.rejected",
-            userId: context.user.id,
-            sessionId: context.session.id,
-            metadata: {
-              method: request.method,
-              url: request.url,
-              requiredRoles: roles ?? "any_admin",
-              role: context.user.role,
-              manualReview: true,
-            },
-          });
-        }
+      if (roles && !roles.includes(session.role)) {
+        await audit.record({
+          eventType: "admin.rejected",
+          userId: null,
+          sessionId: null,
+          metadata: {
+            method: request.method,
+            url: request.url,
+            requiredRoles: roles,
+            role: session.role,
+            adminUsername: session.username,
+            manualReview: true,
+          },
+        });
+        reply.status(403).send({
+          data: null,
+          error: {
+            code: "ADMIN_PANEL_ROLE_FORBIDDEN",
+            message: "This admin login is not allowed for this action.",
+          },
+        });
       }
     };
   }
+
+  app.get("/api/admin/csrf", async (_request, reply) => {
+    const token = createCsrfToken(config);
+    setCsrfCookie(reply, config, token);
+
+    return {
+      data: {
+        csrfToken: token,
+      },
+    };
+  });
+
+  app.get("/api/admin/session", async (request) => {
+    const session = panelAuth.authenticate(request);
+
+    return {
+      data: {
+        authenticated: Boolean(session),
+        admin: session
+          ? {
+              username: session.username,
+              role: session.role,
+              expiresAt: session.expiresAt,
+            }
+          : null,
+      },
+    };
+  });
+
+  app.post<{
+    Body: { username?: unknown; password?: unknown };
+  }>("/api/admin/login", async (request, reply) => {
+    const result = panelAuth.login(request.body ?? {});
+    panelAuth.setCookie(reply, result.token);
+    await audit.record({
+      eventType: "admin.login",
+      userId: null,
+      sessionId: null,
+      metadata: {
+        adminUsername: result.session.username,
+        manualReview: true,
+      },
+    });
+
+    return {
+      data: {
+        authenticated: true,
+        admin: {
+          username: result.session.username,
+          role: result.session.role,
+          expiresAt: result.session.expiresAt,
+        },
+      },
+    };
+  });
+
+  app.post("/api/admin/logout", async (request, reply) => {
+    const session = panelAuth.authenticate(request);
+    panelAuth.clearCookie(reply);
+    await audit.record({
+      eventType: "admin.logout",
+      userId: null,
+      sessionId: null,
+      metadata: {
+        adminUsername: session?.username ?? null,
+        manualReview: true,
+      },
+    });
+
+    return {
+      data: {
+        authenticated: false,
+        admin: null,
+      },
+    };
+  });
 
   app.get(
     "/api/admin/users",
@@ -72,17 +191,15 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(),
     },
     async (request) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       const users = await auth.listUsers(parseAdminLimit((request.query as { limit?: unknown }).limit));
       await audit.record({
         eventType: "admin.user_view",
-        userId: context.user.id,
-        sessionId: context.session.id,
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
         metadata: {
+          adminUsername: actor.username,
           count: users.length,
           manualReview: true,
         },
@@ -104,16 +221,14 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(),
     },
     async (request) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       await audit.record({
         eventType: "admin.audit_view",
-        userId: context.user.id,
-        sessionId: context.session.id,
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
         metadata: {
+          adminUsername: actor.username,
           manualReview: true,
         },
       });
@@ -137,16 +252,14 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
     async (request) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       await audit.record({
         eventType: "admin.audit_view",
-        userId: context.user.id,
-        sessionId: context.session.id,
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
         metadata: {
+          adminUsername: actor.username,
           resource: "wallet_withdrawals",
           manualReview: true,
         },
@@ -166,10 +279,7 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
     async (request) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       const result = await admin.reviewWithdrawal({
         id: request.params.id,
@@ -177,9 +287,10 @@ export function registerAdminRoutes(
       });
       await audit.record({
         eventType: "admin.withdrawal_review",
-        userId: context.user.id,
-        sessionId: context.session.id,
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
         metadata: {
+          adminUsername: actor.username,
           withdrawalRequestId: result.withdrawalRequest.id,
           status: result.withdrawalRequest.status,
           realTransferBlocked: true,
@@ -200,21 +311,19 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(["compliance_admin", "super_admin"]),
     },
     async (request) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       const result = await admin.hideMarket({
         marketId: request.params.id,
         reason: request.body?.reason,
-        adminUserId: context.user.id,
+        adminUserId: actor.dbUserId,
       });
       await audit.record({
         eventType: "admin.market_hide",
-        userId: context.user.id,
-        sessionId: context.session.id,
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
         metadata: {
+          adminUsername: actor.username,
           marketId: result.rule.marketId,
           reason: result.rule.reason,
           manualReview: true,
@@ -233,20 +342,18 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(["compliance_admin", "super_admin"]),
     },
     async (request) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       const result = await admin.unhideMarket({
         marketId: request.params.id,
-        adminUserId: context.user.id,
+        adminUserId: actor.dbUserId,
       });
       await audit.record({
         eventType: "admin.market_unhide",
-        userId: context.user.id,
-        sessionId: context.session.id,
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
         metadata: {
+          adminUsername: actor.username,
           marketId: request.params.id,
           ruleId: result.rule?.id ?? null,
           manualReview: true,
@@ -259,16 +366,277 @@ export function registerAdminRoutes(
     },
   );
 
+  app.post<{
+    Params: { id: string };
+    Body: { force?: unknown; points?: unknown; volatility?: unknown };
+  }>(
+    "/api/admin/markets/:id/seed-odds-history",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const actor = getActor(request);
+
+      if (!marketSeed) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "MARKET_SEED_UNAVAILABLE",
+            message: "Market seed service is unavailable.",
+          },
+        });
+      }
+
+      try {
+        const result = await marketSeed.seedOddsHistory({
+          marketId: request.params.id,
+          adminUserId: actor.dbUserId,
+          options: request.body,
+        });
+
+        await audit.record({
+          eventType: "admin.market_seed_odds",
+          userId: actor.auditUserId,
+          sessionId: actor.auditSessionId,
+          metadata: {
+            adminUsername: actor.username,
+            marketId: request.params.id,
+            scope: result.scope,
+            created: result.created,
+            pointCount: result.pointCount,
+            manualReview: true,
+          },
+        });
+
+        return {
+          data: result,
+        };
+      } catch (error) {
+        if (error instanceof MarketSeedError) {
+          return reply.status(error.statusCode).send({
+            data: null,
+            error: {
+              code: error.code,
+              message: error.message,
+            },
+          });
+        }
+
+        throw error;
+      }
+    },
+  );
+
+  app.patch<{
+    Params: { id: string };
+    Body: { outcomes?: unknown; reason?: unknown };
+  }>(
+    "/api/admin/markets/:id/odds",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const actor = getActor(request);
+
+      if (!marketSeed) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "MARKET_SEED_UNAVAILABLE",
+            message: "Market seed service is unavailable.",
+          },
+        });
+      }
+
+      try {
+        const result = await marketSeed.overrideOdds({
+          marketId: request.params.id,
+          adminUserId: actor.dbUserId,
+          body: request.body,
+        });
+
+        await audit.record({
+          eventType: "admin.market_odds_override",
+          userId: actor.auditUserId,
+          sessionId: actor.auditSessionId,
+          metadata: {
+            adminUsername: actor.username,
+            marketId: request.params.id,
+            scope: result.scope,
+            pointId: result.point.id,
+            reason: typeof request.body?.reason === "string" ? request.body.reason : null,
+            manualReview: true,
+          },
+        });
+
+        return {
+          data: result,
+        };
+      } catch (error) {
+        if (error instanceof MarketSeedError) {
+          return reply.status(error.statusCode).send({
+            data: null,
+            error: {
+              code: error.code,
+              message: error.message,
+            },
+          });
+        }
+
+        throw error;
+      }
+    },
+  );
+
+  app.post<{
+    Body: {
+      batchId?: unknown;
+      marketIds?: unknown;
+      filters?: unknown;
+      userIds?: unknown;
+      betsPerEventMin?: unknown;
+      betsPerEventMax?: unknown;
+      betAmountMin?: unknown;
+      betAmountMax?: unknown;
+      depositAmountMin?: unknown;
+      depositAmountMax?: unknown;
+      depositBufferMultiplier?: unknown;
+      startAt?: unknown;
+      endAt?: unknown;
+      publicActivity?: unknown;
+      force?: unknown;
+    };
+  }>(
+    "/api/admin/markets/seed-event-activity",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const actor = getActor(request);
+
+      if (!eventActivitySeed) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "EVENT_ACTIVITY_SEED_UNAVAILABLE",
+            message: "Admin event activity seed service is unavailable.",
+          },
+        });
+      }
+
+      try {
+        const result = await eventActivitySeed.seedEventActivity({
+          body: request.body,
+          adminUserId: actor.username,
+          createdByUserId: actor.dbUserId,
+        });
+
+        await audit.record({
+          eventType: "admin.event_activity_seed",
+          userId: actor.auditUserId,
+          sessionId: actor.auditSessionId,
+          metadata: {
+            adminUsername: actor.username,
+            batchId: result.batchId,
+            summary: result.summary,
+            targetCount: result.targets.length,
+            manualReview: true,
+          },
+        });
+
+        return {
+          data: result,
+        };
+      } catch (error) {
+        if (error instanceof AdminEventActivitySeedError) {
+          return reply.status(error.statusCode).send({
+            data: null,
+            error: {
+              code: error.code,
+              message: error.message,
+            },
+          });
+        }
+
+        throw error;
+      }
+    },
+  );
+
+  app.post<{
+    Body: {
+      userIds?: unknown;
+      kind?: unknown;
+      amountMin?: unknown;
+      amountMax?: unknown;
+      count?: unknown;
+      startAt?: unknown;
+      endAt?: unknown;
+      publicActivity?: unknown;
+    };
+  }>(
+    "/api/admin/ledger/seed-activity",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const actor = getActor(request);
+
+      if (!ledgerActivity) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "ADMIN_LEDGER_ACTIVITY_UNAVAILABLE",
+            message: "Admin ledger activity service is unavailable.",
+          },
+        });
+      }
+
+      try {
+        const result = await ledgerActivity.seedActivity({
+          body: request.body,
+          adminUserId: actor.username,
+        });
+
+        await audit.record({
+          eventType: "admin.ledger_seed_activity",
+          userId: actor.auditUserId,
+          sessionId: actor.auditSessionId,
+          metadata: {
+            adminUsername: actor.username,
+            batchId: result.batchId,
+            kind: result.kind,
+            summary: result.summary,
+            manualReview: true,
+          },
+        });
+
+        return {
+          data: result,
+        };
+      } catch (error) {
+        if (error instanceof AdminLedgerActivityError) {
+          return reply.status(error.statusCode).send({
+            data: null,
+            error: {
+              code: error.code,
+              message: error.message,
+            },
+          });
+        }
+
+        throw error;
+      }
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: { winningSide?: unknown; idempotencyKey?: unknown } }>(
     "/api/admin/markets/:id/resolve",
     {
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
     async (request, reply) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       if (!settlement) {
         return reply.status(503).send({
@@ -284,8 +652,9 @@ export function registerAdminRoutes(
         data: await settlement.resolveMarket({
           marketId: request.params.id,
           winningSide: request.body?.winningSide,
-          adminUserId: context.user.id,
-          sessionId: context.session.id,
+          adminUserId: actor.dbUserId,
+          adminActorId: actor.username,
+          sessionId: actor.auditSessionId,
           idempotencyKey: getIdempotencyKey(request, request.body),
         }),
       };
@@ -298,10 +667,7 @@ export function registerAdminRoutes(
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
     async (request, reply) => {
-      const context = getAuthContext(request);
-      if (!context) {
-        throw new AuthError("UNAUTHENTICATED", "Authentication is required.", 401);
-      }
+      const actor = getActor(request);
 
       if (!settlement) {
         return reply.status(503).send({
@@ -316,8 +682,9 @@ export function registerAdminRoutes(
       return {
         data: await settlement.cancelMarket({
           marketId: request.params.id,
-          adminUserId: context.user.id,
-          sessionId: context.session.id,
+          adminUserId: actor.dbUserId,
+          adminActorId: actor.username,
+          sessionId: actor.auditSessionId,
           idempotencyKey: getIdempotencyKey(request, request.body),
         }),
       };

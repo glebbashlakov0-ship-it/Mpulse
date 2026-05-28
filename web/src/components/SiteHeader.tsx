@@ -125,7 +125,7 @@ export function SiteHeader({
         <a
           className="flex h-10 w-fit shrink-0 cursor-pointer items-center gap-1 text-[#dee3e7] transition hover:text-white"
           href="/"
-          aria-label="Pulse Market home"
+          aria-label="PulseMarket home"
         >
           <img
             className="h-[26px] w-auto max-w-[46px] object-contain px-1"
@@ -134,7 +134,7 @@ export function SiteHeader({
             aria-hidden="true"
           />
           <strong className="hidden text-[18px] font-semibold leading-none tracking-normal sm:block">
-            Pulse Market
+            PulseMarket
           </strong>
         </a>
 

@@ -58,11 +58,10 @@ public Polymarket market data and local-only trading.
   and a dev-secret protected local/provider deposit webhook. Confirmed USDT/TRON deposits can credit
   ledger after safety gates and idempotency; this is not wallet, not withdrawals, not private-key
   storage, and not blockchain polling.
-- Admin Core with backend-owned roles (`user`, `support`, `compliance_admin`,
-  `finance_admin`, `super_admin`), role-specific env allowlists, least-privilege
-  `/api/admin/*` guards, users/audit/withdrawal/market moderation endpoints, and a basic
-  `#admin` frontend page. It is local: no real withdrawal approval, wallet, broadcast, ledger
-  debit, settlement, or real-money action.
+- Standalone Admin Core at `/admin` with its own login/password session, separate from public
+  registration/email auth, plus guarded `/api/admin/*` users/audit/withdrawal/market moderation,
+  odds/history seed, finance activity, and event activity seed endpoints. It is local: no real
+  withdrawal approval, wallet broadcast, private-key action, or real-money action.
 - Production readiness core: `GET /api/health`, `GET /api/ready`, strict env validation,
   explicit `APP_MODE=local`, production secure-cookie/CORS/DB/webhook guardrails, and a
   CI workflow for backend typecheck, web typecheck, backend tests, frontend tests, and web build
@@ -351,30 +350,42 @@ settlement, or outbound transfers are implemented.
 Admin core:
 
 ```bash
-# Give a local/dev user super_admin role in memory/core mode:
-ADMIN_EMAILS=admin@example.com
+# Standalone admin panel credentials, independent from public registration/email auth:
+ADMIN_PANEL_USERNAME=admin
+ADMIN_PANEL_PASSWORD=admin
 
-curl -b /tmp/mp-cookies.txt 'http://localhost:4000/api/admin/users'
-curl -b /tmp/mp-cookies.txt 'http://localhost:4000/api/admin/audit-logs'
-curl -b /tmp/mp-cookies.txt 'http://localhost:4000/api/admin/wallet-withdrawals'
+# Open the panel:
+open http://localhost:5173/admin
+
+# Optional API login flow when CSRF is enabled:
+CSRF=$(curl -s -c /tmp/mp-admin-cookies.txt 'http://localhost:4000/api/admin/csrf' \
+  | node -pe "JSON.parse(require('node:fs').readFileSync(0, 'utf8')).data.csrfToken")
+curl -s -b /tmp/mp-admin-cookies.txt -c /tmp/mp-admin-cookies.txt \
+  -X POST 'http://localhost:4000/api/admin/login' \
+  -H 'Content-Type: application/json' \
+  -H "X-CSRF-Token: $CSRF" \
+  --data '{"username":"admin","password":"admin"}'
+
+curl -b /tmp/mp-admin-cookies.txt 'http://localhost:4000/api/admin/users'
+curl -b /tmp/mp-admin-cookies.txt 'http://localhost:4000/api/admin/audit-logs'
+curl -b /tmp/mp-admin-cookies.txt 'http://localhost:4000/api/admin/wallet-withdrawals'
 
 curl -X POST 'http://localhost:4000/api/admin/wallet-withdrawals/withdrawal-id/reject' \
-  -b /tmp/mp-cookies.txt
+  -b /tmp/mp-admin-cookies.txt
 
 curl -X POST 'http://localhost:4000/api/admin/markets/540817/hide' \
-  -b /tmp/mp-cookies.txt \
+  -b /tmp/mp-admin-cookies.txt \
   -H 'Content-Type: application/json' \
   --data '{"reason":"manual_review"}'
 
 curl -X POST 'http://localhost:4000/api/admin/markets/540817/unhide' \
-  -b /tmp/mp-cookies.txt
+  -b /tmp/mp-admin-cookies.txt
 ```
 
-Admin endpoints require authenticated admin roles. Ordinary authenticated users receive 403.
-`ADMIN_EMAILS` is a legacy super-admin allowlist. Prefer `SUPER_ADMIN_EMAILS`,
-`SUPPORT_EMAILS`, `COMPLIANCE_ADMIN_EMAILS`, and `FINANCE_ADMIN_EMAILS` for role-specific local/dev
-assignment. Support can read users/audit, finance can review wallet withdrawals, compliance can
-hide/unhide markets, and super admin can use all admin actions.
+Admin endpoints require the standalone admin panel session. Ordinary public users, even if
+authenticated through `/api/auth/*`, are not admin users and receive `401`.
+`ADMIN_PANEL_USERNAME` and `ADMIN_PANEL_PASSWORD` are required in production; local defaults are
+`admin` / `admin`.
 Withdrawal review is local and returns `realTransferBlocked: true` and
 `mode: "wallet_review_only"`; it never performs real approvals, real withdrawals,
 wallet, broadcast, settlement, or ledger debit.
@@ -387,9 +398,10 @@ curl -i -X POST 'http://localhost:4000/api/auth/register' \
   --data '{"email":"local@example.com","password":"password123","displayName":"Local Trader"}'
 ```
 
-Browser clients should call `GET /api/auth/csrf` first for state-changing requests. The web API
-helper does this automatically and sends `X-CSRF-Token`; the backend validates that header against
-the signed `mp_csrf` cookie when `CSRF_PROTECTION_ENABLED=true`.
+Browser clients should call `GET /api/auth/csrf` first for public state-changing requests and
+`GET /api/admin/csrf` first for admin state-changing requests. The web API helpers do this
+automatically and send `X-CSRF-Token`; the backend validates that header against the signed
+`mp_csrf` cookie when `CSRF_PROTECTION_ENABLED=true`.
 
 Auth/session env:
 
@@ -406,11 +418,15 @@ AUTH_RATE_LIMIT_WINDOW_MS=60000
 AUTH_RATE_LIMIT_MAX=20
 AUTH_RATE_LIMIT_BACKEND=memory
 REDIS_URL=redis://default:password@localhost:6379
-ADMIN_EMAILS=admin@example.com
-SUPER_ADMIN_EMAILS=owner@example.com
-SUPPORT_EMAILS=support@example.com
-COMPLIANCE_ADMIN_EMAILS=compliance@example.com
-FINANCE_ADMIN_EMAILS=finance@example.com
+ADMIN_EMAILS=
+SUPER_ADMIN_EMAILS=
+SUPPORT_EMAILS=
+COMPLIANCE_ADMIN_EMAILS=
+FINANCE_ADMIN_EMAILS=
+ADMIN_PANEL_USERNAME=admin
+ADMIN_PANEL_PASSWORD=admin
+ADMIN_PANEL_COOKIE_NAME=pulse_admin_session
+ADMIN_PANEL_TTL_MS=43200000
 WALLET_DEPOSIT_WEBHOOK_SECRET=change-this-dev-only-local-webhook-secret
 WALLET_DEPOSIT_MIN_CONFIRMATIONS=20
 DATABASE_URL=postgres://user:password@localhost:5432/market_pulse

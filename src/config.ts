@@ -33,6 +33,10 @@ export type AppConfig = {
   complianceAdminEmails: string[];
   financeAdminEmails: string[];
   superAdminEmails: string[];
+  adminPanelUsername: string;
+  adminPanelPassword: string;
+  adminPanelCookieName: string;
+  adminPanelTtlMs: number;
   walletDepositWebhookSecret: string | null;
   walletDepositMinConfirmations: number;
   databaseUrl: string | null;
@@ -132,6 +136,8 @@ export function getConfig(): AppConfig {
   const corsAllowedOrigins = listFromEnv("CORS_ALLOWED_ORIGINS", []);
   const databaseUrl = stringFromEnv("DATABASE_URL");
   const redisUrl = stringFromEnv("REDIS_URL");
+  const adminPanelUsername = stringFromEnv("ADMIN_PANEL_USERNAME");
+  const adminPanelPassword = stringFromEnv("ADMIN_PANEL_PASSWORD");
   const authRateLimitBackend = stringFromEnv("AUTH_RATE_LIMIT_BACKEND")
     ?? (nodeEnv === "production" ? (redisUrl ? "redis" : "external") : "memory");
 
@@ -165,6 +171,12 @@ export function getConfig(): AppConfig {
     }
     if (authRateLimitBackend === "memory") {
       throw new Error("AUTH_RATE_LIMIT_BACKEND must be redis or external in production.");
+    }
+    if (!adminPanelUsername || !adminPanelPassword) {
+      throw new Error("ADMIN_PANEL_USERNAME and ADMIN_PANEL_PASSWORD are required in production.");
+    }
+    if (adminPanelUsername === "admin" && adminPanelPassword === "admin") {
+      throw new Error("ADMIN_PANEL_USERNAME and ADMIN_PANEL_PASSWORD must not use local defaults in production.");
     }
   }
 
@@ -210,6 +222,10 @@ export function getConfig(): AppConfig {
     complianceAdminEmails: listFromEnv("COMPLIANCE_ADMIN_EMAILS", []),
     financeAdminEmails: listFromEnv("FINANCE_ADMIN_EMAILS", []),
     superAdminEmails: listFromEnv("SUPER_ADMIN_EMAILS", []),
+    adminPanelUsername: adminPanelUsername ?? "admin",
+    adminPanelPassword: adminPanelPassword ?? "admin",
+    adminPanelCookieName: process.env.ADMIN_PANEL_COOKIE_NAME ?? "pulse_admin_session",
+    adminPanelTtlMs: numberFromEnv("ADMIN_PANEL_TTL_MS", 1000 * 60 * 60 * 12, { min: 60_000 }),
     walletDepositWebhookSecret,
     walletDepositMinConfirmations: numberFromEnv("WALLET_DEPOSIT_MIN_CONFIRMATIONS", 20, {
       min: 0,

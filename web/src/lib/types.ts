@@ -633,7 +633,7 @@ export type HiddenMarketRule = {
   action: "hide";
   reason: "legal_risk" | "compliance" | "sensitive_topic" | "manual_review";
   active: boolean;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -642,6 +642,15 @@ export type AdminUsersPayload = {
   mode: string;
   users: AuthUser[];
   summary: Record<string, number>;
+};
+
+export type AdminPanelSessionPayload = {
+  authenticated: boolean;
+  admin: {
+    username: string;
+    role: "super_admin";
+    expiresAt: string;
+  } | null;
 };
 
 export type AdminAuditPayload = {
@@ -691,4 +700,99 @@ export type AdminSettlementResult = {
     platformFee: number;
     balanced: boolean;
   };
+};
+
+export type AdminSeedOddsResult = {
+  marketId: string;
+  scope: {
+    scopeType: "market" | "event";
+    scopeId: string;
+    marketExternalId: string;
+  };
+  created: boolean;
+  outcomes: Array<{ name: string; price: number | null; volume?: number }>;
+  pointCount: number;
+  latestPoint: {
+    id: string;
+    capturedAt: string;
+    volume: number;
+    liquidity: number;
+    source: "pulse_seed" | "admin" | "trade";
+  } | null;
+};
+
+export type AdminOddsOverrideResult = {
+  marketId: string;
+  scope: {
+    scopeType: "market" | "event";
+    scopeId: string;
+    marketExternalId: string;
+  };
+  point: {
+    id: string;
+    capturedAt: string;
+    source: "admin";
+  };
+  outcomes: Array<{ name: string; price: number | null; volume?: number }>;
+};
+
+export type AdminLedgerSeedActivityResult = {
+  batchId: string;
+  kind: "deposit" | "payment";
+  created: Array<{
+    userId: string;
+    ledgerEntry: LedgerEntry;
+    depositEvent: WalletDepositEvent | null;
+  }>;
+  skipped: Array<{ userId: string; reason: string }>;
+  errors: Array<{ userId: string; message: string }>;
+  summary: {
+    requested: number;
+    created: number;
+    skipped: number;
+    errors: number;
+  };
+};
+
+export type AdminEventActivitySeedResult = {
+  batchId: string;
+  targets: Array<{
+    marketId: string;
+    title: string;
+    scope: {
+      scopeType: "market" | "event";
+      scopeId: string;
+      marketExternalId: string;
+    };
+    grouped: boolean;
+    plannedBets: number;
+    tradesCreated: number;
+  }>;
+  depositsCreated: number;
+  tradesCreated: number;
+  skipped: Array<{ scopeId?: string; marketId?: string; userId?: string; reason: string }>;
+  errors: Array<{ scopeId?: string; marketId?: string; userId?: string; message: string }>;
+  summary: {
+    eventsProcessed: number;
+    plannedTrades: number;
+    depositsCreated: number;
+    tradesCreated: number;
+    skipped: number;
+    errors: number;
+  };
+};
+
+export type PlatformActivityItem = {
+  id: string;
+  type: "deposit" | "payment" | "trade";
+  displayName: string;
+  amount: number;
+  asset: "USDT";
+  marketTitle: string | null;
+  createdAt: string;
+  relativeTime: string;
+};
+
+export type PlatformActivityPayload = {
+  activity: PlatformActivityItem[];
 };

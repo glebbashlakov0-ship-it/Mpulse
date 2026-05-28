@@ -58,7 +58,7 @@ export function SiteFooter() {
             aria-hidden="true"
           />
           <div>
-            <strong className="text-2xl font-semibold text-[#dee3e7]">Pulse Market</strong>
+            <strong className="text-2xl font-semibold text-[#dee3e7]">PulseMarket</strong>
             <p className="mt-1 text-sm font-medium text-[#7b8996]">
               The professional prediction market interface™
             </p>
@@ -94,7 +94,7 @@ export function SiteFooter() {
             ))}
           </FooterColumn>
 
-          <FooterColumn title="Pulse Market" id="docs">
+          <FooterColumn title="PulseMarket" id="docs">
             {companyLinks.map((link) => (
               <a href="#company" key={link}>
                 {link}
@@ -123,7 +123,7 @@ export function SiteFooter() {
           </div>
 
           <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm font-semibold text-[#7b8996]" aria-label="Legal links">
-            <span className="text-[#dee3e7]">Pulse Market Inc. © 2026</span>
+            <span className="text-[#dee3e7]">PulseMarket Inc. © 2026</span>
             <a className="transition hover:text-[#dee3e7]" href="#privacy">Privacy</a>
             <a className="transition hover:text-[#dee3e7]" href="#terms" id="terms">Terms of Use</a>
             <a className="transition hover:text-[#dee3e7]" href="#integrity">Market Integrity</a>

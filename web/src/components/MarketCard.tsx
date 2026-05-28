@@ -2,6 +2,7 @@ import { Bookmark } from "lucide-react";
 import * as React from "react";
 import { formatMoney } from "../lib/format";
 import { getMarketKind } from "../lib/market";
+import { formatMarketText } from "../lib/marketText";
 import type { Market, Outcome } from "../lib/types";
 import { MarketImage } from "./MarketMedia";
 
@@ -276,7 +277,7 @@ export function MarketCard({
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
-      aria-label={`Open ${market.title}`}
+      aria-label={`Open ${formatMarketText(market.title)}`}
     >
       <div className="relative flex h-[42px] w-full items-start gap-2 px-3">
         <MarketImage
@@ -289,7 +290,7 @@ export function MarketCard({
           <div className="min-w-0 flex-1">
             <div className="flex min-h-[36px] flex-col justify-center">
               <h2 className="line-clamp-3 w-fit min-w-0 text-[15px] font-semibold leading-[1.18] tracking-[-0.09px] text-[var(--pm-text-primary)] decoration-2 group-hover/card:underline">
-                {market.title}
+                {formatMarketText(market.title)}
               </h2>
             </div>
           </div>
@@ -415,7 +416,7 @@ function MatchCard({
       onKeyDown={onKeyDown}
       role="button"
       tabIndex={0}
-      aria-label={`Open ${market.title}`}
+      aria-label={`Open ${formatMarketText(market.title)}`}
     >
       <div className="flex w-full flex-col items-center gap-1 px-3">
         {shouldShowScoreRows ? (
@@ -964,7 +965,7 @@ function LiveFooterLabel({ label }: { label: string }) {
           <span className="relative z-10 size-[7px] rounded-full bg-[#e23939]" />
           <span className="absolute -inset-px size-[9px] animate-ping rounded-full bg-[#e23939] opacity-75" />
         </div>
-        <p className="text-[13px] font-semibold uppercase leading-none tracking-[-0.1px] text-[#e23939]">Активные</p>
+        <p className="text-[13px] font-semibold uppercase leading-none tracking-[-0.1px] text-[#e23939]">Live</p>
       </div>
       <span className="mx-px opacity-50">·</span>
       <span className="truncate">{label}</span>
@@ -1301,7 +1302,7 @@ function getGroupMarketLabel(groupMarket: Market & { label?: string }) {
 }
 
 function cleanTeamLabel(label: string) {
-  return label
+  const cleaned = label
     .replace(/^(lol|dota\s*2?|cs2|counter-strike)\s*:\s*/i, "")
     .replace(/\s+moneyline$/i, "")
     .replace(/\s+winner$/i, "")
@@ -1309,6 +1310,8 @@ function cleanTeamLabel(label: string) {
     .replace(/\s+cf$/i, "")
     .replace(/\s+/g, " ")
     .trim();
+
+  return formatMarketText(cleaned);
 }
 
 function parseMatchTeams(title: string) {
@@ -1353,11 +1356,11 @@ function getMatchClockLabel(market: Market, variant: "headToHead" | "threeWay") 
   const game = text.match(/\b(?:game|map)\s*(\d+)\b/i);
 
   if (game) {
-    return `Игра ${game[1]}`;
+    return `Game ${game[1]}`;
   }
 
   if (variant === "headToHead" || /\b(esports|dota|lol|league of legends|counter-strike|cs2|gaming)\b/.test(text)) {
-    return "Игра 1";
+    return "Game 1";
   }
 
   if (market.status === "live" || market.dates?.status === "live" || market.active) {
@@ -1422,7 +1425,7 @@ function getDirectionalOutcome(market: Market, direction: "up" | "down") {
 export function getCardRows(market: Market): CardRow[] {
   const groupRows =
     market.group_markets?.map((groupMarket) => ({
-      label: groupMarket.label || groupMarket.groupItemTitle || groupMarket.title,
+      label: formatMarketText(groupMarket.label || groupMarket.groupItemTitle || groupMarket.title),
       yesPrice: groupMarket.yes_price,
       noPrice: groupMarket.no_price,
       active: groupMarket.active,
@@ -1438,7 +1441,7 @@ export function getCardRows(market: Market): CardRow[] {
 
   if (market.outcomes.length > 2) {
     return market.outcomes.map((outcome) => ({
-      label: outcome.name,
+      label: formatMarketText(outcome.name),
       yesPrice: getOutcomePrice(outcome),
       noPrice: null,
     }));

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
   Bell,
+  Activity,
   Bookmark,
   CalendarDays,
   ChevronDown,
@@ -23,7 +24,8 @@ import { MarketSkeleton } from "../components/MarketSkeleton";
 import { useMarkets } from "../hooks/useMarkets";
 import { useCategories } from "../hooks/useCategories";
 import { useMarketTags } from "../hooks/useMarketTags";
-import { formatMoney, formatPercent, formatShortDate } from "../lib/format";
+import { loadPlatformActivity } from "../lib/api";
+import { formatMoney, formatPercent, formatShortDate, formatUsdt } from "../lib/format";
 import {
   buildTopicTabsFromTags,
   defaultMarketFilters,
@@ -34,7 +36,7 @@ import {
   topicTabs,
   type TopicTab,
 } from "../lib/discovery";
-import type { AuthUser, Market, MarketFilters } from "../lib/types";
+import type { AuthUser, Market, MarketFilters, PlatformActivityItem } from "../lib/types";
 
 type HiddenMarketFilter = "sports" | "crypto" | "earnings";
 type DiscoverySurface =
@@ -112,6 +114,7 @@ export function HomePage({
     crypto: false,
     earnings: false,
   });
+  const [platformActivity, setPlatformActivity] = React.useState<PlatformActivityItem[]>([]);
   const [marketsState, , loadMore] = useMarkets(filters);
   const categoriesState = useCategories();
   const tagsState = useMarketTags();
@@ -251,6 +254,15 @@ export function HomePage({
       window.removeEventListener("resize", updateTopicRailScrollState);
     };
   }, [discoveryTopicTabs.length, showTopicRail, updateTopicRailScrollState]);
+  React.useEffect(() => {
+    const controller = new AbortController();
+
+    loadPlatformActivity(12, controller.signal)
+      .then((payload) => setPlatformActivity(payload.activity))
+      .catch(() => setPlatformActivity([]));
+
+    return () => controller.abort();
+  }, []);
   const scrollTopicTabs = () => {
     const rail = topicTabsRef.current;
 
@@ -492,6 +504,10 @@ export function HomePage({
           </div>
         )}
 
+        {!showWatchlist && platformActivity.length > 0 ? (
+          <LiveActivityRail activity={platformActivity} />
+        ) : null}
+
         {loading && markets.length === 0 && !showWatchlist ? (
           <div className="home-reveal mt-5">
             <MarketSkeleton />
@@ -521,7 +537,9 @@ export function HomePage({
               <MarketGrid
                 columns="grid-cols-1 md:grid-cols-2 xl:grid-cols-4"
                 markets={displayedMarkets}
-                onOpenMarket={(market) => navigate(`/markets/${encodeURIComponent(market.slug ?? market.id)}`)}
+                onOpenMarket={(market) =>
+                  navigate(`/markets/${encodeURIComponent(market.id)}`, { state: { market } })
+                }
                 onWatchlistToggle={onWatchlistToggle}
                 watchlistIds={watchlistIds}
               />
@@ -532,7 +550,9 @@ export function HomePage({
                 isLoadingMore={marketsState.isLoadingMore}
                 markets={displayedMarkets}
                 onLoadMore={handleLoadMore}
-                onOpenMarket={(market) => navigate(`/markets/${encodeURIComponent(market.slug ?? market.id)}`)}
+                onOpenMarket={(market) =>
+                  navigate(`/markets/${encodeURIComponent(market.id)}`, { state: { market } })
+                }
                 onWatchlistToggle={user ? onWatchlistToggle : onSignupPrompt}
                 surface={surface}
                 total={marketsState.total}
@@ -766,6 +786,45 @@ function getHomeSurfaceMotionKey(surface: DiscoverySurface, filters: MarketFilte
   ].join(":");
 }
 
+function LiveActivityRail({ activity }: { activity: PlatformActivityItem[] }) {
+  return (
+    <section className="home-reveal mt-4 flex min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-[#242b32] bg-[#181d21] px-3 py-2">
+      <div className="flex shrink-0 items-center gap-2 text-sm font-bold text-[#dee3e7]">
+        <Activity size={17} className="text-[#30a159]" />
+        Live activity
+      </div>
+      <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {activity.map((item) => (
+          <div
+            className="flex min-w-fit items-center gap-2 rounded-lg bg-[#1e2428] px-3 py-2 text-xs font-semibold text-[#7b8996]"
+            key={`${item.type}-${item.id}`}
+          >
+            <span className="text-[#dee3e7]">{item.displayName}</span>
+            <span>{getActivityVerb(item)}</span>
+            <span className="text-[#30a159]">{formatUsdt(item.amount)}</span>
+            {item.marketTitle ? (
+              <span className="max-w-[220px] truncate text-[#97a5b4]">{item.marketTitle}</span>
+            ) : null}
+            <span>{item.relativeTime}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function getActivityVerb(item: PlatformActivityItem) {
+  if (item.type === "deposit") {
+    return "deposited";
+  }
+
+  if (item.type === "payment") {
+    return "paid";
+  }
+
+  return "traded";
+}
+
 function CategorySurface({
   columns,
   markets,
@@ -913,7 +972,7 @@ function BreakingSurface({
 
         <div className="home-soft-card rounded-2xl border border-[#242b32] bg-[#181d21] p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="font-bold text-[#7b8996]">Live from @Polymarket</h3>
+            <h3 className="font-bold text-[#7b8996]">Live from @PulseMarket</h3>
             <button className="home-soft-button rounded-full bg-white px-4 py-2 text-sm font-bold text-[#181d21]" type="button">
               Follow on X
             </button>
@@ -1197,7 +1256,7 @@ function MentionsSurface({
 }) {
   return (
     <section className="home-reveal mx-auto mt-8 max-w-[1100px]">
-      <h2 className="text-3xl font-bold text-[#dee3e7]">Mention polymarkets</h2>
+      <h2 className="text-3xl font-bold text-[#dee3e7]">Mention markets</h2>
       <p className="mt-3 text-base font-medium text-[#7b8996]">
         Live events where you can predict the words and phrases that will be said.
       </p>
@@ -1589,7 +1648,7 @@ function getSurfaceTitle(surface: DiscoverySurface) {
     finance: "Finance",
     geopolitics: "Geopolitics",
     iran: "Iran",
-    mentions: "Mention polymarkets",
+    mentions: "Mention markets",
     new: "New",
     politics: "Politics",
     sports: "Sports Live",
@@ -1834,7 +1893,7 @@ function getNewsItems(markets: Market[]) {
   ];
 
   return fallback.map((title, index) => ({
-    kind: index === 3 ? "New polymarket" : "Breaking news",
+    kind: index === 3 ? "New PulseMarket" : "Breaking news",
     time: `May 18, ${9 - index}:${index === 0 ? "50" : "1" + index} AM`,
     title: markets[index]?.title ?? title,
   }));

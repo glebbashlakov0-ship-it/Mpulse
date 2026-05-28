@@ -2,6 +2,11 @@ import type {
   ApiListResponse,
   ApiResponse,
   AdminAuditPayload,
+  AdminEventActivitySeedResult,
+  AdminLedgerSeedActivityResult,
+  AdminOddsOverrideResult,
+  AdminPanelSessionPayload,
+  AdminSeedOddsResult,
   AdminSettlementResult,
   AdminUsersPayload,
   AdminWithdrawalsPayload,
@@ -19,6 +24,7 @@ import type {
   MarketActivityPayload,
   MarketCategory,
   MarketTag,
+  PlatformActivityPayload,
   Portfolio,
   TradingQuote,
   Trade,
@@ -40,6 +46,7 @@ async function readApiError(response: Response, fallback: string) {
 }
 
 let csrfTokenPromise: Promise<string> | null = null;
+let adminCsrfTokenPromise: Promise<string> | null = null;
 
 async function loadCsrfToken(forceRefresh = false) {
   if (!csrfTokenPromise || forceRefresh) {
@@ -84,6 +91,52 @@ async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
 
   const retryHeaders = new Headers(init.headers);
   retryHeaders.set("X-CSRF-Token", await loadCsrfToken(true));
+  return globalThis.fetch(input, {
+    ...init,
+    credentials: init.credentials ?? "same-origin",
+    headers: retryHeaders,
+  });
+}
+
+async function loadAdminCsrfToken(forceRefresh = false) {
+  if (!adminCsrfTokenPromise || forceRefresh) {
+    adminCsrfTokenPromise = globalThis
+      .fetch("/api/admin/csrf", {
+        credentials: "same-origin",
+      })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await readApiError(response, "Could not prepare admin request"));
+        }
+
+        const payload = (await response.json()) as ApiResponse<{ csrfToken: string }>;
+        return payload.data.csrfToken;
+      });
+  }
+
+  return adminCsrfTokenPromise;
+}
+
+async function adminApiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const method = init.method ?? "GET";
+  if (!isUnsafeMethod(method)) {
+    return globalThis.fetch(input, init);
+  }
+
+  const headers = new Headers(init.headers);
+  headers.set("X-CSRF-Token", await loadAdminCsrfToken());
+  const response = await globalThis.fetch(input, {
+    ...init,
+    credentials: init.credentials ?? "same-origin",
+    headers,
+  });
+
+  if (response.status !== 403) {
+    return response;
+  }
+
+  const retryHeaders = new Headers(init.headers);
+  retryHeaders.set("X-CSRF-Token", await loadAdminCsrfToken(true));
   return globalThis.fetch(input, {
     ...init,
     credentials: init.credentials ?? "same-origin",
@@ -829,7 +882,7 @@ export async function deleteWatchlistMarket(marketId: string) {
 }
 
 export async function loadAdminUsers(signal: AbortSignal) {
-  const response = await apiFetch("/api/admin/users", {
+  const response = await adminApiFetch("/api/admin/users", {
     credentials: "same-origin",
     signal,
   });
@@ -841,8 +894,51 @@ export async function loadAdminUsers(signal: AbortSignal) {
   return payload.data;
 }
 
+export async function loadAdminPanelSession(signal?: AbortSignal) {
+  const response = await adminApiFetch("/api/admin/session", {
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load admin session"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminPanelSessionPayload>;
+  return payload.data;
+}
+
+export async function loginAdminPanel(input: { username: string; password: string }) {
+  const response = await adminApiFetch("/api/admin/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not sign in"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminPanelSessionPayload>;
+  return payload.data;
+}
+
+export async function logoutAdminPanel() {
+  const response = await adminApiFetch("/api/admin/logout", {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not sign out"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminPanelSessionPayload>;
+  return payload.data;
+}
+
 export async function loadAdminAuditLogs(signal: AbortSignal) {
-  const response = await apiFetch("/api/admin/audit-logs", {
+  const response = await adminApiFetch("/api/admin/audit-logs", {
     credentials: "same-origin",
     signal,
   });
@@ -855,7 +951,7 @@ export async function loadAdminAuditLogs(signal: AbortSignal) {
 }
 
 export async function loadAdminWithdrawals(signal: AbortSignal) {
-  const response = await apiFetch("/api/admin/wallet-withdrawals", {
+  const response = await adminApiFetch("/api/admin/wallet-withdrawals", {
     credentials: "same-origin",
     signal,
   });
@@ -868,7 +964,7 @@ export async function loadAdminWithdrawals(signal: AbortSignal) {
 }
 
 export async function rejectAdminWithdrawal(id: string) {
-  const response = await apiFetch(`/api/admin/wallet-withdrawals/${encodeURIComponent(id)}/reject`, {
+  const response = await adminApiFetch(`/api/admin/wallet-withdrawals/${encodeURIComponent(id)}/reject`, {
     method: "POST",
     credentials: "same-origin",
   });
@@ -885,7 +981,7 @@ export async function rejectAdminWithdrawal(id: string) {
 }
 
 export async function hideAdminMarket(id: string, reason: HiddenMarketRule["reason"]) {
-  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(id)}/hide`, {
+  const response = await adminApiFetch(`/api/admin/markets/${encodeURIComponent(id)}/hide`, {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -906,7 +1002,7 @@ export async function hideAdminMarket(id: string, reason: HiddenMarketRule["reas
 }
 
 export async function unhideAdminMarket(id: string) {
-  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(id)}/unhide`, {
+  const response = await adminApiFetch(`/api/admin/markets/${encodeURIComponent(id)}/unhide`, {
     method: "POST",
     credentials: "same-origin",
   });
@@ -926,7 +1022,7 @@ export async function resolveAdminMarket(input: {
   marketId: string;
   winningSide: "yes" | "no";
 }) {
-  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(input.marketId)}/resolve`, {
+  const response = await adminApiFetch(`/api/admin/markets/${encodeURIComponent(input.marketId)}/resolve`, {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -944,7 +1040,7 @@ export async function resolveAdminMarket(input: {
 }
 
 export async function cancelAdminMarket(marketId: string) {
-  const response = await apiFetch(`/api/admin/markets/${encodeURIComponent(marketId)}/cancel`, {
+  const response = await adminApiFetch(`/api/admin/markets/${encodeURIComponent(marketId)}/cancel`, {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -958,5 +1054,130 @@ export async function cancelAdminMarket(marketId: string) {
   }
 
   const payload = (await response.json()) as ApiResponse<AdminSettlementResult>;
+  return payload.data;
+}
+
+export async function seedAdminMarketOddsHistory(input: {
+  marketId: string;
+  force?: boolean;
+  points?: number;
+  volatility?: number;
+}) {
+  const response = await adminApiFetch(
+    `/api/admin/markets/${encodeURIComponent(input.marketId)}/seed-odds-history`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        force: input.force,
+        points: input.points,
+        volatility: input.volatility,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not seed market odds"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminSeedOddsResult>;
+  return payload.data;
+}
+
+export async function overrideAdminMarketOdds(input: {
+  marketId: string;
+  outcomes: Array<{ name: string; price: number }>;
+  reason?: string;
+}) {
+  const response = await adminApiFetch(`/api/admin/markets/${encodeURIComponent(input.marketId)}/odds`, {
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      outcomes: input.outcomes,
+      reason: input.reason,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not override market odds"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminOddsOverrideResult>;
+  return payload.data;
+}
+
+export async function seedAdminLedgerActivity(input: {
+  userIds: string[];
+  kind: "deposit" | "payment";
+  amountMin: number;
+  amountMax: number;
+  count: number;
+  startAt: string;
+  endAt: string;
+  publicActivity: boolean;
+}) {
+  const response = await adminApiFetch("/api/admin/ledger/seed-activity", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not seed ledger activity"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminLedgerSeedActivityResult>;
+  return payload.data;
+}
+
+export async function seedAdminEventActivity(input: {
+  batchId?: string;
+  marketIds: string[];
+  filters: { status: "live" | "upcoming" | "closed" | "expired"; limit: number };
+  userIds: string[];
+  betsPerEventMin: number;
+  betsPerEventMax: number;
+  betAmountMin: number;
+  betAmountMax: number;
+  depositAmountMin: number;
+  depositAmountMax: number;
+  depositBufferMultiplier: number;
+  startAt: string;
+  endAt: string;
+  publicActivity: boolean;
+  force: boolean;
+}) {
+  const response = await adminApiFetch("/api/admin/markets/seed-event-activity", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not seed event activity"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<AdminEventActivitySeedResult>;
+  return payload.data;
+}
+
+export async function loadPlatformActivity(limit = 30, signal?: AbortSignal) {
+  const response = await apiFetch(`/api/platform/activity?limit=${encodeURIComponent(String(limit))}`, {
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load platform activity"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<PlatformActivityPayload>;
   return payload.data;
 }

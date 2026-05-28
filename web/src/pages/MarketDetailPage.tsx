@@ -1,15 +1,18 @@
 import * as React from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { MarketDetail } from "../components/MarketDetail";
 import { MarketDetailSkeleton } from "../components/MarketSkeleton";
 import { useMarketDetail } from "../hooks/useMarketDetail";
+import type { Market } from "../lib/types";
 
 export function MarketDetailPage() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const navigate = useNavigate();
-  const state = useMarketDetail(id ?? "", null);
+  const fallbackMarket = getFallbackMarket(location.state);
+  const state = useMarketDetail(id ?? "", fallbackMarket);
 
   if (!id) {
     return (
@@ -46,4 +49,20 @@ export function MarketDetailPage() {
       )}
     </div>
   );
+}
+
+function getFallbackMarket(state: unknown): Market | null {
+  if (
+    state &&
+    typeof state === "object" &&
+    "market" in state &&
+    state.market &&
+    typeof state.market === "object" &&
+    "id" in state.market &&
+    typeof state.market.id === "string"
+  ) {
+    return state.market as Market;
+  }
+
+  return null;
 }

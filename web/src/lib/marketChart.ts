@@ -1,3 +1,4 @@
+import { formatMarketText } from "./marketText";
 import type { Outcome } from "./types";
 
 export const chartRanges = ["1H", "6H", "1D", "1W", "1M", "ALL"] as const;
@@ -44,7 +45,12 @@ const rangeMs: Record<Exclude<ChartRange, "ALL">, number> = {
   "1M": 30 * 24 * 60 * 60 * 1000,
 };
 
-const seriesColors = ["#4fb6ff", "#f7d022", "#30d158", "#ff6b6b", "#ac7cff"];
+const fallbackRangeMs: Record<ChartRange, number> = {
+  ...rangeMs,
+  ALL: 315 * 24 * 60 * 60 * 1000,
+};
+
+const seriesColors = ["#87BFFF", "#2797FF", "#FDC503", "#FF7F0E", "#B984FF"];
 const maxSeriesPoints = 180;
 
 export function filterPriceHistoryByRange(
@@ -76,6 +82,8 @@ export function buildChartSeries({
   height = 190,
   paddingX = 18,
   paddingY = 18,
+  yMin = 0,
+  yMax = 1,
   selectedOutcomeName,
 }: {
   priceHistory: ChartHistoryPoint[];
@@ -86,6 +94,8 @@ export function buildChartSeries({
   height?: number;
   paddingX?: number;
   paddingY?: number;
+  yMin?: number;
+  yMax?: number;
   selectedOutcomeName?: string | null;
 }): ChartSeries[] {
   const visibleHistory = downsampleHistory(
@@ -100,6 +110,7 @@ export function buildChartSeries({
   const maxTimestamp = Math.max(...timestamps);
   const plotWidth = Math.max(1, width - paddingX * 2);
   const plotHeight = Math.max(1, height - paddingY * 2);
+  const ySpan = Math.max(0.0001, yMax - yMin);
 
   return targets
     .map((target, index) => {
@@ -116,7 +127,7 @@ export function buildChartSeries({
             minTimestamp === maxTimestamp
               ? paddingX + plotWidth
               : paddingX + ((timestampMs - minTimestamp) / (maxTimestamp - minTimestamp)) * plotWidth;
-          const y = paddingY + (1 - value) * plotHeight;
+          const y = paddingY + (1 - (value - yMin) / ySpan) * plotHeight;
 
           return {
             timestamp: historyPoint.timestamp,
@@ -138,6 +149,44 @@ export function buildChartSeries({
       };
     })
     .filter((series) => series.points.length > 0);
+}
+
+export function buildCurrentPriceHistory(
+  outcomes: Outcome[],
+  range: ChartRange,
+  nowMs = Date.now(),
+): ChartHistoryPoint[] {
+  const pricedOutcomes = outcomes
+    .map((outcome) => ({
+      name: outcome.name,
+      price: clampProbability(outcome.price ?? outcome.probability),
+    }))
+    .filter((outcome): outcome is { name: string; price: number } => outcome.price !== null);
+
+  if (pricedOutcomes.length === 0) {
+    return [];
+  }
+
+  const yes = pricedOutcomes.find((outcome) => outcome.name.trim().toLowerCase() === "yes")?.price
+    ?? (outcomes.length <= 2 ? pricedOutcomes[0]?.price ?? null : null);
+  const no = pricedOutcomes.find((outcome) => outcome.name.trim().toLowerCase() === "no")?.price
+    ?? (yes !== null && outcomes.length <= 2 ? 1 - yes : null);
+  const pointCount = range === "ALL" ? 12 : 8;
+  const spanMs = fallbackRangeMs[range];
+  const startMs = nowMs - spanMs * 0.98;
+
+  return Array.from({ length: pointCount }, (_, index) => {
+    const progress = index / (pointCount - 1);
+    return {
+      timestamp: new Date(startMs + spanMs * 0.98 * progress).toISOString(),
+      yes,
+      no,
+      volume: 0,
+      liquidity: 0,
+      synthetic: true,
+      outcomes: pricedOutcomes,
+    };
+  });
 }
 
 export function downsampleHistory<T>(history: T[], maxPoints = maxSeriesPoints): T[] {
@@ -175,9 +224,36 @@ export function pointsToSvgPath(points: ChartPoint[]) {
     return "";
   }
 
-  return points
-    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`)
-    .join(" ");
+  if (points.length === 1) {
+    return `M${points[0].x} ${points[0].y}`;
+  }
+
+  const commands = [`M${points[0].x} ${points[0].y}`];
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const previous = points[index - 1] ?? points[index];
+    const current = points[index];
+    const next = points[index + 1];
+    const following = points[index + 2] ?? next;
+    const cp1x = clampControlX(
+      current.x + (next.x - previous.x) / 6,
+      current.x,
+      next.x,
+    );
+    const cp1y = current.y + (next.y - previous.y) / 6;
+    const cp2x = clampControlX(
+      next.x - (following.x - current.x) / 6,
+      current.x,
+      next.x,
+    );
+    const cp2y = next.y - (following.y - current.y) / 6;
+
+    commands.push(
+      `C${round(cp1x)} ${round(cp1y)},${round(cp2x)} ${round(cp2y)},${next.x} ${next.y}`,
+    );
+  }
+
+  return commands.join(" ");
 }
 
 function getSeriesTargets(outcomes: Outcome[], selectedOutcomeName?: string | null) {
@@ -203,7 +279,8 @@ function getSeriesTargets(outcomes: Outcome[], selectedOutcomeName?: string | nu
 
   return targets.map((outcome) => ({
     key: `outcome:${outcome.name.trim().toLowerCase()}`,
-    label: outcome.name,
+    label: formatMarketText(outcome.name),
+    outcomeName: outcome.name,
   }));
 }
 
@@ -219,7 +296,7 @@ function getTargetPrice(
     return clampProbability(historyPoint.no);
   }
 
-  const name = target.label.trim().toLowerCase();
+  const name = ("outcomeName" in target ? target.outcomeName : target.label).trim().toLowerCase();
   const outcomePrice = getOutcomePointPrice(historyPoint.outcomes, name);
   return clampProbability(outcomePrice);
 }
@@ -264,4 +341,8 @@ function toNullableNumber(value: number | null | undefined) {
 
 function round(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function clampControlX(value: number, left: number, right: number) {
+  return Math.max(Math.min(left, right), Math.min(Math.max(left, right), value));
 }

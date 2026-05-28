@@ -15,8 +15,22 @@ function getCookieHeader(response: {
   return cookie.split(";")[0];
 }
 
+async function loginAdmin(app: ReturnType<typeof buildApp>) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/admin/login",
+    payload: {
+      username: "admin",
+      password: "admin",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  return getCookieHeader(response);
+}
+
 test("2FA setup, backup-code regeneration, disable, and audit events work", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["security-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
     const register = await app.inject({
@@ -29,6 +43,7 @@ test("2FA setup, backup-code regeneration, disable, and audit events work", asyn
       },
     });
     const cookie = getCookieHeader(register);
+    const adminCookie = await loginAdmin(app);
 
     const setup = await app.inject({
       method: "POST",
@@ -78,7 +93,7 @@ test("2FA setup, backup-code regeneration, disable, and audit events work", asyn
     const audit = await app.inject({
       method: "GET",
       url: "/api/admin/audit-logs",
-      headers: { cookie },
+      headers: { cookie: adminCookie },
     });
     const auditBody = JSON.parse(audit.body) as {
       data: { auditLogs: Array<{ eventType: string }> };
@@ -96,10 +111,10 @@ test("2FA setup, backup-code regeneration, disable, and audit events work", asyn
 });
 
 test("session/device management lists, revokes, logs out all devices, and audits actions", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["session-audit-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
-    const adminCookie = await register(app, "session-audit-admin@example.com");
+    const adminCookie = await loginAdmin(app);
     const firstCookie = await register(app, "session-user@example.com");
     const secondLogin = await app.inject({
       method: "POST",

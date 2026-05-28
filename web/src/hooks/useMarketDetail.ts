@@ -21,7 +21,12 @@ export function useMarketDetail(marketId: string | null, fallbackMarket: Market 
     const controller = new AbortController();
     setState((current) => ({
       status: "loading",
-      data: current.data?.id === marketId ? current.data : null,
+      data:
+        current.data?.id === marketId
+          ? current.data
+          : fallbackMarket?.id === marketId
+            ? withDetailImage(fallbackMarket)
+            : null,
     }));
 
     loadMarketDetail(marketId, controller.signal)
@@ -33,6 +38,14 @@ export function useMarketDetail(marketId: string | null, fallbackMarket: Market 
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+
+        if (fallbackMarket?.id === marketId) {
+          setState({
+            status: "ready",
+            data: withDetailImage(fallbackMarket),
+          });
           return;
         }
 

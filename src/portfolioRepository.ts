@@ -38,6 +38,7 @@ export type TradeRecord = {
   shares: string;
   status: "local" | "pending" | "filled" | "rejected" | "cancelled";
   idempotencyKey: string | null;
+  metadata?: Record<string, unknown>;
   createdAt: string;
 };
 
@@ -165,6 +166,7 @@ type TradeRow = {
   shares: string | number;
   status: "local" | "pending" | "filled" | "rejected" | "cancelled";
   idempotency_key: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: Date | string;
 };
 
@@ -224,7 +226,7 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
     const result = await this.db.query<TradeRow>(
       `select
          id, user_id, wallet_id, market_external_id, side, trade_type, amount, price, shares,
-         status, idempotency_key, created_at
+         status, idempotency_key, metadata, created_at
        from trades
        where user_id = $1
        order by created_at desc
@@ -244,6 +246,7 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
       shares: String(row.shares),
       status: row.status,
       idempotencyKey: row.idempotency_key,
+      metadata: row.metadata ?? {},
       createdAt: toIsoString(row.created_at),
     }));
   }
@@ -252,7 +255,7 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
     const result = await this.db.query<TradeRow>(
       `select
          id, user_id, wallet_id, market_external_id, side, trade_type, amount, price, shares,
-         status, idempotency_key, created_at
+         status, idempotency_key, metadata, created_at
        from trades
        where user_id = $1 and idempotency_key = $2
        limit 1`,
@@ -272,6 +275,7 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
           shares: String(row.shares),
           status: row.status,
           idempotencyKey: row.idempotency_key,
+          metadata: row.metadata ?? {},
           createdAt: toIsoString(row.created_at),
         }
       : null;
@@ -322,9 +326,9 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
     await this.db.query(
       `insert into trades (
          id, user_id, wallet_id, market_external_id, side, trade_type, amount, price, shares,
-         status, idempotency_key, created_at
+         status, idempotency_key, metadata, created_at
        )
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
        on conflict (user_id, idempotency_key) where idempotency_key is not null do nothing`,
       [
         trade.id,
@@ -338,6 +342,7 @@ export class PostgresPortfolioRepository implements PortfolioRepository {
         trade.shares,
         trade.status,
         trade.idempotencyKey,
+        JSON.stringify(trade.metadata ?? {}),
         trade.createdAt,
       ],
     );

@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { AuthError, buildAuthService, getSessionTokenFromRequest } from "./auth.js";
 import { buildAdminService, MemoryAdminRepository, PostgresAdminRepository, AdminError } from "./admin.js";
+import { buildAdminPanelAuthService, AdminPanelAuthError } from "./adminPanelAuth.js";
 import {
   buildAuditService,
   MemoryAuditLogRepository,
@@ -53,6 +54,22 @@ import {
 } from "./marketActivityRepository.js";
 import { buildMarketDataService, MarketDataError } from "./marketDataService.js";
 import { MemoryMarketRepository, PostgresMarketRepository } from "./marketRepository.js";
+import {
+  MemoryMarketPriceHistoryRepository,
+  PostgresMarketPriceHistoryRepository,
+} from "./marketPriceHistoryRepository.js";
+import { buildMarketSeedService } from "./marketSeedService.js";
+import {
+  buildAdminLedgerActivityService,
+} from "./adminLedgerActivityService.js";
+import {
+  buildAdminEventActivitySeedService,
+} from "./adminEventActivitySeedService.js";
+import {
+  buildPlatformActivityService,
+  MemoryPlatformActivityRepository,
+  PostgresPlatformActivityRepository,
+} from "./platformActivity.js";
 import { buildPolymarketClient, UpstreamError } from "./polymarketClient.js";
 import { buildAuthRateLimiter } from "./rateLimit.js";
 import {
@@ -71,6 +88,7 @@ import { registerWalletRoutes } from "./routes/walletRoutes.js";
 import { registerLedgerRoutes } from "./routes/ledgerRoutes.js";
 import { registerTradingRoutes } from "./routes/tradingRoutes.js";
 import { registerMarketActivityRoutes } from "./routes/marketActivityRoutes.js";
+import { registerPlatformActivityRoutes } from "./routes/platformActivityRoutes.js";
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerWatchlistRoutes } from "./routes/watchlistRoutes.js";
 import { MemoryWatchlistRepository, PostgresWatchlistRepository } from "./watchlistRepository.js";
@@ -89,6 +107,9 @@ export function buildApp(config: AppConfig = getConfig()) {
   const marketRepository = db.enabled
     ? new PostgresMarketRepository(db)
     : new MemoryMarketRepository();
+  const marketPriceHistoryRepository = db.enabled
+    ? new PostgresMarketPriceHistoryRepository(db)
+    : new MemoryMarketPriceHistoryRepository();
   const authRepositories = db.enabled ? buildPostgresAuthRepositories(db) : undefined;
   const twoFactor = buildTwoFactorService(
     db.enabled ? new PostgresTwoFactorRepository(db, config) : new MemoryTwoFactorRepository(),
@@ -121,6 +142,9 @@ export function buildApp(config: AppConfig = getConfig()) {
   const marketActivityRepository = db.enabled
     ? new PostgresMarketActivityRepository(db)
     : new MemoryMarketActivityRepository();
+  const platformActivityRepository = db.enabled
+    ? new PostgresPlatformActivityRepository(db)
+    : new MemoryPlatformActivityRepository();
   const watchlistRepository = db.enabled
     ? new PostgresWatchlistRepository(db)
     : new MemoryWatchlistRepository();
@@ -135,6 +159,7 @@ export function buildApp(config: AppConfig = getConfig()) {
     repository: db.enabled ? new PostgresAdminRepository(db) : new MemoryAdminRepository(),
     walletRepository: wallets.repository,
   });
+  const adminPanelAuth = buildAdminPanelAuthService(config);
   const settlement = buildSettlementService({
     repository: db.enabled
       ? new PostgresSettlementRepository(db)
@@ -150,6 +175,28 @@ export function buildApp(config: AppConfig = getConfig()) {
     polymarket,
     marketRepository,
     marketActivityRepository,
+    priceHistoryRepository: marketPriceHistoryRepository,
+  });
+  const marketSeed = buildMarketSeedService({
+    marketData,
+    priceHistoryRepository: marketPriceHistoryRepository,
+  });
+  const platformActivity = buildPlatformActivityService(platformActivityRepository);
+  const adminLedgerActivity = buildAdminLedgerActivityService({
+    ledger,
+    walletRepository: wallets.repository,
+    platformActivityRepository,
+  });
+  const adminEventActivitySeed = buildAdminEventActivitySeedService({
+    auth,
+    marketData,
+    marketSeed,
+    ledger,
+    walletRepository: wallets.repository,
+    portfolioRepository,
+    marketActivityRepository,
+    priceHistoryRepository: marketPriceHistoryRepository,
+    platformActivityRepository,
   });
   let snapshotCollectorTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -241,6 +288,16 @@ export function buildApp(config: AppConfig = getConfig()) {
       });
     }
 
+    if (error instanceof AdminPanelAuthError) {
+      return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+    }
+
     if (error instanceof WalletError) {
       return reply.status(error.statusCode).send({
         data: null,
@@ -296,6 +353,7 @@ export function buildApp(config: AppConfig = getConfig()) {
   registerEventRoutes(app, polymarket, marketData);
   registerMarketRoutes(app, marketData);
   registerMarketActivityRoutes(app, audit, marketActivityRepository);
+  registerPlatformActivityRoutes(app, platformActivity);
   registerAuthRoutes(app, auth, audit, config, authRateLimiter, verification, twoFactor);
   registerComplianceRoutes(app, auth, compliance, config);
   registerWalletRoutes(app, auth, audit, wallets, config);
@@ -315,7 +373,18 @@ export function buildApp(config: AppConfig = getConfig()) {
       requirePersistentUserState: db.enabled || config.nodeEnv === "production",
     },
   );
-  registerAdminRoutes(app, auth, audit, admin, config, settlement);
+  registerAdminRoutes(
+    app,
+    auth,
+    audit,
+    admin,
+    config,
+    settlement,
+    marketSeed,
+    adminLedgerActivity,
+    adminEventActivitySeed,
+    adminPanelAuth,
+  );
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
 
   if (config.marketSnapshotCollectorEnabled && config.marketSnapshotCollectorMarketIds.length > 0) {

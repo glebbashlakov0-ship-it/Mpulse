@@ -19,7 +19,7 @@ export type SettlementRecord = {
   platformFee: number;
   distributablePool: number;
   payoutCount: number;
-  createdBy: string;
+  createdBy: string | null;
   idempotencyKey: string;
   createdAt: string;
 };
@@ -241,7 +241,8 @@ export function buildSettlementService({
   async function resolveMarket(input: {
     marketId: string;
     winningSide: unknown;
-    adminUserId: string;
+    adminUserId: string | null;
+    adminActorId?: string | null;
     sessionId?: string | null;
     idempotencyKey?: string | null;
   }) {
@@ -252,6 +253,7 @@ export function buildSettlementService({
       status: "resolved",
       winningSide,
       adminUserId: input.adminUserId,
+      adminActorId: input.adminActorId,
       sessionId: input.sessionId,
       idempotencyKey: input.idempotencyKey,
     });
@@ -259,7 +261,8 @@ export function buildSettlementService({
 
   async function cancelMarket(input: {
     marketId: string;
-    adminUserId: string;
+    adminUserId: string | null;
+    adminActorId?: string | null;
     sessionId?: string | null;
     idempotencyKey?: string | null;
   }) {
@@ -268,6 +271,7 @@ export function buildSettlementService({
       status: "cancelled",
       winningSide: null,
       adminUserId: input.adminUserId,
+      adminActorId: input.adminActorId,
       sessionId: input.sessionId,
       idempotencyKey: input.idempotencyKey,
     });
@@ -277,7 +281,8 @@ export function buildSettlementService({
     marketId: string;
     status: SettlementStatus;
     winningSide: SettlementSide | null;
-    adminUserId: string;
+    adminUserId: string | null;
+    adminActorId?: string | null;
     sessionId?: string | null;
     idempotencyKey?: string | null;
   }) {
@@ -394,6 +399,7 @@ export function buildSettlementService({
       userId: input.adminUserId,
       sessionId: input.sessionId ?? null,
       metadata: {
+        adminActorId: input.adminActorId ?? input.adminUserId ?? null,
         marketId,
         settlementId: settlement.id,
         status: settlement.status,

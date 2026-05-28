@@ -36,7 +36,29 @@ declare global {
   }
 }
 
-function App() {
+function RootApp() {
+  const location = useLocation();
+
+  if (location.pathname === "/admin" || location.pathname.startsWith("/admin/")) {
+    return (
+      <>
+        <Routes>
+          <Route path="/admin/*" element={<AdminPage />} />
+          <Route path="*" element={<Navigate to="/admin" replace />} />
+        </Routes>
+        <Toaster position="top-right" />
+      </>
+    );
+  }
+
+  return (
+    <AuthProvider>
+      <PublicApp />
+    </AuthProvider>
+  );
+}
+
+function PublicApp() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, status, login, register } = useAuth();
@@ -238,10 +260,8 @@ window.marketPulseRoot = appRoot;
 
 appRoot.render(
   <StrictMode>
-    <AuthProvider>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </AuthProvider>
+    <BrowserRouter>
+      <RootApp />
+    </BrowserRouter>
   </StrictMode>,
 );

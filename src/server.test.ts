@@ -18,6 +18,20 @@ function getCookieHeader(response: {
   return setCookie.split(";")[0];
 }
 
+async function loginAdmin(app: ReturnType<typeof buildApp>) {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/admin/login",
+    payload: {
+      username: "admin",
+      password: "admin",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  return getCookieHeader(response);
+}
+
 test("buildApp fails fast instead of using memory fallback in production without DATABASE_URL", () => {
   assert.throws(
     () =>
@@ -1290,7 +1304,7 @@ test("GET /api/auth/me returns the current user with a session", async () => {
   }
 });
 
-test("admin endpoints return 403 for an authenticated non-admin user", async () => {
+test("admin endpoints ignore public user sessions", async () => {
   const app = buildApp(testConfig());
 
   try {
@@ -1302,18 +1316,18 @@ test("admin endpoints return 403 for an authenticated non-admin user", async () 
     });
     const body = JSON.parse(response.body) as { error: { code: string } };
 
-    assert.equal(response.statusCode, 403);
-    assert.equal(body.error.code, "ADMIN_FORBIDDEN");
+    assert.equal(response.statusCode, 401);
+    assert.equal(body.error.code, "ADMIN_PANEL_UNAUTHENTICATED");
   } finally {
     await app.close();
   }
 });
 
-test("admin core lets configured admins list users", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["admin@example.com"] }));
+test("standalone admin login lists public users without using email roles", async () => {
+  const app = buildApp(testConfig());
 
   try {
-    const adminCookie = await registerForTrading(app, "admin@example.com");
+    const adminCookie = await loginAdmin(app);
     await registerForTrading(app, "listed-user@example.com");
     const response = await app.inject({
       method: "GET",
@@ -1328,75 +1342,44 @@ test("admin core lets configured admins list users", async () => {
     };
 
     assert.equal(response.statusCode, 200);
-    assert.equal(body.data.users.some((user) => user.email === "admin@example.com"), true);
+    assert.equal(body.data.users.some((user) => user.email === "listed-user@example.com"), true);
     assert.equal(
-      body.data.users.find((user) => user.email === "admin@example.com")?.role,
-      "super_admin",
+      body.data.users.find((user) => user.email === "listed-user@example.com")?.role,
+      "user",
     );
-    assert.equal(body.data.summary.super_admin, 1);
+    assert.equal(body.data.summary.user, 1);
   } finally {
     await app.close();
   }
 });
 
-test("admin role matrix gates support, compliance, and finance actions", async () => {
-  const app = buildApp(
-    testConfig({
-      supportEmails: ["support@example.com"],
-      complianceAdminEmails: ["compliance-role@example.com"],
-      financeAdminEmails: ["finance-role@example.com"],
-    }),
-  );
+test("standalone admin login can use finance and moderation actions", async () => {
+  const app = buildApp(testConfig());
 
   try {
-    const supportCookie = await registerForTrading(app, "support@example.com");
-    const complianceCookie = await registerForTrading(app, "compliance-role@example.com");
-    const financeCookie = await registerForTrading(app, "finance-role@example.com");
+    const adminCookie = await loginAdmin(app);
 
-    const supportUsers = await app.inject({
+    const users = await app.inject({
       method: "GET",
       url: "/api/admin/users",
-      headers: { cookie: supportCookie },
+      headers: { cookie: adminCookie },
     });
-    const supportUsersBody = JSON.parse(supportUsers.body) as {
-      data: { users: Array<{ email: string; role: string }> };
-    };
+    assert.equal(users.statusCode, 200);
 
-    assert.equal(supportUsers.statusCode, 200);
-    assert.equal(
-      supportUsersBody.data.users.find((user) => user.email === "support@example.com")?.role,
-      "support",
-    );
-
-    const supportWithdrawals = await app.inject({
+    const withdrawals = await app.inject({
       method: "GET",
       url: "/api/admin/wallet-withdrawals",
-      headers: { cookie: supportCookie },
+      headers: { cookie: adminCookie },
     });
-    assert.equal(supportWithdrawals.statusCode, 403);
+    assert.equal(withdrawals.statusCode, 200);
 
-    const financeWithdrawals = await app.inject({
-      method: "GET",
-      url: "/api/admin/wallet-withdrawals",
-      headers: { cookie: financeCookie },
-    });
-    assert.equal(financeWithdrawals.statusCode, 200);
-
-    const financeHide = await app.inject({
+    const hide = await app.inject({
       method: "POST",
       url: "/api/admin/markets/matrix-market/hide",
-      headers: { cookie: financeCookie },
+      headers: { cookie: adminCookie },
       payload: { reason: "manual_review" },
     });
-    assert.equal(financeHide.statusCode, 403);
-
-    const complianceHide = await app.inject({
-      method: "POST",
-      url: "/api/admin/markets/matrix-market/hide",
-      headers: { cookie: complianceCookie },
-      payload: { reason: "manual_review" },
-    });
-    assert.equal(complianceHide.statusCode, 200);
+    assert.equal(hide.statusCode, 200);
   } finally {
     await app.close();
   }
@@ -2153,12 +2136,12 @@ test("POST /api/ledger/credits requires authentication", async () => {
 
 test("POST /api/admin/markets/:id/resolve settles Pulse positions and rejects duplicates", async () => {
   const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig({ adminEmails: ["settlement-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
     const yesCookie = await registerEligibleTrader(app, "settlement-yes@example.com");
     const noCookie = await registerEligibleTrader(app, "settlement-no@example.com");
-    const adminCookie = await registerForTrading(app, "settlement-admin@example.com");
+    const adminCookie = await loginAdmin(app);
 
     const yesOrder = await app.inject({
       method: "POST",
@@ -2259,11 +2242,11 @@ test("POST /api/admin/markets/:id/resolve settles Pulse positions and rejects du
 
 test("POST /api/admin/markets/:id/cancel refunds all Pulse stakes", async () => {
   const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig({ adminEmails: ["refund-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
     const userCookie = await registerEligibleTrader(app, "refund-user@example.com");
-    const adminCookie = await registerForTrading(app, "refund-admin@example.com");
+    const adminCookie = await loginAdmin(app);
 
     await app.inject({
       method: "POST",
@@ -2674,11 +2657,11 @@ test("POST /api/wallets/withdrawal-requests creates and lists a blocked withdraw
 });
 
 test("admin withdrawal reject blocks real transfer and does not move ledger", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["finance-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
     const userCookie = await registerForTrading(app, "wallet-review-user@example.com");
-    const adminCookie = await registerForTrading(app, "finance-admin@example.com");
+    const adminCookie = await loginAdmin(app);
     await app.inject({
       method: "POST",
       url: "/api/ledger/credits",
@@ -2749,10 +2732,10 @@ test("admin withdrawal reject blocks real transfer and does not move ledger", as
 });
 
 test("admin market hide and unhide work and write audit events", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["compliance-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
-    const adminCookie = await registerForTrading(app, "compliance-admin@example.com");
+    const adminCookie = await loginAdmin(app);
     const hideResponse = await app.inject({
       method: "POST",
       url: "/api/admin/markets/market-to-hide/hide",
@@ -3055,11 +3038,11 @@ test("POST /api/wallets/webhooks/deposits rejects tx hash without log index or p
 });
 
 test("POST /api/wallets/webhooks/deposits rejects same tx/log with mismatched payload", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["deposit-conflict-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
     const cookie = await registerForTrading(app, "wallet-webhook-conflict@example.com");
-    const adminCookie = await registerForTrading(app, "deposit-conflict-admin@example.com");
+    const adminCookie = await loginAdmin(app);
     const walletResponse = await app.inject({
       method: "GET",
       url: "/api/wallets/me",
@@ -3216,11 +3199,11 @@ test("POST /api/wallets/webhooks/deposits does not credit blocked compliance use
 });
 
 test("admin audit logs include deposit status events", async () => {
-  const app = buildApp(testConfig({ adminEmails: ["deposit-audit-admin@example.com"] }));
+  const app = buildApp(testConfig());
 
   try {
     const userCookie = await registerForTrading(app, "wallet-webhook-audit-user@example.com");
-    const adminCookie = await registerForTrading(app, "deposit-audit-admin@example.com");
+    const adminCookie = await loginAdmin(app);
     const walletResponse = await app.inject({
       method: "GET",
       url: "/api/wallets/me",

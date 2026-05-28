@@ -243,7 +243,7 @@ function buildStatsFromPoolState(outcomes: NormalizedOutcome[], state: PoolState
     const probability =
       totalPool > 0
         ? clampProbability((state.pools.get(key) ?? 0) / totalPool)
-        : getInitialProbability(index, outcomes.length);
+        : getInitialProbability(index, outcomes.length, outcome.price ?? outcome.probability);
 
     return withOutcomeProbability(outcome, probability);
   });
@@ -273,7 +273,7 @@ function buildGroupedStatsFromState(
     const probability =
       totalPool > 0
         ? clampProbability((state.pools.get(market.id) ?? 0) / totalPool)
-        : getInitialProbability(index, markets.length);
+        : getInitialProbability(index, markets.length, market.yes_price);
     const noProbability = clampProbability(1 - probability);
     const outcomes = applyBinaryOutcomePrices(market.outcomes, probability, noProbability);
 
@@ -461,7 +461,15 @@ function getGroupedInitialHistoryTimestamp(
   return new Date(now).toISOString();
 }
 
-function getInitialProbability(index: number, totalOutcomes: number) {
+function getInitialProbability(
+  index: number,
+  totalOutcomes: number,
+  preferredPrice?: number | null,
+) {
+  if (preferredPrice !== undefined && preferredPrice !== null && Number.isFinite(preferredPrice)) {
+    return clampProbability(preferredPrice);
+  }
+
   return totalOutcomes > 0 ? clampProbability(1 / totalOutcomes) : index === 0 ? 1 : 0;
 }
 

@@ -41,9 +41,15 @@ export type AuditEventType =
   | "wallet.rejected"
   | "admin.user_view"
   | "admin.audit_view"
+  | "admin.login"
+  | "admin.logout"
   | "admin.withdrawal_review"
   | "admin.market_hide"
   | "admin.market_unhide"
+  | "admin.market_seed_odds"
+  | "admin.market_odds_override"
+  | "admin.ledger_seed_activity"
+  | "admin.event_activity_seed"
   | "admin.rejected";
 
 export type AuditEvent = {

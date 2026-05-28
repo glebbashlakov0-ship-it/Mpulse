@@ -29,6 +29,7 @@ export type Trade = {
   shares: number;
   realizedPnl: number | null;
   idempotencyKey: string | null;
+  metadata: Record<string, unknown>;
   createdAt: string;
 };
 
@@ -102,6 +103,8 @@ export type TradingQuoteInput = {
   ledger: LedgerService;
   portfolioRepository?: PortfolioRepository;
   settlementRepository?: SettlementHistoryRepository;
+  createdAt?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type TradingOrderInput = TradingQuoteInput & {
@@ -145,7 +148,8 @@ type TradingErrorCode =
   | "INVALID_AMOUNT"
   | "ORDER_AMOUNT_OUT_OF_RANGE"
   | "INSUFFICIENT_BALANCE"
-  | "INSUFFICIENT_SHARES";
+  | "INSUFFICIENT_SHARES"
+  | "INVALID_CREATED_AT";
 
 type TradingError = {
   ok: false;
@@ -336,6 +340,23 @@ function hasMarketCloseTimePassed(market: NormalizedMarketDetail) {
 
 function normalizePositiveNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function normalizeCreatedAt(value: string | undefined) {
+  if (value === undefined) {
+    return new Date().toISOString();
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function normalizeTradeMetadata(value: Record<string, unknown> | undefined) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
 function buildPoolQuote({
@@ -557,8 +578,18 @@ export async function createTradingQuote({
   userId = DEMO_USER_ID,
   ledger,
   portfolioRepository,
+  createdAt,
 }: TradingQuoteInput): Promise<{ ok: true; quote: TradingQuote } | TradingError> {
   const state = await getTradingState(userId, portfolioRepository);
+  const quoteCreatedAt = normalizeCreatedAt(createdAt);
+
+  if (!quoteCreatedAt) {
+    return {
+      ok: false,
+      code: "INVALID_CREATED_AT",
+      message: "createdAt must be a valid ISO date string.",
+    };
+  }
 
   if (hasMarketCloseTimePassed(market)) {
     return {
@@ -665,7 +696,7 @@ export async function createTradingQuote({
       priceImpact: poolQuote.priceImpact,
       nextOdds: poolQuote.nextOdds,
       status: "quoted",
-      createdAt: new Date().toISOString(),
+      createdAt: quoteCreatedAt,
     },
   };
 }
@@ -749,7 +780,8 @@ export async function placeLocalOrder(
     };
   }
 
-  const now = new Date().toISOString();
+  const now = quote.createdAt;
+  const tradeMetadata = normalizeTradeMetadata(input.metadata);
   const existingPosition = state.positions.find((position) => position.marketId === quote.marketId);
   const sideCost =
     existingPosition && quote.action === "sell" ? getSideCost(existingPosition, quote.side) : 0;
@@ -773,6 +805,7 @@ export async function placeLocalOrder(
     shares: quote.shares,
     realizedPnl,
     idempotencyKey: normalizedIdempotencyKey,
+    metadata: tradeMetadata,
     createdAt: now,
   };
 
@@ -829,7 +862,9 @@ export async function placeLocalOrder(
       amount: quote.amount,
       stakeAmount: quote.stakeAmount,
       platformFee: quote.platformFee,
+      ...tradeMetadata,
     },
+    createdAt: now,
   });
 
   state.trades = [trade, ...state.trades].slice(0, 200);
@@ -936,6 +971,7 @@ function mapTradeRecord(row: TradeRecord, marketTitle?: string): Trade {
     shares: Number(row.shares),
     realizedPnl: null,
     idempotencyKey: row.idempotencyKey,
+    metadata: row.metadata ?? {},
     createdAt: row.createdAt,
   };
 }
@@ -997,6 +1033,7 @@ async function persistTradeState({
     shares: String(trade.shares),
     status: "filled",
     idempotencyKey: trade.idempotencyKey,
+    metadata: trade.metadata,
     createdAt: trade.createdAt,
   });
 

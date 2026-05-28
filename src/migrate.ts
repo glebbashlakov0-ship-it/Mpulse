@@ -29,6 +29,8 @@ const migrations = [
   "012_wallet_provider_alignment.sql",
   "013_market_activity_comments.sql",
   "014_market_settlement_core.sql",
+  "015_market_price_history_points.sql",
+  "016_trade_metadata.sql",
 ];
 
 try {

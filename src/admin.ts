@@ -34,11 +34,11 @@ export type AdminRepository = {
   hideMarket(input: {
     marketId: string;
     reason: MarketModerationReason;
-    adminUserId: string;
+    adminUserId: string | null;
   }): Promise<AdminMarketVisibilityRule>;
   unhideMarket(input: {
     marketId: string;
-    adminUserId: string;
+    adminUserId: string | null;
   }): Promise<AdminMarketVisibilityRule | null>;
   listHiddenMarkets(): Promise<AdminMarketVisibilityRule[]>;
 };
@@ -62,7 +62,7 @@ export class MemoryAdminRepository implements AdminRepository {
   async hideMarket(input: {
     marketId: string;
     reason: MarketModerationReason;
-    adminUserId: string;
+    adminUserId: string | null;
   }) {
     const now = new Date().toISOString();
     const existing = this.marketRulesByMarketId.get(input.marketId);
@@ -72,7 +72,7 @@ export class MemoryAdminRepository implements AdminRepository {
       action: "hide",
       reason: input.reason,
       active: true,
-      createdBy: existing?.createdBy ?? input.adminUserId,
+      createdBy: existing?.createdBy ?? input.adminUserId ?? "admin-panel",
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -81,7 +81,7 @@ export class MemoryAdminRepository implements AdminRepository {
     return rule;
   }
 
-  async unhideMarket(input: { marketId: string; adminUserId: string }) {
+  async unhideMarket(input: { marketId: string; adminUserId: string | null }) {
     const existing = this.marketRulesByMarketId.get(input.marketId);
     if (!existing) {
       return null;
@@ -121,7 +121,7 @@ export class PostgresAdminRepository implements AdminRepository {
   async hideMarket(input: {
     marketId: string;
     reason: MarketModerationReason;
-    adminUserId: string;
+    adminUserId: string | null;
   }) {
     const result = await this.db.query<AdminMarketVisibilityRuleRow>(
       `insert into admin_market_visibility_rules (
@@ -145,7 +145,7 @@ export class PostgresAdminRepository implements AdminRepository {
     return mapAdminMarketVisibilityRule(row);
   }
 
-  async unhideMarket(input: { marketId: string; adminUserId: string }) {
+  async unhideMarket(input: { marketId: string; adminUserId: string | null }) {
     const result = await this.db.query<AdminMarketVisibilityRuleRow>(
       `update admin_market_visibility_rules
        set active = false, updated_at = now()
@@ -226,7 +226,7 @@ export function buildAdminService({
   async function hideMarket(input: {
     marketId: string;
     reason: unknown;
-    adminUserId: string;
+    adminUserId: string | null;
   }) {
     const reason = validateMarketModerationReason(input.reason);
     const rule = await repository.hideMarket({
@@ -242,7 +242,7 @@ export function buildAdminService({
     };
   }
 
-  async function unhideMarket(input: { marketId: string; adminUserId: string }) {
+  async function unhideMarket(input: { marketId: string; adminUserId: string | null }) {
     const rule = await repository.unhideMarket({
       marketId: validateId(input.marketId),
       adminUserId: input.adminUserId,

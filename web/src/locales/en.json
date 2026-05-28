@@ -83,7 +83,7 @@
   "kyc": {
     "title": "Account Verification",
     "overline": "Account access",
-    "subtitle": "Keep your profile current so Pulse Market can show the right trading and wallet actions for your account.",
+    "subtitle": "Keep your profile current so PulseMarket can show the right trading and wallet actions for your account.",
     "loadingTitle": "Checking your account",
     "loadingText": "We are loading your verification profile and trading eligibility.",
     "signInTitle": "Sign in to verify your account",

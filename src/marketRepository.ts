@@ -6,6 +6,7 @@ export type MarketRepository = {
   upsertMarket(market: NormalizedMarket): Promise<void>;
   upsertOutcomes(marketId: string, outcomes: NormalizedOutcome[]): Promise<void>;
   getMarketById(marketId: string): Promise<NormalizedMarket | null>;
+  listMarkets(limit?: number): Promise<NormalizedMarket[]>;
   saveSnapshot(snapshot: MarketSnapshot): Promise<void>;
   listSnapshots(marketId: string, limit?: number): Promise<MarketSnapshot[]>;
 };
@@ -27,6 +28,10 @@ export class MemoryMarketRepository implements MarketRepository {
 
   async getMarketById(marketId: string) {
     return this.markets.get(marketId) ?? null;
+  }
+
+  async listMarkets(limit = 100) {
+    return [...this.markets.values()].slice(0, limit);
   }
 
   async saveSnapshot(snapshot: MarketSnapshot) {
@@ -197,6 +202,37 @@ export class PostgresMarketRepository implements MarketRepository {
 
     const row = result.rows[0];
     return row ? mapMarket(row) : null;
+  }
+
+  async listMarkets(limit = 100) {
+    const result = await this.db.query<MarketRow>(
+      `select
+         m.external_id as id, m.slug, m.title, m.title_ar, m.description, m.category_id, m.category_label,
+         m.image, m.icon, m.starts_at, m.ends_at, m.active, m.closed, m.archived, m.restricted,
+         m.status, m.volume, m.liquidity, m.trading, m.source,
+         coalesce(
+           jsonb_agg(
+             jsonb_build_object(
+               'name', o.name,
+               'price', o.price,
+               'probability', o.probability,
+               'price_cents', o.price_cents,
+               'clobTokenId', o.clob_token_id
+             )
+             order by o.outcome_index
+           ) filter (where o.id is not null),
+           '[]'::jsonb
+         ) as outcomes
+       from markets m
+       left join market_outcomes o on o.market_id = m.id
+       where m.source = 'polymarket'
+       group by m.id
+       order by m.updated_at desc
+       limit $1`,
+      [limit],
+    );
+
+    return result.rows.map(mapMarket);
   }
 
   async saveSnapshot(snapshot: MarketSnapshot) {

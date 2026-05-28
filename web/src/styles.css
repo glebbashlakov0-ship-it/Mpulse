@@ -416,7 +416,11 @@ html[data-theme="dark"] .market-detail-page :where([class~="text-[#991b1b]"]) {
   color: #f2a3a3 !important;
 }
 
-html[data-theme="dark"] .market-detail-page :where([class~="hover:bg-[#f4f5f6]"]:hover) {
+html[data-theme="dark"] .market-detail-event-title {
+  color: #fff;
+}
+
+html[data-theme="dark"] .market-detail-page :where([class~="hover:bg-[#f4f5f6]"]:hover, [class~="hover:bg-[#f7f8fa]"]:hover) {
   background-color: var(--pm-surface-2) !important;
 }
 

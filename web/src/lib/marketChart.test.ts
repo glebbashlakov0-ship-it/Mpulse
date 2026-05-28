@@ -178,4 +178,26 @@ describe("market chart helpers", () => {
 
     assert.equal(series.every((item) => item.points.length <= 180), true);
   });
+
+  it("downsamples by time so dense recent history does not crush all-range charts", () => {
+    const startMs = nowMs - 365 * 24 * 60 * 60 * 1000;
+    const yearPoints: ChartHistoryPoint[] = Array.from({ length: 180 }, (_, index) => ({
+      ...point(0, 0.2 + index / 1000),
+      timestamp: new Date(startMs + index * 2 * 24 * 60 * 60 * 1000).toISOString(),
+    }));
+    const recentPoints: ChartHistoryPoint[] = Array.from({ length: 120 }, (_, index) => ({
+      ...point(0, 0.4),
+      timestamp: new Date(nowMs - 60 * 60 * 1000 + index * 30 * 1000).toISOString(),
+    }));
+    const history = [...yearPoints, ...recentPoints];
+    const sampled = downsampleHistory(history, 90);
+    const recentSampled = sampled.filter(
+      (item) => Date.parse(item.timestamp) >= nowMs - 60 * 60 * 1000,
+    );
+
+    assert.equal(sampled.length <= 90, true);
+    assert.equal(recentSampled.length <= 3, true);
+    assert.equal(sampled[0], history[0]);
+    assert.equal(sampled.at(-1), history.at(-1));
+  });
 });

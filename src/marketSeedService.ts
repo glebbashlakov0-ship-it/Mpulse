@@ -164,7 +164,7 @@ export function generateSeedOddsHistory({
   createdBy?: string | null;
 }): SaveMarketPriceHistoryPointInput[] {
   const normalizedOutcomes = normalizeSeedOutcomeNames(outcomes);
-  const rng = createSeededRandom(`pulse-market:${scope.scopeType}:${scope.scopeId}:v1`);
+  const rng = createSeededRandom(`pulse-market:${scope.scopeType}:${scope.scopeId}:v4`);
   const basePrices = normalizedOutcomes.length <= 2
     ? buildBinarySeedPrices(rng)
     : buildMultiSeedPrices(normalizedOutcomes.length, rng);
@@ -208,7 +208,7 @@ export function generateSeedOddsHistory({
       createdBy,
       metadata: {
         source: "pulse_seed",
-        deterministicVersion: 1,
+        deterministicVersion: 4,
         chartRanges: [...chartSeedRanges],
       },
     };
@@ -400,12 +400,45 @@ function buildBinarySeedPrices(rng: () => number) {
 }
 
 function buildMultiSeedPrices(count: number, rng: () => number) {
-  const weights = Array.from({ length: count }, (_, index) => {
-    const rankBoost = Math.max(0.35, 1.35 - index / Math.max(1, count));
-    return Math.max(0.000001, Math.pow(rng(), 1.7) * rankBoost + rng() * 0.12);
-  });
+  if (count <= 0) {
+    return [];
+  }
 
-  return normalizePrices(weights);
+  const leaderPrice = 0.34;
+  const headProfile = [leaderPrice, 0.104, 0.08, 0.053, 0.046, 0.038, 0.031, 0.026, 0.021, 0.017];
+  const headCount = Math.min(count, headProfile.length);
+  const prices = Array.from({ length: count }, () => 0);
+
+  for (let index = 0; index < headCount; index += 1) {
+    const target = headProfile[index] ?? 0;
+    if (index === 0) {
+      prices[index] = target;
+    } else {
+      const jitter = 0.88 + rng() * 0.24;
+      prices[index] = roundProbability(target * jitter);
+    }
+  }
+
+  const headTotal = prices.reduce((total, price) => total + price, 0);
+  const remaining = Math.max(0.000001, 1 - headTotal);
+  const tailCount = count - headCount;
+
+  if (tailCount > 0) {
+    const tailWeights = Array.from({ length: tailCount }, (_, index) => {
+      const rank = index + 1;
+      const powerLaw = 1 / Math.pow(rank, 0.82);
+      return powerLaw * (0.72 + rng() * 0.56);
+    });
+    const tailTotal = tailWeights.reduce((total, weight) => total + weight, 0);
+
+    for (let index = 0; index < tailCount; index += 1) {
+      prices[headCount + index] = roundProbability(
+        remaining * ((tailWeights[index] ?? 0) / tailTotal),
+      );
+    }
+  }
+
+  return normalizePrices(prices);
 }
 
 function perturbPrices(
@@ -437,31 +470,65 @@ function buildSeedTimestamps(points: number, nowMs: number) {
   const minuteMs = 60 * 1000;
   const hourMs = 60 * minuteMs;
   const dayMs = 24 * hourMs;
+  const yearStart = nowMs - 365 * dayMs;
+  const monthStart = nowMs - 30 * dayMs;
+  const weekStart = nowMs - 7 * dayMs;
+  const dayStart = nowMs - dayMs;
+  const sixHourStart = nowMs - 6 * hourMs;
+  const hourStart = nowMs - hourMs;
   const anchors = [
-    nowMs - 365 * dayMs,
-    nowMs - 30 * dayMs,
-    nowMs - 7 * dayMs,
-    nowMs - dayMs,
-    nowMs - 6 * hourMs,
-    nowMs - hourMs,
+    yearStart,
+    monthStart,
+    weekStart,
+    dayStart,
+    sixHourStart,
+    hourStart,
     nowMs - 55 * minuteMs,
     nowMs - 30 * minuteMs,
     nowMs - 5 * minuteMs,
     nowMs,
   ];
-  const start = nowMs - 30 * dayMs;
   const pointCount = Math.max(points, anchors.length);
-  const evenPoints = Array.from({ length: Math.max(0, pointCount - 1) }, (_, index) => {
-    const progress = index / Math.max(1, pointCount - 2);
-    return start + (nowMs - start) * progress;
-  });
-  const timestamps = new Set(
-    [...anchors, ...evenPoints, nowMs].map((timestamp) =>
-      Math.round(timestamp / minuteMs) * minuteMs,
-    ),
+  const yearCount = Math.max(anchors.length, Math.floor(pointCount * 0.64));
+  const monthCount = Math.max(6, Math.floor(pointCount * 0.16));
+  const weekCount = Math.max(5, Math.floor(pointCount * 0.08));
+  const dayCount = Math.max(4, Math.floor(pointCount * 0.05));
+  const sixHourCount = Math.max(18, Math.floor(pointCount * 0.1));
+  const hourCount = Math.max(
+    18,
+    pointCount + anchors.length - yearCount - monthCount - weekCount - dayCount - sixHourCount,
   );
+  const timestamps = new Set(anchors.map((timestamp) => roundTimestamp(timestamp, minuteMs)));
+
+  addEvenTimestamps(timestamps, yearStart, nowMs, yearCount, minuteMs);
+  addEvenTimestamps(timestamps, monthStart, nowMs, monthCount, minuteMs);
+  addEvenTimestamps(timestamps, weekStart, nowMs, weekCount, minuteMs);
+  addEvenTimestamps(timestamps, dayStart, nowMs, dayCount, minuteMs);
+  addEvenTimestamps(timestamps, sixHourStart, nowMs, sixHourCount, minuteMs);
+  addEvenTimestamps(timestamps, hourStart, nowMs, hourCount, minuteMs);
 
   return [...timestamps].sort((left, right) => left - right);
+}
+
+function addEvenTimestamps(
+  timestamps: Set<number>,
+  startMs: number,
+  endMs: number,
+  count: number,
+  roundToMs: number,
+) {
+  if (count <= 0) {
+    return;
+  }
+
+  for (let index = 0; index < count; index += 1) {
+    const progress = count === 1 ? 1 : index / (count - 1);
+    timestamps.add(roundTimestamp(startMs + (endMs - startMs) * progress, roundToMs));
+  }
+}
+
+function roundTimestamp(timestamp: number, roundToMs: number) {
+  return Math.round(timestamp / roundToMs) * roundToMs;
 }
 
 function normalizePrices(values: number[]) {

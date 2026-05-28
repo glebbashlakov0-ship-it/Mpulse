@@ -78,6 +78,15 @@ const detailPageShell =
   "market-detail-page mx-auto w-full max-w-[1350px] overflow-x-clip px-4 py-4 text-[var(--pm-text-primary)] lg:px-6";
 const detailGrid = "grid min-w-0 gap-12 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start";
 const panel = "rounded-xl border border-[#e6e8ea] bg-white";
+const eventHeader =
+  "mb-2 flex w-full flex-col justify-center bg-[var(--pm-background)] py-1";
+const eventHeaderRow = "relative flex w-full items-center justify-between gap-4";
+const eventHeaderMain = "flex min-w-0 flex-1 items-center gap-4";
+const eventHeaderImage = "h-16 w-16 min-w-16 rounded-[7.2px]";
+const eventEyebrow =
+  "mb-1 flex max-h-6 flex-wrap items-center gap-1 overflow-hidden text-sm font-[540] leading-5 text-[var(--pm-text-secondary)]";
+const eventTitle =
+  "market-detail-event-title break-words text-[24px] font-semibold leading-7 tracking-normal text-[var(--pm-text-primary)]";
 const iconButton =
   "grid h-9 w-9 place-items-center rounded-full text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]";
 const tabButton = "rounded-md px-3 py-1.5 text-sm font-semibold transition";
@@ -900,62 +909,63 @@ export function MarketDetail({
               </div>
             ) : null}
 
-            <div className="mb-3 flex items-center justify-between gap-4 bg-white py-1">
-              <div className="flex min-w-0 flex-1 items-center gap-4">
-                <MarketImage market={market} className="h-16 w-16 min-w-16 rounded-sm" />
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex max-h-6 flex-wrap items-center gap-1.5 overflow-hidden text-sm font-medium text-[#77808d]">
-                    {eyebrowParts.map((part, index) => (
-                      <React.Fragment key={`${part}-${index}`}>
-                        {index > 0 ? <span>·</span> : null}
-                        <span>{part}</span>
-                      </React.Fragment>
-                    ))}
+            <div className={eventHeader}>
+              <div className={eventHeaderRow}>
+                <div className={eventHeaderMain}>
+                  <MarketImage market={market} className={eventHeaderImage} />
+                  <div className="min-w-0 flex-1">
+                    <div className={eventEyebrow}>
+                      {eyebrowParts.map((part, index) => (
+                        <React.Fragment key={`${part}-${index}`}>
+                          {index > 0 ? <span>·</span> : null}
+                          <span>{part}</span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                    <h1 className={eventTitle}>
+                      {marketDisplayTitle}
+                    </h1>
                   </div>
-                  <h1 className="break-words text-[24px] font-semibold leading-7 tracking-normal text-[#0e0f11]">
-                    {marketDisplayTitle}
-                  </h1>
                 </div>
-              </div>
 
-              <div className="hidden shrink-0 items-center gap-1 sm:flex">
-                <button
-                  className={iconButton}
-                  aria-label="Embed market"
-                  onClick={() => void copyEmbedCode()}
-                  type="button"
-                >
-                  <Code2 size={18} />
-                </button>
-                <button
-                  className={iconButton}
-                  aria-label="Copy market link"
-                  onClick={() => void copyMarketLink()}
-                  type="button"
-                >
-                  <Link2 size={18} />
-                </button>
-                <button
-                  className={`${iconButton} ${
-                    isSaved ? "text-[#1f55f5]" : ""
-                  }`}
-                  aria-label={isSaved ? "Unsave market" : "Save market"}
-                  onClick={toggleSavedMarket}
-                  type="button"
-                >
-                  <Bookmark fill={isSaved ? "currentColor" : "none"} size={18} />
-                </button>
+                <div className="hidden shrink-0 items-center gap-1 sm:flex">
+                  <button
+                    className={iconButton}
+                    aria-label="Embed market"
+                    onClick={() => void copyEmbedCode()}
+                    type="button"
+                  >
+                    <Code2 size={18} />
+                  </button>
+                  <button
+                    className={iconButton}
+                    aria-label="Copy market link"
+                    onClick={() => void copyMarketLink()}
+                    type="button"
+                  >
+                    <Link2 size={18} />
+                  </button>
+                  <button
+                    className={`${iconButton} ${
+                      isSaved ? "text-[#1f55f5]" : ""
+                    }`}
+                    aria-label={isSaved ? "Unsave market" : "Save market"}
+                    onClick={toggleSavedMarket}
+                    type="button"
+                  >
+                    <Bookmark fill={isSaved ? "currentColor" : "none"} size={18} />
+                  </button>
+                </div>
               </div>
             </div>
 
             <div className="flex items-center justify-between gap-4 border-b border-[#e6e8ea] pb-4 pt-2 text-[14px] font-medium tracking-[-0.09px] text-[#77808d]">
               <div className="flex min-w-0 items-center gap-2.5">
-	                <span className="whitespace-nowrap text-[#0e0f11]">{formatMoney(market.volume_detail?.volume ?? market.volume)} Volume</span>
+		                <span className="whitespace-nowrap text-[#0e0f11]">{formatMoney(market.volume_detail?.volume ?? market.volume)} Volume</span>
                 <span className="h-1 w-1 shrink-0 rounded-full bg-[#a6adb7]" />
                 <Clock3 className="shrink-0" size={12} />
                 <span className="whitespace-nowrap">{formatDate(marketEndDate)}</span>
               </div>
-              <span className="hidden text-lg font-semibold tracking-normal text-[#c2c8d0] sm:block">Pulse odds</span>
             </div>
 
             <MarketChart
@@ -971,7 +981,7 @@ export function MarketDetail({
 
                 return (
                   <div
-                    className="group relative grid min-w-0 gap-3 py-3 transition hover:bg-[#f7f8fa] md:min-h-[72px] md:grid-cols-[minmax(0,1fr)_132px_280px] md:items-center"
+                    className="group relative grid min-w-0 gap-3 py-3 transition md:min-h-[72px] md:grid-cols-[minmax(0,1fr)_132px_280px] md:items-center"
                     key={groupMarket.id}
                   >
                     <button
@@ -983,7 +993,7 @@ export function MarketDetail({
                         <MarketImage market={groupMarket} className="size-12 rounded-full" />
                       ) : null}
                       <span className="min-w-0">
-                        <span className="block max-w-full truncate text-[16px] font-semibold leading-5 text-[#18181b]">
+                        <span className="block max-w-full truncate text-[16px] font-semibold leading-5 text-[var(--pm-text-primary)]">
                           {formatMarketText(groupMarket.label)}
                         </span>
                         <span className="mt-1.5 flex items-center gap-2 text-[14px] font-medium leading-none text-[#77808d]">
@@ -1110,50 +1120,51 @@ export function MarketDetail({
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            <div className="flex min-w-0 gap-3 sm:gap-4">
-              <MarketImage market={market} className="h-14 w-14 sm:h-16 sm:w-16" />
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium text-[#77808d]">
-                  {eyebrowParts.map((part, index) => (
-                    <React.Fragment key={`${part}-${index}`}>
-                      {index > 0 ? <span>·</span> : null}
-                      <span>{part}</span>
-                    </React.Fragment>
-                  ))}
-                  <span>·</span>
-                  <span>{detailStatus === "ready" ? "Live detail" : "Market data"}</span>
+          <div className={eventHeader}>
+            <div className={eventHeaderRow}>
+              <div className={eventHeaderMain}>
+                <MarketImage market={market} className={eventHeaderImage} />
+                <div className="min-w-0 flex-1">
+                  <div className={eventEyebrow}>
+                    {eyebrowParts.map((part, index) => (
+                      <React.Fragment key={`${part}-${index}`}>
+                        {index > 0 ? <span>·</span> : null}
+                        <span>{part}</span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <h1 className={`${eventTitle} max-w-4xl`}>
+                    {marketDisplayTitle}
+                  </h1>
                 </div>
-                <h1 className="max-w-4xl break-words text-[24px] font-semibold leading-7 tracking-normal text-[#0e0f11]">
-                  {marketDisplayTitle}
-                </h1>
               </div>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <button
-                className={iconButton}
-                aria-label="Embed market"
-                onClick={() => void copyEmbedCode()}
-                type="button"
-              >
-                <Code2 size={20} />
-              </button>
-              <button
-                className={iconButton}
-                aria-label="Copy market link"
-                onClick={() => void copyMarketLink()}
-                type="button"
-              >
-                <Link2 size={20} />
-              </button>
-              <button
-                className={`${iconButton} ${isSaved ? "border-[#0093fd]/50 text-[#0093fd]" : ""}`}
-                aria-label={isSaved ? "Unsave market" : "Save market"}
-                onClick={toggleSavedMarket}
-                type="button"
-              >
-                <Bookmark fill={isSaved ? "currentColor" : "none"} size={20} />
-              </button>
+
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  className={iconButton}
+                  aria-label="Embed market"
+                  onClick={() => void copyEmbedCode()}
+                  type="button"
+                >
+                  <Code2 size={20} />
+                </button>
+                <button
+                  className={iconButton}
+                  aria-label="Copy market link"
+                  onClick={() => void copyMarketLink()}
+                  type="button"
+                >
+                  <Link2 size={20} />
+                </button>
+                <button
+                  className={`${iconButton} ${isSaved ? "border-[#0093fd]/50 text-[#0093fd]" : ""}`}
+                  aria-label={isSaved ? "Unsave market" : "Save market"}
+                  onClick={toggleSavedMarket}
+                  type="button"
+                >
+                  <Bookmark fill={isSaved ? "currentColor" : "none"} size={20} />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1188,14 +1199,10 @@ export function MarketDetail({
           <MarketChart outcomes={displayOutcomes} history={market.history} />
 
           <div className="mt-4 grid gap-0 divide-y divide-[#e6e8ea]">
-            {isGroupedEvent ? groupMarkets.map((groupMarket, index) => {
-              const isSelected = groupMarket.id === tradeMarket.id;
-
+            {isGroupedEvent ? groupMarkets.map((groupMarket) => {
               return (
                 <div
-                  className={`grid min-w-0 gap-3 py-4 transition hover:bg-[#f7f8fa] md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center ${
-                    isSelected ? "bg-[#f4f5f6] px-3" : ""
-                  }`}
+                  className="grid min-w-0 gap-3 py-4 transition md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center"
                   key={groupMarket.id}
                 >
                   <div className="flex min-w-0 items-center gap-3">

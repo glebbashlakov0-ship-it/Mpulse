@@ -169,6 +169,7 @@ function PublicApp() {
               />
             }
           />
+          <Route path="/markets/:id" element={<MarketDetailPage />} />
           <Route
             path="/markets"
             element={
@@ -216,7 +217,6 @@ function PublicApp() {
               />
             }
           />
-          <Route path="/markets/:id" element={<MarketDetailPage />} />
           <Route path="/portfolio" element={<PortfolioPage />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/kyc" element={<KYCPage />} />

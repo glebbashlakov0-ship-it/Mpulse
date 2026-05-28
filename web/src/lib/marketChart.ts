@@ -52,6 +52,14 @@ const fallbackRangeMs: Record<ChartRange, number> = {
 
 const seriesColors = ["#87BFFF", "#2797FF", "#FDC503", "#FF7F0E", "#B984FF"];
 const maxSeriesPoints = 180;
+const maxSeriesPointsByRange: Record<ChartRange, number> = {
+  "1H": 90,
+  "6H": 90,
+  "1D": 100,
+  "1W": 100,
+  "1M": 90,
+  ALL: 120,
+};
 
 export function filterPriceHistoryByRange(
   history: ChartHistoryPoint[],
@@ -100,7 +108,7 @@ export function buildChartSeries({
 }): ChartSeries[] {
   const visibleHistory = downsampleHistory(
     filterPriceHistoryByRange(priceHistory, range, nowMs),
-    maxSeriesPoints,
+    maxSeriesPointsByRange[range],
   );
   const targets = getSeriesTargets(outcomes, selectedOutcomeName);
   const timestamps = visibleHistory
@@ -194,6 +202,55 @@ export function downsampleHistory<T>(history: T[], maxPoints = maxSeriesPoints):
     return history;
   }
 
+  const timestamped = history.map((point, index) => ({
+    index,
+    point,
+    timestampMs: getPointTimestampMs(point),
+  }));
+  const canSampleByTime = timestamped.every(
+    (item, index) =>
+      Number.isFinite(item.timestampMs) &&
+      (index === 0 || item.timestampMs >= (timestamped[index - 1]?.timestampMs ?? item.timestampMs)),
+  );
+
+  if (!canSampleByTime) {
+    return downsampleHistoryByIndex(history, maxPoints);
+  }
+
+  const first = timestamped[0];
+  const last = timestamped[timestamped.length - 1];
+  const minTimestamp = first?.timestampMs ?? 0;
+  const maxTimestamp = last?.timestampMs ?? minTimestamp;
+
+  if (!first || !last || maxTimestamp <= minTimestamp) {
+    return downsampleHistoryByIndex(history, maxPoints);
+  }
+
+  const innerLimit = maxPoints - 2;
+  const bucketSpan = (maxTimestamp - minTimestamp) / innerLimit;
+  const buckets = new Map<number, (typeof timestamped)[number]>();
+
+  for (const item of timestamped.slice(1, -1)) {
+    const bucket = Math.min(
+      innerLimit - 1,
+      Math.max(0, Math.floor((item.timestampMs - minTimestamp) / bucketSpan)),
+    );
+    const bucketCenter = minTimestamp + (bucket + 0.5) * bucketSpan;
+    const current = buckets.get(bucket);
+
+    if (
+      !current ||
+      Math.abs(item.timestampMs - bucketCenter) < Math.abs(current.timestampMs - bucketCenter)
+    ) {
+      buckets.set(bucket, item);
+    }
+  }
+
+  return [first, ...[...buckets.values()].sort((left, right) => left.index - right.index), last]
+    .map((item) => item.point);
+}
+
+function downsampleHistoryByIndex<T>(history: T[], maxPoints: number): T[] {
   const first = history[0];
   const last = history[history.length - 1];
   const innerLimit = maxPoints - 2;
@@ -217,6 +274,14 @@ export function downsampleHistory<T>(history: T[], maxPoints = maxSeriesPoints):
   }
 
   return sampled;
+}
+
+function getPointTimestampMs(point: unknown) {
+  if (!point || typeof point !== "object" || !("timestamp" in point)) {
+    return Number.NaN;
+  }
+
+  return Date.parse(String(point.timestamp));
 }
 
 export function pointsToSvgPath(points: ChartPoint[]) {

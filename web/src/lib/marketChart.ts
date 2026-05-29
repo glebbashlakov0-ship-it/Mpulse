@@ -37,6 +37,12 @@ export type ChartSeries = {
   path: string;
 };
 
+export type ChartYAxisScale = {
+  min: number;
+  max: number;
+  ticks: number[];
+};
+
 const rangeMs: Record<Exclude<ChartRange, "ALL">, number> = {
   "1H": 60 * 60 * 1000,
   "6H": 6 * 60 * 60 * 1000,
@@ -50,15 +56,18 @@ const fallbackRangeMs: Record<ChartRange, number> = {
   ALL: 315 * 24 * 60 * 60 * 1000,
 };
 
-const seriesColors = ["#87BFFF", "#2797FF", "#FDC503", "#FF7F0E", "#B984FF"];
+const maxMultiOutcomeSeries = 4;
+const seriesColors = ["#87BFFF", "#2797FF", "#FDC503", "#FF7F0E"];
 const maxSeriesPoints = 180;
+const yAxisPaddingRatio = 0.1;
+const minYAxisSpan = 0.04;
 const maxSeriesPointsByRange: Record<ChartRange, number> = {
   "1H": 90,
   "6H": 90,
   "1D": 100,
   "1W": 100,
   "1M": 90,
-  ALL: 120,
+  ALL: 180,
 };
 
 export function filterPriceHistoryByRange(
@@ -157,6 +166,45 @@ export function buildChartSeries({
       };
     })
     .filter((series) => series.points.length > 0);
+}
+
+export function buildChartYAxisScale(series: ChartSeries[], tickCount = 6): ChartYAxisScale {
+  const values = series
+    .flatMap((item) => item.points.map((point) => point.value))
+    .filter((value) => Number.isFinite(value));
+
+  if (values.length === 0) {
+    return { min: 0, max: 1, ticks: buildProbabilityTicks(0, 1, tickCount) };
+  }
+
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  const initialSpan = maxValue - minValue;
+
+  if (initialSpan < minYAxisSpan) {
+    const center = (minValue + maxValue) / 2;
+    minValue = center - minYAxisSpan / 2;
+    maxValue = center + minYAxisSpan / 2;
+  }
+
+  const span = Math.max(minYAxisSpan, maxValue - minValue);
+  const padding = Math.max(0.005, span * yAxisPaddingRatio);
+  let min = Math.max(0, minValue - padding);
+  let max = Math.min(1, maxValue + padding);
+
+  if (max - min < minYAxisSpan) {
+    const center = (min + max) / 2;
+    min = Math.max(0, center - minYAxisSpan / 2);
+    max = Math.min(1, center + minYAxisSpan / 2);
+  }
+
+  const ticks = buildProbabilityTicks(min, max, tickCount);
+
+  return {
+    min: ticks[0] ?? min,
+    max: ticks.at(-1) ?? max,
+    ticks,
+  };
 }
 
 export function buildCurrentPriceHistory(
@@ -284,41 +332,33 @@ function getPointTimestampMs(point: unknown) {
   return Date.parse(String(point.timestamp));
 }
 
+function buildProbabilityTicks(min: number, max: number, count: number) {
+  const safeCount = Math.max(2, count);
+  const boundedMin = Math.max(0, Math.min(1, min));
+  const boundedMax = Math.max(boundedMin, Math.min(1, max));
+  let start = Math.max(0, Math.floor(boundedMin * 100) / 100);
+  let end = Math.min(1, Math.ceil(boundedMax * 100) / 100);
+
+  if (end - start < minYAxisSpan) {
+    const center = (start + end) / 2;
+    start = Math.max(0, center - minYAxisSpan / 2);
+    end = Math.min(1, center + minYAxisSpan / 2);
+  }
+
+  const step = (end - start) / (safeCount - 1);
+  return Array.from({ length: safeCount }, (_, index) => roundAxisValue(start + step * index));
+}
+
 export function pointsToSvgPath(points: ChartPoint[]) {
   if (points.length === 0) {
     return "";
   }
 
-  if (points.length === 1) {
-    return `M${points[0].x} ${points[0].y}`;
-  }
-
-  const commands = [`M${points[0].x} ${points[0].y}`];
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const previous = points[index - 1] ?? points[index];
-    const current = points[index];
-    const next = points[index + 1];
-    const following = points[index + 2] ?? next;
-    const cp1x = clampControlX(
-      current.x + (next.x - previous.x) / 6,
-      current.x,
-      next.x,
-    );
-    const cp1y = current.y + (next.y - previous.y) / 6;
-    const cp2x = clampControlX(
-      next.x - (following.x - current.x) / 6,
-      current.x,
-      next.x,
-    );
-    const cp2y = next.y - (following.y - current.y) / 6;
-
-    commands.push(
-      `C${round(cp1x)} ${round(cp1y)},${round(cp2x)} ${round(cp2y)},${next.x} ${next.y}`,
-    );
-  }
-
-  return commands.join(" ");
+  const [first, ...rest] = points;
+  return [
+    `M${first.x} ${first.y}`,
+    ...rest.map((point) => `L${point.x} ${point.y}`),
+  ].join(" ");
 }
 
 function getSeriesTargets(outcomes: Outcome[], selectedOutcomeName?: string | null) {
@@ -332,15 +372,9 @@ function getSeriesTargets(outcomes: Outcome[], selectedOutcomeName?: string | nu
     ];
   }
 
-  const selectedKey = selectedOutcomeName?.trim().toLowerCase() ?? null;
   const sorted = [...outcomes]
-    .sort((left, right) => toPrice(right) - toPrice(left))
-  const visible = sorted.slice(0, 5);
-  const selected =
-    selectedKey && !visible.some((outcome) => outcome.name.trim().toLowerCase() === selectedKey)
-      ? outcomes.find((outcome) => outcome.name.trim().toLowerCase() === selectedKey)
-      : null;
-  const targets = selected ? [...visible.slice(0, 4), selected] : visible;
+    .sort((left, right) => toPrice(right) - toPrice(left));
+  const targets = sorted.slice(0, maxMultiOutcomeSeries);
 
   return targets.map((outcome) => ({
     key: `outcome:${outcome.name.trim().toLowerCase()}`,
@@ -408,6 +442,6 @@ function round(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-function clampControlX(value: number, left: number, right: number) {
-  return Math.max(Math.min(left, right), Math.min(Math.max(left, right), value));
+function roundAxisValue(value: number) {
+  return Math.round(value * 10_000) / 10_000;
 }

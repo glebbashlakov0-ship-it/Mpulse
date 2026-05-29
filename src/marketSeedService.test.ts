@@ -60,10 +60,34 @@ test("multi-outcome seed creates a visible long-tail spread", () => {
   assert.ok(latest);
 
   const prices = latest.outcomes.map((outcome) => outcome.price ?? 0);
-  assert.equal(Math.abs((prices[0] ?? 0) - 0.34) < 0.00001, true);
+  assert.equal(Math.abs((prices[0] ?? 0) - 0.6) < 0.00001, true);
   assert.equal(Math.round(prices.reduce((total, price) => total + price, 0) * 1_000_000) / 1_000_000, 1);
-  assert.equal((prices[1] ?? 0) > 0.08, true);
-  assert.equal((prices[0] ?? 0) - (prices.at(-1) ?? 0) > 0.3, true);
+  assert.equal((prices[1] ?? 0) > 0.07, true);
+  assert.equal((prices[0] ?? 0) - (prices.at(-1) ?? 0) > 0.55, true);
+});
+
+test("multi-outcome seed history creates visible price movement", () => {
+  const history = generateSeedOddsHistory({
+    scope: {
+      scopeType: "event",
+      scopeId: "movement-check",
+      marketExternalId: "market-1",
+    },
+    outcomes: Array.from({ length: 40 }, (_, index) => ({ name: `Candidate ${index + 1}` })),
+    nowMs: fixedNow,
+  });
+  const priceRange = (outcomeIndex: number) => {
+    const values = history.map((point) => point.outcomes[outcomeIndex]?.price ?? 0);
+    return Math.max(...values) - Math.min(...values);
+  };
+  const leaderPrices = history.map((point) => point.outcomes[0]?.price ?? 0);
+
+  assert.equal(history.length > 250, true);
+  assert.equal(leaderPrices[0] >= 0.29 && leaderPrices[0] <= 0.31, true);
+  assert.equal(Math.abs((leaderPrices.at(-1) ?? 0) - 0.6) < 0.00001, true);
+  assert.equal(priceRange(0) > 0.25, true);
+  assert.equal(priceRange(1) > 0.035, true);
+  assert.equal(priceRange(2) > 0.025, true);
 });
 
 test("seed history includes points visible in every chart range", () => {

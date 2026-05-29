@@ -572,8 +572,19 @@ export async function loadMarketDetail(marketId: string, signal: AbortSignal) {
   return payload.data;
 }
 
-export async function loadMarketActivity(marketId: string, signal: AbortSignal) {
-  const response = await apiFetch(`/api/markets/${encodeURIComponent(marketId)}/activity`, {
+export async function loadMarketActivity(
+  marketId: string,
+  signal: AbortSignal,
+  marketIds: string[] = [],
+) {
+  const query = new URLSearchParams();
+  if (marketIds.length > 1) {
+    query.set("marketIds", marketIds.join(","));
+  }
+  const endpoint = `/api/markets/${encodeURIComponent(marketId)}/activity${
+    query.size > 0 ? `?${query.toString()}` : ""
+  }`;
+  const response = await apiFetch(endpoint, {
     signal,
   });
   if (!response.ok) {

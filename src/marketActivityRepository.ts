@@ -93,6 +93,7 @@ export type MarketActivityRepository = {
   listTopHolders(marketId: string, limit?: number): Promise<MarketHolderRecord[]>;
   listPositions(marketId: string, limit?: number): Promise<MarketPositionRecord[]>;
   listTrades(marketId: string, limit?: number): Promise<MarketTradeActivityRecord[]>;
+  listTradesForMarkets?(marketIds: string[], limit?: number): Promise<MarketTradeActivityRecord[]>;
   recordTrade?(trade: Omit<MarketTradeActivityRecord, "id" | "createdAt"> & {
     id?: string;
     createdAt?: string;
@@ -177,6 +178,14 @@ export class MemoryMarketActivityRepository implements MarketActivityRepository 
   async listTrades(marketId: string, limit = 100) {
     return this.trades
       .filter((trade) => trade.marketId === marketId)
+      .slice(0, limit);
+  }
+
+  async listTradesForMarkets(marketIds: string[], limit = 100) {
+    const ids = new Set(marketIds);
+    return this.trades
+      .filter((trade) => ids.has(trade.marketId))
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
       .slice(0, limit);
   }
 
@@ -435,6 +444,45 @@ export class PostgresMarketActivityRepository implements MarketActivityRepositor
        order by t.created_at desc
        limit $2`,
       [marketId, limit],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      marketId: row.market_external_id,
+      userId: row.user_id,
+      displayName: row.display_name ?? "Trader",
+      side: row.side,
+      action: row.trade_type,
+      amount: Number(row.amount),
+      price: Number(row.price),
+      shares: Number(row.shares),
+      createdAt: toIsoString(row.created_at),
+    }));
+  }
+
+  async listTradesForMarkets(marketIds: string[], limit = 100) {
+    if (marketIds.length === 0) {
+      return [];
+    }
+
+    const result = await this.db.query<TradeRow>(
+      `select
+         t.id,
+         t.market_external_id,
+         t.user_id,
+         u.display_name,
+         t.side,
+         t.trade_type,
+         t.amount,
+         t.price,
+         t.shares,
+         t.created_at
+       from trades t
+       left join users u on u.id = t.user_id
+       where t.market_external_id = any($1::text[])
+       order by t.created_at desc
+       limit $2`,
+      [marketIds, limit],
     );
 
     return result.rows.map((row) => ({

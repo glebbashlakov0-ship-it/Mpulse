@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getAuthContext } from "../auth.js";
 import { type AuditService } from "../audit.js";
+import type { MarketDataService } from "../marketDataService.js";
 import type {
   MarketActivityRepository,
   MarketCommentRecord,
@@ -11,6 +12,10 @@ import { isLegacyDemoMarketActivity } from "../marketActivityRepository.js";
 type MarketActivityItem =
   | (MarketTradeActivityRecord & { type: "trade" })
   | (MarketCommentRecord & { type: "comment" });
+
+type MarketActivityQuery = {
+  marketIds?: string | string[];
+};
 
 function parseCommentBody(body: { body?: unknown; positionLabel?: unknown }) {
   const text = typeof body?.body === "string" ? body.body.trim() : "";
@@ -36,12 +41,18 @@ function parseCommentBody(body: { body?: unknown; positionLabel?: unknown }) {
 async function buildMarketActivityPayload(
   marketId: string,
   repository: MarketActivityRepository,
+  marketData?: MarketDataService,
+  requestedMarketIds?: string[],
 ) {
+  const activityMarketIds =
+    requestedMarketIds && requestedMarketIds.length > 0
+      ? requestedMarketIds
+      : await resolveActivityMarketIds(marketId, marketData);
   const [comments, topHolders, positions, trades] = await Promise.all([
     repository.listComments(marketId, 100),
     repository.listTopHolders(marketId, 20),
     repository.listPositions(marketId, 50),
-    repository.listTrades(marketId, 100),
+    listActivityTrades(activityMarketIds, repository, 100),
   ]);
   const visibleComments = comments.filter((comment) => !isLegacyDemoMarketActivity(comment));
   const visibleTopHolders = topHolders.filter((holder) => !isLegacyDemoMarketActivity(holder));
@@ -60,17 +71,82 @@ async function buildMarketActivityPayload(
   };
 }
 
+async function resolveActivityMarketIds(marketId: string, marketData?: MarketDataService) {
+  if (!marketData) {
+    return [marketId];
+  }
+
+  try {
+    const detail = (await marketData.getMarketDetail(marketId)).data;
+    const groupMarketIds = (detail.group_markets ?? [])
+      .map((groupMarket) => groupMarket.id)
+      .filter(Boolean);
+
+    if (groupMarketIds.length > 1) {
+      return [...new Set(groupMarketIds)];
+    }
+  } catch {
+    return [marketId];
+  }
+
+  return [marketId];
+}
+
+function parseRequestedMarketIds(marketId: string, query: MarketActivityQuery) {
+  const rawValues = Array.isArray(query.marketIds) ? query.marketIds : [query.marketIds];
+  const ids = rawValues
+    .filter((value): value is string => typeof value === "string")
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter((value) => /^[A-Za-z0-9:_-]{1,80}$/.test(value));
+  if (ids.length === 0) {
+    return undefined;
+  }
+
+  const uniqueIds = [...new Set([marketId, ...ids])];
+
+  return uniqueIds.slice(0, 200);
+}
+
+async function listActivityTrades(
+  marketIds: string[],
+  repository: MarketActivityRepository,
+  limit: number,
+) {
+  if (repository.listTradesForMarkets) {
+    return repository.listTradesForMarkets(marketIds, limit);
+  }
+
+  const trades = await Promise.all(
+    marketIds.map((marketId) => repository.listTrades(marketId, limit)),
+  );
+  return trades
+    .flat()
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, limit);
+}
+
 export function registerMarketActivityRoutes(
   app: FastifyInstance,
   audit: AuditService,
   repository: MarketActivityRepository,
+  marketData?: MarketDataService,
 ) {
-  app.get<{ Params: { id: string } }>("/api/markets/:id/activity", async (request) => ({
-    data: await buildMarketActivityPayload(request.params.id, repository),
-  }));
+  app.get<{ Params: { id: string }; Querystring: MarketActivityQuery }>(
+    "/api/markets/:id/activity",
+    async (request) => ({
+      data: await buildMarketActivityPayload(
+        request.params.id,
+        repository,
+        marketData,
+        parseRequestedMarketIds(request.params.id, request.query),
+      ),
+    }),
+  );
 
   app.post<{
     Params: { id: string };
+    Querystring: MarketActivityQuery;
     Body: {
       body?: unknown;
       positionLabel?: unknown;
@@ -109,7 +185,12 @@ export function registerMarketActivityRoutes(
     });
 
     return {
-      data: await buildMarketActivityPayload(request.params.id, repository),
+      data: await buildMarketActivityPayload(
+        request.params.id,
+        repository,
+        marketData,
+        parseRequestedMarketIds(request.params.id, request.query),
+      ),
     };
   });
 }

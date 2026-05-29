@@ -420,6 +420,31 @@ html[data-theme="dark"] .market-detail-event-title {
   color: #fff;
 }
 
+.market-detail-outcome-list > :not([hidden]) ~ :not([hidden]),
+.market-detail-faq-list > :not([hidden]) ~ :not([hidden]) {
+  border-top-color: transparent !important;
+  border-top-width: 0 !important;
+}
+
+.market-detail-faq-list {
+  border-bottom-color: transparent !important;
+  border-bottom-width: 0 !important;
+}
+
+.market-detail-outcome-row {
+  border-radius: 9.2px;
+}
+
+@media (hover: hover) {
+  .market-detail-outcome-row:hover {
+    background-color: rgb(15 23 42 / 3%);
+  }
+
+  html[data-theme="dark"] .market-detail-outcome-row:hover {
+    background-color: rgb(255 255 255 / 3.5%);
+  }
+}
+
 html[data-theme="dark"] .market-detail-page :where([class~="hover:bg-[#f4f5f6]"]:hover, [class~="hover:bg-[#f7f8fa]"]:hover) {
   background-color: var(--pm-surface-2) !important;
 }

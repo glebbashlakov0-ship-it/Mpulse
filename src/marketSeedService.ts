@@ -151,8 +151,8 @@ export type MarketSeedService = ReturnType<typeof buildMarketSeedService>;
 export function generateSeedOddsHistory({
   scope,
   outcomes,
-  points = 96,
-  volatility = 0.06,
+  points = 260,
+  volatility = 0.12,
   nowMs = Date.now(),
   createdBy = null,
 }: {
@@ -164,11 +164,14 @@ export function generateSeedOddsHistory({
   createdBy?: string | null;
 }): SaveMarketPriceHistoryPointInput[] {
   const normalizedOutcomes = normalizeSeedOutcomeNames(outcomes);
-  const rng = createSeededRandom(`pulse-market:${scope.scopeType}:${scope.scopeId}:v4`);
+  const rng = createSeededRandom(`pulse-market:${scope.scopeType}:${scope.scopeId}:v8`);
   const basePrices = normalizedOutcomes.length <= 2
     ? buildBinarySeedPrices(rng)
     : buildMultiSeedPrices(normalizedOutcomes.length, rng);
   const timestamps = buildSeedTimestamps(points, nowMs);
+  const multiOutcomeDrift = basePrices.length > 2
+    ? buildMultiOutcomeDrift(basePrices.length, timestamps.length, volatility, rng)
+    : [];
   const baseVolume = roundMoney(2_000 + rng() * 95_000);
   const baseLiquidity = roundMoney(500 + baseVolume * (0.12 + rng() * 0.38));
   const phase = rng() * Math.PI * 2;
@@ -183,6 +186,7 @@ export function generateSeedOddsHistory({
           progress,
           phase,
           rng,
+          drift: multiOutcomeDrift.map((drift) => drift[index] ?? 0),
         });
     const outcomesForPoint = normalizedOutcomes.map((outcome, outcomeIndex) => ({
       name: outcome.name,
@@ -208,7 +212,7 @@ export function generateSeedOddsHistory({
       createdBy,
       metadata: {
         source: "pulse_seed",
-        deterministicVersion: 4,
+        deterministicVersion: 8,
         chartRanges: [...chartSeedRanges],
       },
     };
@@ -359,7 +363,7 @@ function sortOutcomesLikeExpected(
 
 function parsePointCount(value: unknown) {
   if (value === undefined || value === null || value === "") {
-    return 96;
+    return 260;
   }
 
   const parsed = Number(value);
@@ -375,7 +379,7 @@ function parsePointCount(value: unknown) {
 
 function parseVolatility(value: unknown) {
   if (value === undefined || value === null || value === "") {
-    return 0.06;
+    return 0.12;
   }
 
   const parsed = Number(value);
@@ -404,8 +408,8 @@ function buildMultiSeedPrices(count: number, rng: () => number) {
     return [];
   }
 
-  const leaderPrice = 0.34;
-  const headProfile = [leaderPrice, 0.104, 0.08, 0.053, 0.046, 0.038, 0.031, 0.026, 0.021, 0.017];
+  const leaderPrice = 0.6;
+  const headProfile = [leaderPrice, 0.105, 0.075, 0.045, 0.035, 0.025, 0.019, 0.014, 0.011, 0.009];
   const headCount = Math.min(count, headProfile.length);
   const prices = Array.from({ length: count }, () => 0);
 
@@ -448,22 +452,112 @@ function perturbPrices(
     progress: number;
     phase: number;
     rng: () => number;
+    drift?: number[];
   },
 ) {
   if (basePrices.length <= 2) {
-    const wave = Math.sin(input.progress * Math.PI * 4 + input.phase) * input.volatility * 0.55;
-    const noise = (input.rng() - 0.5) * input.volatility;
-    const yes = clampProbability((basePrices[0] ?? 0.5) + wave + noise);
+    const wave = Math.sin(input.progress * Math.PI * 5.5 + input.phase) * input.volatility * 0.85;
+    const secondaryWave =
+      Math.sin(input.progress * Math.PI * 17 + input.phase * 0.7) * input.volatility * 0.22;
+    const noise = (input.rng() - 0.5) * input.volatility * 1.05;
+    const jump = input.rng() < 0.045 ? (input.rng() - 0.5) * input.volatility * 2.1 : 0;
+    const yes = clampProbability((basePrices[0] ?? 0.5) + wave + secondaryWave + noise + jump);
     return normalizePrices([yes, 1 - yes]);
   }
 
   const weights = basePrices.map((price, index) => {
-    const wave = Math.sin(input.progress * Math.PI * (2 + (index % 3)) + input.phase + index);
-    const noise = (input.rng() - 0.5) * input.volatility * 3;
-    return Math.max(0.000001, price * Math.exp(wave * input.volatility + noise));
+    const broadWave = Math.sin(input.progress * Math.PI * (2.6 + (index % 4)) + input.phase + index);
+    const fastWave = Math.sin(input.progress * Math.PI * (9 + (index % 5)) + input.phase * 0.6 + index * 1.7);
+    const microNoise = (input.rng() - 0.5) * input.volatility * 0.42;
+    const localShock = input.rng() < 0.032 + (index < 5 ? 0.016 : 0)
+      ? (input.rng() - 0.5) * input.volatility * 1.6
+      : 0;
+    const drift = index === 0 ? (input.drift?.[index] ?? 0) * 0.45 : input.drift?.[index] ?? 0;
+    return Math.max(
+      0.000001,
+      price * Math.exp(
+        broadWave * input.volatility * 0.95 +
+          fastWave * input.volatility * 0.28 +
+          drift +
+          microNoise +
+          localShock,
+      ),
+    );
   });
 
-  return normalizePrices(weights);
+  return normalizePrices(applyMultiOutcomeLeaderTrend(weights, input));
+}
+
+function applyMultiOutcomeLeaderTrend(
+  weights: number[],
+  input: {
+    volatility: number;
+    progress: number;
+    phase: number;
+    drift?: number[];
+  },
+) {
+  if (weights.length <= 2) {
+    return weights;
+  }
+
+  const latestLeader = 0.6;
+  const startLeader = 0.3;
+  const smoothProgress = input.progress * input.progress * (3 - 2 * input.progress);
+  const trendTarget = startLeader + (latestLeader - startLeader) * smoothProgress;
+  const wiggle =
+    Math.sin(input.progress * Math.PI * 7 + input.phase) * input.volatility * 0.14 +
+    Math.sin(input.progress * Math.PI * 15 + input.phase * 0.4) * input.volatility * 0.055 +
+    (input.drift?.[0] ?? 0) * 0.025;
+  const taper = Math.sin(Math.PI * input.progress);
+  const leaderTarget = clampProbabilityToRange(
+    trendTarget + wiggle * taper,
+    0.26,
+    latestLeader - 0.005,
+  );
+  const otherTotal = weights.slice(1).reduce((total, value) => total + value, 0);
+
+  if (otherTotal <= 0) {
+    return weights;
+  }
+
+  return [
+    (leaderTarget / (1 - leaderTarget)) * otherTotal,
+    ...weights.slice(1),
+  ];
+}
+
+function buildMultiOutcomeDrift(
+  outcomeCount: number,
+  pointCount: number,
+  volatility: number,
+  rng: () => number,
+) {
+  const maxDrift = Math.max(0.12, volatility * 2.75);
+  const stepEvery = Math.max(2, Math.floor(pointCount / 54));
+
+  return Array.from({ length: outcomeCount }, (_, outcomeIndex) => {
+    const drift: number[] = [];
+    let level = (rng() - 0.5) * volatility * 1.15;
+    let target = level;
+
+    for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
+      if (pointIndex % stepEvery === 0) {
+        target += (rng() - 0.5) * volatility * 1.35;
+      }
+
+      if (rng() < 0.038 + (outcomeIndex < 5 ? 0.02 : 0)) {
+        target += (rng() - 0.5) * volatility * 3.7;
+      }
+
+      target = Math.max(-maxDrift, Math.min(maxDrift, target));
+      level += (target - level) * 0.5 + (rng() - 0.5) * volatility * 0.08;
+      level = Math.max(-maxDrift, Math.min(maxDrift, level));
+      drift.push(level);
+    }
+
+    return drift;
+  });
 }
 
 function buildSeedTimestamps(points: number, nowMs: number) {
@@ -570,6 +664,10 @@ function getOutcomeKey(name: string) {
 
 function clampProbability(value: number) {
   return Math.min(0.99, Math.max(0.01, value));
+}
+
+function clampProbabilityToRange(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function roundProbability(value: number) {

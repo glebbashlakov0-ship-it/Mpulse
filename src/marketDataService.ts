@@ -130,6 +130,232 @@ export class MarketDataError extends Error {
   }
 }
 
+const democraticNominee2028HistorySlug = "democratic-presidential-nominee-2028";
+const democraticNominee2028HistoryDays = 286;
+const democraticNominee2028HistoryPoints = 178;
+const democraticNominee2028TargetVolume = 1_167_968_236;
+const democraticNominee2028TargetLiquidity = 44_000_000;
+const democraticNominee2028MinimumStoredVolume = 1_000_000;
+const democraticNominee2028MinimumStoredLiquidity = 100_000;
+
+type CandidateHistoryProfile = {
+  aliases: string[];
+  anchors: Array<[number, number]>;
+};
+
+const democraticNominee2028Profiles: CandidateHistoryProfile[] = [
+  {
+    aliases: ["gavin newsom", "newsom", "гавин ньюсом", "ньюсом"],
+    anchors: [
+      [0, 0.203],
+      [0.07, 0.194],
+      [0.095, 0.183],
+      [0.116, 0.302],
+      [0.14, 0.343],
+      [0.23, 0.354],
+      [0.34, 0.37],
+      [0.49, 0.35],
+      [0.61, 0.342],
+      [0.67, 0.276],
+      [0.76, 0.252],
+      [0.84, 0.244],
+      [0.91, 0.269],
+      [0.97, 0.248],
+      [1, 0.241],
+    ],
+  },
+  {
+    aliases: [
+      "alexandria ocasio-cortez",
+      "alexandria ocasio cortez",
+      "ocasio-cortez",
+      "ocasio cortez",
+      "aoc",
+      "александрия окасио-кортез",
+      "окасио-кортез",
+    ],
+    anchors: [
+      [0, 0.162],
+      [0.08, 0.145],
+      [0.14, 0.112],
+      [0.22, 0.098],
+      [0.33, 0.135],
+      [0.39, 0.114],
+      [0.55, 0.103],
+      [0.68, 0.083],
+      [0.78, 0.086],
+      [0.9, 0.078],
+      [0.97, 0.09],
+      [1, 0.104],
+    ],
+  },
+  {
+    aliases: ["kamala harris", "harris", "камала харрис", "харрис"],
+    anchors: [
+      [0, 0.043],
+      [0.08, 0.055],
+      [0.18, 0.046],
+      [0.28, 0.032],
+      [0.39, 0.044],
+      [0.51, 0.036],
+      [0.62, 0.048],
+      [0.73, 0.058],
+      [0.83, 0.054],
+      [0.9, 0.069],
+      [0.96, 0.087],
+      [1, 0.082],
+    ],
+  },
+  {
+    aliases: ["jon ossoff", "john ossoff", "ossoff", "джон оссофф", "оссофф"],
+    anchors: [
+      [0, 0.039],
+      [0.11, 0.035],
+      [0.16, 0.058],
+      [0.27, 0.036],
+      [0.39, 0.043],
+      [0.52, 0.034],
+      [0.66, 0.041],
+      [0.75, 0.05],
+      [0.84, 0.058],
+      [0.91, 0.068],
+      [0.97, 0.061],
+      [1, 0.055],
+    ],
+  },
+];
+
+function getDemocraticNominee2028Price({
+  label,
+  index,
+  pointIndex,
+  progress,
+  totalPoints,
+}: {
+  label: string;
+  index: number;
+  pointIndex: number;
+  progress: number;
+  totalPoints: number;
+}) {
+  const profile = getDemocraticNominee2028Profile(label);
+  const basePrice = profile
+    ? interpolateAnchors(profile.anchors, progress)
+    : getDemocraticNominee2028FallbackPrice(label, index, progress);
+
+  if (pointIndex === 0 || pointIndex === totalPoints - 1) {
+    return roundRawProbability(basePrice);
+  }
+
+  const volatility = profile
+    ? basePrice >= 0.15
+      ? 0.012
+      : 0.007
+    : 0.0035;
+  const noise = centeredHash(`${label}:${pointIndex}`) * volatility;
+  const pulse =
+    Math.sin(pointIndex * 0.41 + stableHashUnit(label) * 8) *
+    (profile ? volatility * 0.35 : volatility * 0.22);
+  const occasionalMove =
+    pointIndex % (profile ? 31 : 43) === 0
+      ? centeredHash(`${label}:move:${pointIndex}`) * volatility * 2.4
+      : 0;
+
+  return roundProbability(basePrice + noise + pulse + occasionalMove);
+}
+
+function getDemocraticNominee2028Profile(label: string) {
+  const normalized = normalizeHistoryLabel(label);
+
+  return democraticNominee2028Profiles.find((profile) =>
+    profile.aliases.some((alias) => normalized.includes(normalizeHistoryLabel(alias))),
+  );
+}
+
+function getDemocraticNominee2028FallbackPrice(
+  label: string,
+  index: number,
+  progress: number,
+) {
+  const terminal =
+    0.046 -
+    Math.min(index, 12) * 0.0019 +
+    (stableHashUnit(`${label}:terminal`) - 0.5) * 0.006;
+  const start = terminal + 0.006 + (stableHashUnit(`${label}:start`) - 0.5) * 0.012;
+  const middle = terminal * (0.78 + stableHashUnit(`${label}:middle`) * 0.34);
+
+  return interpolateAnchors(
+    [
+      [0, start],
+      [0.22, start * 0.92],
+      [0.48, middle],
+      [0.72, terminal * 1.08],
+      [1, terminal],
+    ],
+    progress,
+  );
+}
+
+function getDemocraticNominee2028VolumeShare(price: number | null, index: number) {
+  const base = price === null ? 0.02 : Math.max(0.012, price);
+  return Math.min(0.42, base * 0.75 + 0.018 + index * 0.0015);
+}
+
+function interpolateAnchors(anchors: Array<[number, number]>, progress: number) {
+  const boundedProgress = Math.max(0, Math.min(1, progress));
+  const nextIndex = anchors.findIndex(([anchorProgress]) => anchorProgress >= boundedProgress);
+
+  if (nextIndex <= 0) {
+    return anchors[0]?.[1] ?? 0;
+  }
+
+  const [leftProgress, leftValue] = anchors[nextIndex - 1] ?? anchors[0];
+  const [rightProgress, rightValue] = anchors[nextIndex] ?? anchors.at(-1) ?? anchors[0];
+  const span = Math.max(0.0001, rightProgress - leftProgress);
+  const localProgress = (boundedProgress - leftProgress) / span;
+  const eased = localProgress * localProgress * (3 - 2 * localProgress);
+
+  return leftValue + (rightValue - leftValue) * eased;
+}
+
+function normalizeHistoryLabel(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim()
+    .toLowerCase();
+}
+
+function centeredHash(seed: string) {
+  return stableHashUnit(seed) * 2 - 1;
+}
+
+function stableHashUnit(seed: string) {
+  let hash = 2166136261;
+
+  for (const char of seed) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0) / 4_294_967_295;
+}
+
+function roundProbability(value: number) {
+  const clamped = Math.min(0.42, Math.max(0.006, value));
+  const step = clamped >= 0.12 ? 0.005 : 0.0025;
+
+  return Math.round(clamped / step) * step;
+}
+
+function roundRawProbability(value: number) {
+  return Math.round(Math.min(0.42, Math.max(0.006, value)) * 1000) / 1000;
+}
+
+function roundMoney(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
 const relatedStopWords = new Set([
   "after",
   "before",
@@ -1840,18 +2066,33 @@ export function buildMarketDataService({
       groupMarkets.length > 0 && hasGroupedTrades
         ? buildGroupedMarketStats(groupMarkets, tradesByMarketId)
         : null;
-    const enrichedGroups = groupedStats?.markets ?? groupMarkets;
+    const preserveSeededAggregate = shouldPreserveDemocraticNominee2028Aggregate(detail);
+    const enrichedGroups = preserveSeededAggregate
+      ? groupMarkets
+      : groupedStats?.markets ?? groupMarkets;
     const trades = marketTrades ?? (marketActivityRepository ? await listOwnTrades(detail.id) : []);
     const stats = trades.length > 0 ? buildOwnMarketStats(detail, trades) : null;
     const market = stats ? applyOwnStatsToMarket(detail, stats) : detail;
-    const volume = groupedStats ? groupedStats.volume : stats ? stats.volume : detail.volume;
+    const volume = preserveSeededAggregate
+      ? detail.volume
+      : groupedStats
+        ? groupedStats.volume
+        : stats
+          ? stats.volume
+          : detail.volume;
     const volume24h = groupedStats
       ? groupedStats.volume24h
       : stats
         ? stats.volume24h
         : detail.volume_24h;
-    const liquidity = groupedStats ? groupedStats.liquidity : stats ? stats.liquidity : detail.liquidity;
-    const groupedHistory = groupedStats
+    const liquidity = preserveSeededAggregate
+      ? detail.liquidity
+      : groupedStats
+        ? groupedStats.liquidity
+        : stats
+          ? stats.liquidity
+          : detail.liquidity;
+    const groupedHistory = groupedStats && !preserveSeededAggregate
       ? buildGroupedMarketHistory(enrichedGroups, tradesByMarketId)
       : null;
 
@@ -2185,7 +2426,7 @@ export function buildMarketDataService({
     detail: NormalizedMarketDetail,
   ): Promise<NormalizedMarketDetail> {
     if (!priceHistoryRepository) {
-      return detail;
+      return applyDemocraticNominee2028HistoryFallback(detail);
     }
 
     const scope = getMarketPriceHistoryScope(detail);
@@ -2196,7 +2437,11 @@ export function buildMarketDataService({
     });
 
     if (points.length === 0) {
-      return detail;
+      return applyDemocraticNominee2028HistoryFallback(detail);
+    }
+
+    if (shouldReplaceDemocraticNominee2028PulseHistory(detail, points)) {
+      return applyDemocraticNominee2028HistoryFallback(detail, { force: true });
     }
 
     return applyPulsePriceHistoryToDetail(detail, points);
@@ -2262,6 +2507,187 @@ export function buildMarketDataService({
       ...market,
       prices: normalizePriceSummary(market),
     };
+  }
+
+  function applyDemocraticNominee2028HistoryFallback(
+    detail: NormalizedMarketDetail,
+    options: { force?: boolean } = {},
+  ): NormalizedMarketDetail {
+    if (
+      options.force
+        ? !isDemocraticNominee2028HistoryTarget(detail)
+        : !shouldBuildDemocraticNominee2028History(detail)
+    ) {
+      return detail;
+    }
+
+    return applyPulsePriceHistoryToDetail(
+      detail,
+      buildDemocraticNominee2028HistoryPoints(detail),
+    );
+  }
+
+  function shouldBuildDemocraticNominee2028History(detail: NormalizedMarketDetail) {
+    if (!isDemocraticNominee2028HistoryTarget(detail)) {
+      return false;
+    }
+
+    return !hasGroupedOutcomeHistory(detail);
+  }
+
+  function shouldPreserveDemocraticNominee2028Aggregate(detail: NormalizedMarketDetail) {
+    const latest = detail.history.price_history.at(-1);
+
+    return (
+      isDemocraticNominee2028HistoryTarget(detail) &&
+      (latest?.volume ?? 0) >= democraticNominee2028TargetVolume * 0.9 &&
+      (latest?.liquidity ?? 0) >= democraticNominee2028TargetLiquidity * 0.9
+    );
+  }
+
+  function isDemocraticNominee2028HistoryTarget(detail: NormalizedMarketDetail) {
+    return detail.group_markets.length >= 4 && isDemocraticNominee2028Market(detail);
+  }
+
+  function shouldReplaceDemocraticNominee2028PulseHistory(
+    detail: NormalizedMarketDetail,
+    points: PulseMarketPriceHistoryPoint[],
+  ) {
+    if (!isDemocraticNominee2028HistoryTarget(detail)) {
+      return false;
+    }
+
+    if (points.some(isProtectedDemocraticNominee2028HistoryPoint)) {
+      return false;
+    }
+
+    const latest = points.at(-1);
+    if (!latest) {
+      return true;
+    }
+
+    return (
+      latest.volume < democraticNominee2028MinimumStoredVolume ||
+      latest.liquidity < democraticNominee2028MinimumStoredLiquidity ||
+      hasImplausibleDemocraticNominee2028LatestPrices(latest)
+    );
+  }
+
+  function isProtectedDemocraticNominee2028HistoryPoint(
+    point: PulseMarketPriceHistoryPoint,
+  ) {
+    return (
+      point.source === "admin" ||
+      point.metadata.source === "democratic_nominee_2028_history"
+    );
+  }
+
+  function hasImplausibleDemocraticNominee2028LatestPrices(
+    point: PulseMarketPriceHistoryPoint,
+  ) {
+    const prices = new Map(
+      point.outcomes.map((outcome) => [normalizeHistoryLabel(outcome.name), outcome.price]),
+    );
+
+    return democraticNominee2028Profiles.some((profile) => {
+      const price = profile.aliases
+        .map((alias) => prices.get(normalizeHistoryLabel(alias)))
+        .find((candidate): candidate is number => typeof candidate === "number");
+
+      if (typeof price !== "number") {
+        return true;
+      }
+
+      const expected = profile.anchors.at(-1)?.[1] ?? price;
+      const tolerance = expected >= 0.15 ? 0.18 : 0.07;
+      return Math.abs(price - expected) > tolerance;
+    });
+  }
+
+  function isDemocraticNominee2028Market(detail: NormalizedMarketDetail) {
+    const text = [
+      detail.event_slug,
+      detail.canonical_event_slug,
+      detail.event_title,
+      detail.slug,
+      detail.title,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      text.includes(democraticNominee2028HistorySlug) ||
+      text.includes("democratic presidential nominee 2028") ||
+      text.includes("2028 democratic presidential nomination") ||
+      (text.includes("демократи") && text.includes("2028"))
+    );
+  }
+
+  function hasGroupedOutcomeHistory(detail: NormalizedMarketDetail) {
+    const labels = new Set(
+      detail.group_markets.map((market) => normalizeHistoryLabel(market.label)),
+    );
+
+    return detail.history.price_history.filter((point) =>
+      (point.outcomes ?? []).some((outcome) => labels.has(normalizeHistoryLabel(outcome.name))),
+    ).length >= 40;
+  }
+
+  function buildDemocraticNominee2028HistoryPoints(
+    detail: NormalizedMarketDetail,
+  ): PulseMarketPriceHistoryPoint[] {
+    const scope = getMarketPriceHistoryScope(detail);
+    const latestMs = Date.now();
+    const firstMs = latestMs - democraticNominee2028HistoryDays * 24 * 60 * 60 * 1000;
+    const totalVolume = Math.max(detail.volume, democraticNominee2028TargetVolume);
+    const totalLiquidity = Math.max(detail.liquidity, democraticNominee2028TargetLiquidity);
+    const groupMarkets = detail.group_markets;
+
+    return Array.from({ length: democraticNominee2028HistoryPoints }, (_, index) => {
+      const progress = index / (democraticNominee2028HistoryPoints - 1);
+      const capturedAt = new Date(firstMs + (latestMs - firstMs) * progress).toISOString();
+      const volumeProgress = 0.05 + Math.pow(progress, 1.18) * 0.95;
+      const liquidityProgress = 0.18 + Math.pow(progress, 0.88) * 0.82;
+      const volume = roundMoney(totalVolume * volumeProgress);
+      const liquidity = roundMoney(totalLiquidity * liquidityProgress);
+      const outcomes = groupMarkets.map((market, outcomeIndex) => {
+        const price = getDemocraticNominee2028Price({
+          label: market.label,
+          index: outcomeIndex,
+          pointIndex: index,
+          progress,
+          totalPoints: democraticNominee2028HistoryPoints,
+        });
+
+        return {
+          name: market.label,
+          price,
+          volume: roundMoney(volume * getDemocraticNominee2028VolumeShare(price, outcomeIndex)),
+        };
+      });
+
+      return {
+        id: `${scope.scopeType}:${scope.scopeId}:democratic-2028:${index}`,
+        scopeType: scope.scopeType,
+        scopeId: scope.scopeId,
+        marketExternalId: scope.marketExternalId,
+        capturedAt,
+        outcomes,
+        yes: outcomes[0]?.price ?? null,
+        no: outcomes[1]?.price ?? null,
+        volume,
+        liquidity,
+        source: "pulse_seed",
+        createdBy: null,
+        metadata: {
+          source: "democratic_nominee_2028_history",
+          generated: true,
+          sequence: index,
+        },
+        createdAt: capturedAt,
+      };
+    });
   }
 
   function mapPulsePointToHistoryPoint(point: PulseMarketPriceHistoryPoint): MarketPriceHistoryPoint {

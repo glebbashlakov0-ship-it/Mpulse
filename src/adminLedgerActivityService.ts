@@ -307,7 +307,15 @@ async function ensureAdminSeedWallet(repository: WalletRepository, userId: strin
 }
 
 function buildSyntheticAddress(userId: string) {
-  return `T${createHash("sha256").update(`admin_seed:${userId}`).digest("hex").slice(0, 33)}`;
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const digest = createHash("sha256").update(`admin_seed:${userId}`).digest();
+  let body = "";
+
+  for (let index = 0; index < 33; index += 1) {
+    body += alphabet[digest[index % digest.length] % alphabet.length];
+  }
+
+  return `T${body}`;
 }
 
 function buildAdminSeedMetadata(adminUserId: string, publicActivity: boolean, batchId: string) {

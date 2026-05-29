@@ -1,20 +1,14 @@
 import * as React from "react";
+import { Clock3, ListFilter, Settings, Trophy } from "lucide-react";
 import {
-  Clock3,
-  Info,
-  ListFilter,
-  Search,
-  Settings,
-  Trophy,
-} from "lucide-react";
-import {
+  buildChartYAxisScale,
   buildChartSeries,
   buildCurrentPriceHistory,
   chartRanges,
   type ChartRange,
   type ChartSeries,
+  type ChartYAxisScale,
 } from "../lib/marketChart";
-import { formatMarketText } from "../lib/marketText";
 import type { Market, Outcome } from "../lib/types";
 
 const chartWidth = 922;
@@ -24,15 +18,17 @@ const plotBottom = 200;
 const plotRight = 872;
 const gridRight = 884;
 const chartRenderHeight = plotBottom + plotTop;
-const yTickCount = 6;
+const yTickCount = 5;
+const hoverLabelHeight = 21;
+const hoverLabelGap = 1;
 
 const rangeLabels: Record<ChartRange, string> = {
-  "1H": "1H",
-  "6H": "6H",
-  "1D": "1D",
-  "1W": "1W",
-  "1M": "1M",
-  ALL: "ALL",
+  "1H": "1ч",
+  "6H": "6ч",
+  "1D": "1д",
+  "1W": "1н",
+  "1M": "1м",
+  ALL: "Все",
 };
 
 const moneyFormatter = new Intl.NumberFormat("en-US", {
@@ -40,79 +36,95 @@ const moneyFormatter = new Intl.NumberFormat("en-US", {
 });
 
 const monthLabels = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
+  "янв.",
+  "фев.",
+  "мар.",
+  "апр.",
+  "мая",
+  "июн.",
+  "июл.",
+  "авг.",
+  "сент.",
+  "окт.",
+  "нояб.",
+  "дек.",
 ];
-
-type YAxisScale = {
-  min: number;
-  max: number;
-  ticks: number[];
-};
 
 type TimeTick = {
   x: number;
   label: string;
 };
 
+type HoverValue = {
+  key: string;
+  label: string;
+  color: string;
+  value: number;
+  point: ChartSeries["points"][number];
+};
+
+type ChartHover = {
+  anchorX: number;
+  cursorX: number;
+  timestamp: string;
+  values: HoverValue[];
+};
+
+type HoverLabel = HoverValue & {
+  labelX: number;
+  labelY: number;
+  rectWidth: number;
+};
+
 export function MarketChart({
+  endsAt,
   outcomes,
   history,
   selectedOutcomeName,
 }: {
+  endsAt?: string | null;
   outcomes: Outcome[];
   history?: Market["history"];
   selectedOutcomeName?: string | null;
 }) {
   const [selectedRange, setSelectedRange] = React.useState<ChartRange>("ALL");
-  const [focusedOutcomeName, setFocusedOutcomeName] = React.useState<string | null>(
-    selectedOutcomeName ?? null,
-  );
-  const [outcomeQuery, setOutcomeQuery] = React.useState("");
-  const [hover, setHover] = React.useState<{
-    x: number;
-    y: number;
-    timestamp: string;
-    values: Array<{ label: string; color: string; value: number }>;
-  } | null>(null);
+  const [hover, setHover] = React.useState<ChartHover | null>(null);
   const svgRef = React.useRef<SVGSVGElement | null>(null);
+  const focusedOutcomeName = selectedOutcomeName ?? null;
+  const chartClipId = React.useId().replace(/:/g, "");
   const rawPriceHistory = history?.price_history;
   const hasRawPriceHistory = (rawPriceHistory?.length ?? 0) > 0;
-  const priceHistory = React.useMemo(
-    () =>
-      hasRawPriceHistory
-        ? rawPriceHistory ?? []
-        : buildCurrentPriceHistory(outcomes, selectedRange),
-    [hasRawPriceHistory, outcomes, rawPriceHistory, selectedRange],
+  const fallbackPriceHistory = React.useMemo(
+    () => buildCurrentPriceHistory(outcomes, selectedRange),
+    [outcomes, selectedRange],
   );
+  const initialPriceHistory = hasRawPriceHistory ? rawPriceHistory ?? [] : fallbackPriceHistory;
 
-  React.useEffect(() => {
-    if (selectedOutcomeName) {
-      setFocusedOutcomeName(selectedOutcomeName);
-    }
-  }, [selectedOutcomeName]);
-
-  const baseSeries = React.useMemo(
+  const initialSeries = React.useMemo(
     () =>
       buildChartSeries({
-        priceHistory,
+        priceHistory: initialPriceHistory,
         outcomes,
         range: selectedRange,
         selectedOutcomeName: focusedOutcomeName,
       }),
-    [focusedOutcomeName, outcomes, priceHistory, selectedRange],
+    [focusedOutcomeName, initialPriceHistory, outcomes, selectedRange],
   );
-  const yAxis = React.useMemo(() => buildYAxisScale(baseSeries), [baseSeries]);
+  const shouldUseFallbackHistory = initialSeries.length === 0 && fallbackPriceHistory.length > 0;
+  const priceHistory = shouldUseFallbackHistory ? fallbackPriceHistory : initialPriceHistory;
+  const baseSeries = React.useMemo(
+    () =>
+      shouldUseFallbackHistory
+        ? buildChartSeries({
+            priceHistory,
+            outcomes,
+            range: selectedRange,
+            selectedOutcomeName: focusedOutcomeName,
+          })
+        : initialSeries,
+    [focusedOutcomeName, initialSeries, outcomes, priceHistory, selectedRange, shouldUseFallbackHistory],
+  );
+  const yAxis = React.useMemo(() => buildChartYAxisScale(baseSeries, yTickCount), [baseSeries]);
   const series = React.useMemo(
     () =>
       buildChartSeries({
@@ -130,39 +142,31 @@ export function MarketChart({
     [focusedOutcomeName, outcomes, priceHistory, selectedRange, yAxis.max, yAxis.min],
   );
   const hasVisibleSeries = series.some((item) => item.points.length > 0);
-  const shouldRenderChart = hasVisibleSeries;
-  const firstPoint = getFirstPoint(series);
   const lastPoint = getLastPoint(series);
+  const footerDate = endsAt ?? lastPoint?.timestamp ?? null;
   const latestVolume = getLatestVolume(rawPriceHistory ?? []);
-  const chartMode = outcomes.length > 2 ? "Multi-outcome" : "Binary market";
+  const chartMode = outcomes.length > 2 ? "мульти-исходов" : "бинарного рынка";
   const xTicks = React.useMemo(
     () => buildTimeTicks(series, selectedRange),
     [selectedRange, series],
   );
-  const searchableOutcomes = React.useMemo(
-    () =>
-      outcomes
-        .filter((outcome) =>
-          `${outcome.name} ${formatMarketText(outcome.name)}`
-            .toLowerCase()
-            .includes(outcomeQuery.trim().toLowerCase()),
-        )
-        .slice(0, 8),
-    [outcomeQuery, outcomes],
-  );
+  const legendSeries = React.useMemo(() => applyHoverValuesToLegend(series, hover), [hover, series]);
+  const hoverLabels = React.useMemo(() => buildHoverLabels(hover?.values ?? []), [hover]);
 
   function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
-    if (!shouldRenderChart || series.length === 0 || !svgRef.current) {
+    if (!hasVisibleSeries || series.length === 0 || !svgRef.current) {
+      setHover(null);
       return;
     }
 
     const rect = svgRef.current.getBoundingClientRect();
-    const svgX = ((event.clientX - rect.left) / rect.width) * chartWidth;
+    const cursorX = clamp(((event.clientX - rect.left) / rect.width) * chartWidth, 0, plotRight);
     const nearestValues = series.flatMap((item) => {
-      const point = getNearestPoint(item, svgX);
+      const point = getNearestPoint(item, cursorX);
       return point
         ? [
             {
+              key: item.key,
               label: item.label,
               color: item.color,
               value: point.value,
@@ -172,86 +176,66 @@ export function MarketChart({
         : [];
     });
     const primary = [...nearestValues].sort(
-      (left, right) => Math.abs(left.point.x - svgX) - Math.abs(right.point.x - svgX),
+      (left, right) => Math.abs(left.point.x - cursorX) - Math.abs(right.point.x - cursorX),
     )[0];
 
     if (!primary) {
+      setHover(null);
       return;
     }
 
+    const values = series.flatMap((item) => {
+      const point = getNearestTimestampPoint(item, primary.point.timestampMs) ?? getNearestPoint(item, cursorX);
+      return point
+        ? [
+            {
+              key: item.key,
+              label: item.label,
+              color: item.color,
+              value: point.value,
+              point,
+            },
+          ]
+        : [];
+    });
+
     setHover({
-      x: primary.point.x,
-      y: primary.point.y,
+      anchorX: primary.point.x,
+      cursorX,
       timestamp: primary.point.timestamp,
-      values: nearestValues
-        .filter((item) => Math.abs(item.point.timestampMs - primary.point.timestampMs) < 60_000)
-        .map(({ label, color, value }) => ({ label, color, value })),
+      values,
     });
   }
 
   return (
-    <div className="relative mt-6 overflow-visible bg-[#15191d] pb-4 pt-1 text-[#dee3e7]">
+    <div className="relative mt-6 overflow-visible bg-transparent pb-4 pt-1 text-[#0e0f11]">
       <div className="flex min-h-8 items-start gap-5 px-0">
         {hasVisibleSeries ? (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2">
-            {series.map((item) => (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5">
+            {legendSeries.map((item) => (
               <span
-                className="flex min-w-0 items-center gap-2 text-[14px] font-semibold text-[#8794a1] sm:text-[15px]"
+                className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] font-medium text-[#77808d]"
                 key={item.key}
               >
                 <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  className="h-2 w-2 shrink-0 rounded-full"
                   style={{ backgroundColor: item.color }}
                 />
                 <span className="min-w-0 truncate">{item.label}</span>
-                <strong className="shrink-0 text-[#c8d0d8]">{formatChartPercent(item.latest)}</strong>
+                <strong className="shrink-0 text-[#0e0f11]">{formatChartPercent(item.latest)}</strong>
               </span>
             ))}
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-sm font-semibold text-[#8794a1]">
-            <Info size={15} />
-            <span>Market history will appear here when price points are available.</span>
-          </div>
+          <div className="min-w-0 flex-1" />
         )}
-        <PulseMarketWatermark />
-      </div>
-
-      {outcomes.length > 5 ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-[220px_minmax(0,1fr)]">
-          <label className="relative block">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8794a1]"
-              size={15}
-            />
-            <input
-              className="h-9 w-full rounded-md border border-[#242b32] bg-[#181d21] pl-9 pr-3 text-sm font-semibold text-[#dee3e7] outline-none placeholder:text-[#586879]"
-              onChange={(event) => setOutcomeQuery(event.target.value)}
-              placeholder="Search outcomes"
-              value={outcomeQuery}
-            />
-          </label>
-          <div className="flex min-w-0 gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {searchableOutcomes.map((outcome) => {
-              const active = focusedOutcomeName === outcome.name;
-              return (
-                <button
-                  className={`h-9 shrink-0 rounded-md px-3 text-xs font-bold transition ${
-                    active
-                      ? "bg-[#2797ff] text-white"
-                      : "bg-[#181d21] text-[#8794a1] hover:text-[#dee3e7]"
-                  }`}
-                  key={outcome.name}
-                  onClick={() => setFocusedOutcomeName(outcome.name)}
-                  type="button"
-                >
-                  {formatMarketText(outcome.name)}
-                </button>
-              );
-            })}
-          </div>
+        <div
+          aria-hidden="true"
+          className="ml-auto hidden shrink-0 text-[24px] font-bold leading-none tracking-normal text-[#d9dee4] lg:block"
+        >
+          PulseMarket
         </div>
-      ) : null}
+      </div>
 
       <div className="relative mt-7 overflow-visible">
         <svg
@@ -259,11 +243,16 @@ export function MarketChart({
           ref={svgRef}
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           role="img"
-          aria-label={`${chartMode} price history chart`}
+          aria-label={`График вероятностей ${chartMode}`}
           onPointerMove={handlePointerMove}
           onPointerLeave={() => setHover(null)}
         >
-          <rect fill="#15191d" height={chartHeight} width={chartWidth} x="0" y="0" />
+          <rect fill="transparent" height={chartHeight} width={chartWidth} x="0" y="0" />
+          <defs>
+            <clipPath id={chartClipId}>
+              <rect height={plotBottom} width={plotRight} x="0" y="0" />
+            </clipPath>
+          </defs>
           {yAxis.ticks.map((tick) => {
             const y = valueToY(tick, yAxis);
             return (
@@ -273,13 +262,13 @@ export function MarketChart({
                   x2={gridRight}
                   y1={y}
                   y2={y}
-                  stroke="#3b4854"
-                  strokeDasharray="1 6"
+                  stroke="#e6e8ea"
+                  strokeDasharray="1 3"
                   strokeLinecap="round"
-                  strokeOpacity="0.72"
+                  strokeOpacity="0.9"
                 />
                 <text
-                  className="fill-[#8d99a6] text-[12px] font-medium"
+                  className="fill-[#77808d] text-[12px] font-normal"
                   x="895"
                   y={y + 4}
                 >
@@ -290,7 +279,7 @@ export function MarketChart({
           })}
           {xTicks.map((tick) => (
             <text
-              className="fill-[#34414d] text-[13px] font-semibold"
+              className="fill-[#aeb4bc] text-[12px] font-normal"
               key={`${tick.label}-${tick.x}`}
               textAnchor="middle"
               x={tick.x}
@@ -299,31 +288,25 @@ export function MarketChart({
               {tick.label}
             </text>
           ))}
-          {shouldRenderChart
+          {hasVisibleSeries
             ? series.map((item) => {
                 const latest = item.points.at(-1);
                 return (
                   <g key={item.key}>
-                    <path
-                      d={item.path}
-                      fill="none"
-                      stroke="#15191d"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="5"
-                    />
-                    <path
-                      d={item.path}
-                      fill="none"
-                      stroke={item.color}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2.35"
-                    />
+                    <g clipPath={`url(#${chartClipId})`}>
+                      <path
+                        d={item.path}
+                        fill="none"
+                        stroke={item.color}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2.35"
+                      />
+                    </g>
                     {latest ? (
                       <g className="pointer-events-none">
-                        <circle cx={latest.x} cy={latest.y} fill={item.color} opacity="0.26" r="8.5" />
-                        <circle cx={latest.x} cy={latest.y} fill={item.color} r="4.5" />
+                        <circle cx={latest.x} cy={latest.y} fill={item.color} opacity="0.12" r="12" />
+                        <circle cx={latest.x} cy={latest.y} fill={item.color} r="4" />
                       </g>
                     ) : null}
                   </g>
@@ -331,78 +314,61 @@ export function MarketChart({
               })
             : null}
           {hover ? (
-            <g>
+            <g className="pointer-events-none">
               <line
-                x1={hover.x}
-                x2={hover.x}
+                x1={hover.anchorX}
+                x2={hover.anchorX}
                 y1={plotTop}
                 y2={plotBottom}
-                stroke="#586879"
-                strokeDasharray="3 5"
-                strokeOpacity="0.75"
+                stroke="#26323d"
+                strokeOpacity="0.95"
+                strokeWidth="1.5"
               />
-              <circle cx={hover.x} cy={hover.y} fill="#dee3e7" r="4" />
+              {hover.values.map((item) => (
+                <g key={item.key}>
+                  <circle cx={item.point.x} cy={item.point.y} fill={item.color} opacity="0.18" r="6" />
+                  <circle cx={item.point.x} cy={item.point.y} fill={item.color} r="4" />
+                </g>
+              ))}
             </g>
           ) : null}
         </svg>
 
-        {hover ? (
+        {hoverLabels.map((item) => (
           <div
-            className="pointer-events-none absolute top-8 z-10 min-w-[190px] rounded-md border border-[#2e3841] bg-[#181d21]/95 p-3 shadow-xl"
-            style={{
-              left: `${Math.min(72, Math.max(0, (hover.x / chartWidth) * 100))}%`,
-              transform: hover.x > chartWidth * 0.72 ? "translateX(-100%)" : undefined,
-            }}
+            className="pointer-events-none absolute z-20 flex h-[21px] items-center gap-1 rounded-[5px] border border-[#26323d] bg-[#151b20]/95 px-1.5 text-[11px] font-semibold text-[#f4f5f6] shadow-[0_4px_10px_rgba(0,0,0,0.2)] backdrop-blur"
+            key={item.key}
+            style={getHoverLabelStyle(item)}
           >
-            <strong className="block text-xs font-bold text-[#dee3e7]">
-              {formatEnglishDate(hover.timestamp)}
+            <span className="h-[14px] w-1 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
+            <span className="min-w-0 truncate">{item.label}</span>
+            <strong className="ml-auto shrink-0 font-bold text-[#f4f5f6]">
+              {formatChartPercent(item.value)}
             </strong>
-            <div className="mt-2 grid gap-1.5">
-              {hover.values.map((item) => (
-                <span
-                  className="flex items-center justify-between gap-3 text-xs font-semibold text-[#8794a1]"
-                  key={item.label}
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
-                    <span className="truncate">{item.label}</span>
-                  </span>
-                  <strong className="text-[#dee3e7]">{formatChartPercent(item.value)}</strong>
-                </span>
-              ))}
-            </div>
           </div>
-        ) : null}
-
-        {!hasVisibleSeries ? (
-          <ChartState
-            icon={<Info size={18} />}
-            title="Prices unavailable"
-            detail="The chart will appear as soon as the market publishes odds."
-          />
-        ) : null}
+        ))}
       </div>
 
-      <div className="mt-6 flex flex-col gap-4 border-t border-[#242b32] pt-4 text-[15px] font-semibold text-[#9aa6b2] lg:flex-row lg:items-center lg:justify-between">
+      <div className="mt-6 flex flex-col gap-4 border-t border-[#e6e8ea] pt-4 text-[13px] font-medium tracking-[-0.09px] text-[#77808d] lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <span className="flex items-center gap-2 text-[#dee3e7]">
-            <Trophy size={18} />
-            {latestVolume === null ? "--" : formatFullMoney(latestVolume)} Volume
+          <span className="flex items-center gap-1.5 text-[#0e0f11]">
+            <Trophy size={14} />
+            {latestVolume === null ? "--" : formatFullMoney(latestVolume)} Объем
           </span>
-          <span className="h-3.5 w-px rounded-full bg-[#2e3841]" />
-          <span className="flex items-center gap-2">
-            <Clock3 size={18} />
-            {lastPoint ? formatEnglishDate(lastPoint.timestamp) : "Date unknown"}
+          <span className="h-2.5 w-px rounded-full bg-[#e6e8ea]" />
+          <span className="flex items-center gap-1.5">
+            <Clock3 size={12} />
+            {footerDate ? formatChartDate(footerDate) : "Дата неизвестна"}
           </span>
         </div>
         <div className="flex min-w-0 items-center justify-between gap-3 lg:justify-end">
           <div className="flex items-center gap-3">
             {chartRanges.map((range) => (
               <button
-                className={`h-8 whitespace-nowrap text-[15px] font-bold uppercase tracking-normal transition ${
+                className={`h-8 whitespace-nowrap text-[13px] font-bold tracking-normal transition ${
                   selectedRange === range
-                    ? "text-[#dee3e7]"
-                    : "text-[#7b8996] hover:text-[#c8d0d8]"
+                    ? "text-[#0e0f11]"
+                    : "text-[#77808d] hover:text-[#0e0f11]"
                 }`}
                 key={range}
                 onClick={() => setSelectedRange(range)}
@@ -412,17 +378,17 @@ export function MarketChart({
               </button>
             ))}
           </div>
-          <div className="flex shrink-0 items-center gap-3 text-[#7b8996]">
+          <div className="flex shrink-0 items-center gap-3 text-[#77808d]">
             <button
-              aria-label="Sort chart outcomes"
-              className="transition hover:text-[#dee3e7]"
+              aria-label="Сортировать исходы графика"
+              className="transition hover:text-[#0e0f11]"
               type="button"
             >
               <ListFilter size={19} />
             </button>
             <button
-              aria-label="Chart settings"
-              className="transition hover:text-[#dee3e7]"
+              aria-label="Настройки графика"
+              className="transition hover:text-[#0e0f11]"
               type="button"
             >
               <Settings size={19} />
@@ -430,112 +396,78 @@ export function MarketChart({
           </div>
         </div>
       </div>
-
-      <span className="sr-only">
-        {firstPoint ? `Chart starts at ${firstPoint.timestamp}` : "Chart start unavailable"}
-      </span>
     </div>
   );
 }
 
-function ChartState({
-  icon,
-  title,
-  detail,
-}: {
-  icon?: React.ReactNode;
-  title: string;
-  detail: string;
-}) {
-  return (
-    <div className="absolute inset-x-4 top-1/2 mx-auto max-w-xl -translate-y-1/2 rounded-md border border-[#2e3841] bg-[#181d21]/95 p-5 text-center shadow-xl">
-      <strong className="flex items-center justify-center gap-2 text-base font-semibold text-[#dee3e7]">
-        {icon}
-        {title}
-      </strong>
-      <span className="mt-2 block text-sm font-medium text-[#8794a1]">{detail}</span>
-    </div>
-  );
+function valueToY(value: number, yAxis: ChartYAxisScale) {
+  const span = Math.max(0.0001, yAxis.max - yAxis.min);
+  return plotTop + (1 - (value - yAxis.min) / span) * (plotBottom - plotTop);
 }
 
-function PulseMarketWatermark() {
-  return (
-    <div
-      aria-hidden="true"
-      className="ml-auto hidden shrink-0 items-center gap-3 text-[#2a333d] lg:flex"
-    >
-      <svg className="h-7 w-7" fill="none" viewBox="0 0 36 36">
-        <path
-          d="M27.5 3.5v29L6.5 26.6V9.4L27.5 3.5Z"
-          stroke="currentColor"
-          strokeLinejoin="round"
-          strokeWidth="2.8"
-        />
-        <path
-          d="M9 18 26.5 11v14L9 18Z"
-          stroke="currentColor"
-          strokeLinejoin="round"
-          strokeWidth="2.8"
-        />
-      </svg>
-      <span className="text-[24px] font-bold leading-none tracking-normal">PulseMarket</span>
-    </div>
-  );
-}
-
-function buildYAxisScale(series: ChartSeries[]): YAxisScale {
-  const values = series
-    .flatMap((item) => item.points.map((point) => point.value))
-    .filter((value) => Number.isFinite(value));
-
-  if (values.length === 0) {
-    return { min: 0, max: 1, ticks: [0, 0.25, 0.5, 0.75, 1] };
-  }
-
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const rawSpan = Math.max(0.04, maxValue - minValue);
-  const padding = Math.max(0.02, rawSpan * 0.18);
-  let min = Math.max(0, Math.floor((minValue - padding) * 20) / 20);
-  let max = Math.min(1, Math.ceil((maxValue + padding) * 20) / 20);
-
-  if (min === 0 && minValue >= 0.045 && max <= 0.3) {
-    min = 0.05;
-  }
-
-  if (max - min < 0.08) {
-    const center = (max + min) / 2;
-    min = Math.max(0, center - 0.04);
-    max = Math.min(1, center + 0.04);
-  }
-
-  const ticks = buildLinearTicks(min, max, yTickCount);
+function getHoverLabelStyle(item: HoverLabel): React.CSSProperties {
   return {
-    min: ticks[0] ?? min,
-    max: ticks.at(-1) ?? max,
-    ticks,
+    left: `${(item.labelX / chartWidth) * 100}%`,
+    top: `${(item.labelY / chartHeight) * 100}%`,
+    transform: "translateY(-50%)",
+    width: `${item.rectWidth}px`,
   };
 }
 
-function buildLinearTicks(min: number, max: number, count: number) {
-  const rawStep = Math.max(0.01, (max - min) / Math.max(1, count - 1));
-  const step = Math.max(0.01, Math.ceil(rawStep * 100) / 100);
-  let start = min;
-  let end = start + step * (count - 1);
-
-  if (end < max) {
-    end = Math.min(1, max);
-    start = Math.max(0, end - step * (count - 1));
+function buildHoverLabels(values: HoverValue[]): HoverLabel[] {
+  if (values.length === 0) {
+    return [];
   }
 
-  return Array.from({ length: count }, (_, index) => round(start + step * index)).filter(
-    (tick, index, ticks) => index === 0 || tick !== ticks[index - 1],
-  );
+  const topLimit = plotTop + hoverLabelHeight / 2;
+  const bottomLimit = plotBottom - hoverLabelHeight / 2;
+  const ordered = [...values]
+    .sort((left, right) => left.point.y - right.point.y)
+    .map((item) => {
+      const rectWidth = getHoverLabelWidth(item);
+      const shouldPlaceLeft = item.point.x > plotRight - rectWidth - 16;
+      const labelX = shouldPlaceLeft
+        ? Math.max(0, item.point.x - rectWidth - 14)
+        : Math.min(plotRight - rectWidth, item.point.x + 16);
+
+      return {
+        ...item,
+        labelX: round(labelX),
+        labelY: clamp(item.point.y, topLimit, bottomLimit),
+        rectWidth,
+      };
+    });
+
+  let nextY = topLimit;
+  const spaced = ordered.map((item) => {
+    const labelY = Math.max(item.labelY, nextY);
+    nextY = labelY + hoverLabelHeight + hoverLabelGap;
+    return { ...item, labelY };
+  });
+  const overflow = (spaced.at(-1)?.labelY ?? bottomLimit) - bottomLimit;
+  const shift = Math.max(0, overflow);
+
+  return spaced.map((item) => ({
+    ...item,
+    labelY: round(clamp(item.labelY - shift, topLimit, bottomLimit)),
+  }));
 }
 
-function valueToY(value: number, yAxis: YAxisScale) {
-  const span = Math.max(0.0001, yAxis.max - yAxis.min);
-  return plotTop + (1 - (value - yAxis.min) / span) * (plotBottom - plotTop);
+function getHoverLabelWidth(item: HoverValue) {
+  const text = `${item.label} ${formatChartPercent(item.value)}`;
+  return Math.max(92, Math.min(260, Math.ceil(text.length * 6.2 + 24)));
+}
+
+function applyHoverValuesToLegend(series: ChartSeries[], hover: ChartHover | null) {
+  if (!hover) {
+    return series;
+  }
+
+  const hoverValues = new Map(hover.values.map((item) => [item.key, item.value]));
+  return series.map((item) => ({
+    ...item,
+    latest: hoverValues.get(item.key) ?? item.latest,
+  }));
 }
 
 function buildTimeTicks(series: ChartSeries[], range: ChartRange): TimeTick[] {
@@ -608,12 +540,6 @@ function getLatestVolume(priceHistory: NonNullable<Market["history"]>["price_his
     : null;
 }
 
-function getFirstPoint(series: ChartSeries[]) {
-  return series
-    .flatMap((item) => item.points)
-    .sort((left, right) => left.timestampMs - right.timestampMs)[0];
-}
-
 function getLastPoint(series: ChartSeries[]) {
   return series
     .flatMap((item) => item.points)
@@ -627,6 +553,18 @@ function getNearestPoint(series: ChartSeries, x: number) {
     }
 
     return Math.abs(point.x - x) < Math.abs(nearest.x - x) ? point : nearest;
+  }, null);
+}
+
+function getNearestTimestampPoint(series: ChartSeries, timestampMs: number) {
+  return series.points.reduce<ChartSeries["points"][number] | null>((nearest, point) => {
+    if (!nearest) {
+      return point;
+    }
+
+    return Math.abs(point.timestampMs - timestampMs) < Math.abs(nearest.timestampMs - timestampMs)
+      ? point
+      : nearest;
   }, null);
 }
 
@@ -646,14 +584,14 @@ function formatAxisPercent(value: number) {
   return `${Math.round(value * 100)}%`;
 }
 
-function formatEnglishDate(value: string | number) {
+function formatChartDate(value: string | number) {
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
-    return "Date unknown";
+    return "Дата неизвестна";
   }
 
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -661,14 +599,14 @@ function formatEnglishDate(value: string | number) {
 }
 
 function formatHourTick(value: number) {
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("ru-RU", {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
 }
 
 function formatDayTick(value: number) {
-  return new Intl.DateTimeFormat("en-US", {
+  return new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
     month: "short",
   }).format(new Date(value));
@@ -676,4 +614,8 @@ function formatDayTick(value: number) {
 
 function round(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }

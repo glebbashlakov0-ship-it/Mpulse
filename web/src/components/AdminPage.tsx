@@ -58,8 +58,8 @@ export function AdminPage() {
   const [message, setMessage] = React.useState<string | null>(null);
   const [oddsMarketId, setOddsMarketId] = React.useState("");
   const [seedForce, setSeedForce] = React.useState(false);
-  const [seedPoints, setSeedPoints] = React.useState("96");
-  const [seedVolatility, setSeedVolatility] = React.useState("0.06");
+  const [seedPoints, setSeedPoints] = React.useState("260");
+  const [seedVolatility, setSeedVolatility] = React.useState("0.12");
   const [seedResult, setSeedResult] = React.useState<AdminSeedOddsResult | null>(null);
   const [overrideOutcomes, setOverrideOutcomes] = React.useState<Array<{ name: string; percent: string }>>([]);
   const [overrideReason, setOverrideReason] = React.useState("");

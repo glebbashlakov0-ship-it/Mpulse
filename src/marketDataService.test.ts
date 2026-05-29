@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryCacheStore } from "./cache.js";
 import { MemoryMarketRepository } from "./marketRepository.js";
+import { MemoryMarketPriceHistoryRepository } from "./marketPriceHistoryRepository.js";
 import { buildMarketDataService, MarketDataError } from "./marketDataService.js";
 import { buildKeywordVisibilityRules, isMarketVisible } from "./moderation.js";
 import { UpstreamError } from "./polymarketClient.js";
@@ -555,6 +556,194 @@ test("collapses embedded Polymarket event siblings into one grouped card", async
     result.data.some((market) => market.title.startsWith("Will Oprah")),
     false,
   );
+});
+
+test("adds full historical activity for the 2028 Democratic nominee grouped event", async () => {
+  const childMarkets = [
+    marketFixture({
+      id: "newsom",
+      question: "Will Gavin Newsom win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Gavin Newsom",
+      volumeNum: 900_000,
+    }),
+    marketFixture({
+      id: "aoc",
+      question: "Will Alexandria Ocasio-Cortez win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Alexandria Ocasio-Cortez",
+      volumeNum: 800_000,
+    }),
+    marketFixture({
+      id: "harris",
+      question: "Will Kamala Harris win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Kamala Harris",
+      volumeNum: 700_000,
+    }),
+    marketFixture({
+      id: "ossoff",
+      question: "Will Jon Ossoff win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Jon Ossoff",
+      volumeNum: 600_000,
+    }),
+    marketFixture({
+      id: "whitmer",
+      question: "Will Gretchen Whitmer win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Gretchen Whitmer",
+      volumeNum: 500_000,
+    }),
+  ];
+  const nomineeEvent = eventFixture({
+    id: "dem-2028",
+    slug: "democratic-presidential-nominee-2028",
+    title: "Democratic Presidential Nominee 2028",
+    volume: 1_200_000,
+    volume24hr: 100_000,
+    liquidity: 50_000,
+    markets: childMarkets,
+  });
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient(
+      childMarkets,
+      { ...childMarkets[0], events: [nomineeEvent] },
+      [nomineeEvent],
+    ),
+  });
+
+  const result = await service.getMarketDetail("newsom");
+  const history = result.data.history.price_history;
+  const latest = history.at(-1);
+  const latestByName = new Map(
+    (latest?.outcomes ?? []).map((outcome) => [outcome.name, outcome.price]),
+  );
+
+  assert.equal(result.data.history.is_synthetic, false);
+  assert.equal(history.length, 178);
+  assert.equal(result.data.volume, 1_167_968_236);
+  assert.equal(latestByName.get("Gavin Newsom"), 0.241);
+  assert.equal(latestByName.get("Alexandria Ocasio-Cortez"), 0.104);
+  assert.equal(latestByName.get("Kamala Harris"), 0.082);
+  assert.equal(latestByName.get("Jon Ossoff"), 0.055);
+  assert.equal((latestByName.get("Gretchen Whitmer") ?? 1) < 0.055, true);
+});
+
+test("replaces tiny local pulse history for the 2028 Democratic nominee grouped event", async () => {
+  const childMarkets = [
+    marketFixture({
+      id: "newsom",
+      question: "Will Gavin Newsom win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Gavin Newsom",
+      volumeNum: 900_000,
+    }),
+    marketFixture({
+      id: "aoc",
+      question: "Will Alexandria Ocasio-Cortez win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Alexandria Ocasio-Cortez",
+      volumeNum: 800_000,
+    }),
+    marketFixture({
+      id: "harris",
+      question: "Will Kamala Harris win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Kamala Harris",
+      volumeNum: 700_000,
+    }),
+    marketFixture({
+      id: "ossoff",
+      question: "Will Jon Ossoff win the 2028 Democratic presidential nomination?",
+      category: undefined,
+      groupItemTitle: "Jon Ossoff",
+      volumeNum: 600_000,
+    }),
+  ];
+  const nomineeEvent = eventFixture({
+    id: "dem-2028",
+    slug: "democratic-presidential-nominee-2028",
+    title: "Democratic Presidential Nominee 2028",
+    volume: 1_200_000,
+    volume24hr: 100_000,
+    liquidity: 50_000,
+    markets: childMarkets,
+  });
+  const priceHistoryRepository = new MemoryMarketPriceHistoryRepository();
+  await priceHistoryRepository.savePoints([
+    {
+      scopeType: "event",
+      scopeId: "dem-2028",
+      marketExternalId: "newsom",
+      capturedAt: "2026-05-28T00:00:00.000Z",
+      outcomes: [
+        { name: "Gavin Newsom", price: 0.57, volume: 17.38 },
+        { name: "Alexandria Ocasio-Cortez", price: 0.003, volume: 0 },
+        { name: "Kamala Harris", price: 0.003, volume: 0 },
+        { name: "Jon Ossoff", price: 0.003, volume: 0 },
+      ],
+      yes: 0.57,
+      no: 0.003,
+      volume: 176.37,
+      liquidity: 176.37,
+      source: "pulse_seed",
+      createdBy: null,
+      metadata: { source: "pulse_seed" },
+    },
+  ]);
+  const service = buildMarketDataService({
+    config: testConfig(),
+    cache: new MemoryCacheStore(false),
+    polymarket: localClient(
+      childMarkets,
+      { ...childMarkets[0], events: [nomineeEvent] },
+      [nomineeEvent],
+    ),
+    priceHistoryRepository,
+    marketActivityRepository: {
+      listComments: async () => [],
+      createComment: async () => {
+        throw new Error("not used");
+      },
+      listTopHolders: async () => [],
+      listPositions: async () => [],
+      listTrades: async (marketId: string) =>
+        marketId === "newsom"
+          ? [
+              {
+                id: "tiny-local-trade",
+                marketId,
+                userId: "user-1",
+                displayName: "Local Trader",
+                side: "yes",
+                action: "buy",
+                amount: 176.37,
+                price: 0.57,
+                shares: 309.42,
+                createdAt: "2026-05-28T00:00:00.000Z",
+              },
+            ]
+          : [],
+    },
+  });
+
+  const result = await service.getMarketDetail("newsom");
+  const history = result.data.history.price_history;
+  const latest = history.at(-1);
+  const latestByName = new Map(
+    (latest?.outcomes ?? []).map((outcome) => [outcome.name, outcome.price]),
+  );
+
+  assert.equal(history.length, 178);
+  assert.equal(result.data.volume, 1_167_968_236);
+  assert.equal(result.data.liquidity, 44_000_000);
+  assert.equal(latestByName.get("Gavin Newsom"), 0.241);
+  assert.equal(latestByName.get("Alexandria Ocasio-Cortez"), 0.104);
+  assert.equal(latestByName.get("Kamala Harris"), 0.082);
+  assert.equal(latestByName.get("Jon Ossoff"), 0.055);
 });
 
 test("normalizes event-backed markets with event tags, media, and 24h volume", async () => {

@@ -6,8 +6,8 @@ import {
   ChevronDown,
   ChevronRight,
   CheckCircle2,
-  Clock3,
   Code2,
+  ExternalLink,
   Info,
   Link2,
   MessageCircle,
@@ -56,6 +56,7 @@ import { MarketActivitySkeleton } from "./MarketSkeleton";
 type GroupMarket = NonNullable<Market["group_markets"]>[number];
 type DetailTab = "rules" | "context";
 type ActivityTab = "comments" | "holders" | "positions" | "activity";
+type MarketTradeActivityItem = Extract<MarketActivityItem, { type: "trade" }>;
 type OrderType = "market" | "limit";
 type MarketFaqItem = {
   id: string;
@@ -247,6 +248,17 @@ export function MarketDetail({
     (action === "buy"
       ? estimatedCost <= portfolio.wallet.balance
       : estimatedShares <= selectedSideShares);
+  const activityMarketIds =
+    groupMarkets.length > 1
+      ? [...new Set([...groupMarkets.map((groupMarket) => groupMarket.id), market.id])]
+      : [market.id];
+  const activityMarketIdsKey = activityMarketIds.join(",");
+  const activityMarketLabels: Record<string, string> = Object.fromEntries(
+    [
+      ...groupMarkets.map((groupMarket) => [groupMarket.id, groupMarket.label] as const),
+      [tradeMarket.id, selectedVariantLabel] as const,
+    ],
+  );
 
   React.useEffect(() => {
     setMarket(initialMarket);
@@ -270,7 +282,7 @@ export function MarketDetail({
     const controller = new AbortController();
 
     setMarketActivityStatus("loading");
-    loadMarketActivity(tradeMarket.id, controller.signal)
+    loadMarketActivity(market.id, controller.signal, activityMarketIds)
       .then((activity) => {
         if (!cancelled) {
           setMarketActivity(activity);
@@ -292,7 +304,7 @@ export function MarketDetail({
       cancelled = true;
       controller.abort();
     };
-  }, [tradeMarket.id]);
+  }, [activityMarketIdsKey, market.id]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -579,17 +591,19 @@ export function MarketDetail({
 	    const ticketPrimaryLabel = isGroupedEvent
 	      ? selectedVariantDisplayLabel
 	      : formatEnglishDate(market.dates?.ends_at ?? market.ends_at) ?? selectedOutcomeLabel;
-	    const tradeButtonLabel = !canTrade
-	      ? "Verify account"
-	      : isPlacingTrade
-	        ? "Placing..."
-	        : "Place trade";
+	    const actionLabel = action === "buy" ? "Buy" : "Sell";
+	    const sideLabel = side === "yes" ? "Yes" : "No";
+	    const tradeButtonLabel = isPlacingTrade
+	      ? "Placing..."
+	      : orderType === "limit"
+	        ? `Place ${actionLabel.toLowerCase()} order`
+	        : `${actionLabel} ${sideLabel}`;
 
     return (
       <>
-        <div className="flex h-full w-full flex-col gap-5 overflow-visible rounded-xl border border-[#e6e8ea] bg-white px-4 py-4 shadow-[0_8px_16px_rgba(0,0,0,0.04)]">
-          <div className="flex w-full flex-col gap-5">
-            <div className="flex w-full items-center gap-3">
+        <div className="market-trade-ticket flex h-full w-full flex-col overflow-hidden rounded-[22px] border border-[#e6e8ea] bg-white shadow-none">
+          <div className="flex w-full flex-col">
+            <div className="flex w-full items-center gap-3 px-4 pb-4 pt-5">
               <MarketImage market={tradeMarket} className="h-12 w-12 min-w-12 rounded-[7px]" />
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm font-medium text-[#77808d]">{tradeMarketDisplayTitle}</span>
@@ -603,35 +617,35 @@ export function MarketDetail({
               </div>
             </div>
 
-            <div className="-ml-4 flex w-[calc(100%+32px)] items-end justify-between border-b border-[#e6e8ea] px-4 pb-0">
-              <div className="flex gap-4 text-base font-semibold">
+            <div className="flex w-full items-end justify-between border-b border-[#e6e8ea] px-4 pb-0">
+              <div className="flex gap-4 text-[18px] font-semibold leading-none">
                 <button
-                  className={`relative bg-transparent pb-3 ${
+                  className={`relative bg-transparent pb-4 ${
                     action === "buy" ? "text-[#0e0f11]" : "text-[#77808d] hover:text-[#4b5563]"
                   }`}
                   onClick={() => changeAction("buy")}
                   type="button"
                 >
-	                  Buy
+                  Buy
                   {action === "buy" ? (
-                    <span className="absolute bottom-0 left-0 h-0.5 w-full bg-[#0e0f11]" />
+                    <span className="absolute bottom-0 left-0 h-[3px] w-full bg-[#0e0f11]" />
                   ) : null}
                 </button>
                 <button
-                  className={`relative bg-transparent pb-3 ${
+                  className={`relative bg-transparent pb-4 ${
                     action === "sell" ? "text-[#0e0f11]" : "text-[#77808d] hover:text-[#4b5563]"
                   }`}
                   onClick={() => changeAction("sell")}
                   type="button"
                 >
-	                  Sell
+                  Sell
                   {action === "sell" ? (
-                    <span className="absolute bottom-0 left-0 h-0.5 w-full bg-[#0e0f11]" />
+                    <span className="absolute bottom-0 left-0 h-[3px] w-full bg-[#0e0f11]" />
                   ) : null}
                 </button>
               </div>
               <button
-                className="flex w-[90px] items-center justify-end gap-1 pb-3 text-sm font-medium capitalize text-[#0e0f11] transition hover:text-[#4b5563]"
+                className="flex w-[90px] items-center justify-end gap-1 pb-4 text-[17px] font-semibold capitalize text-[#0e0f11] transition hover:text-[#4b5563]"
                 onClick={toggleOrderType}
                 type="button"
               >
@@ -644,10 +658,10 @@ export function MarketDetail({
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-5">
+          <div className="flex w-full flex-col gap-5 px-4 py-5">
             <div className="grid w-full grid-cols-2 gap-3">
               <button
-                className={`h-12 min-w-0 rounded-[7.2px] px-3 text-base font-semibold transition ${
+                className={`h-16 min-w-0 rounded-[14px] px-3 text-[20px] font-semibold transition ${
                   side === "yes"
                     ? "bg-[#30a159] text-white shadow-[0_4px_0_rgba(24,126,63,0.95)]"
                     : "bg-[#f4f5f6] text-[#77808d] shadow-[0_4px_0_rgba(0,0,0,0.18)] hover:text-[#0e0f11]"
@@ -658,7 +672,7 @@ export function MarketDetail({
 	                <span className="block truncate">Yes {formatCents(yesDisplayPrice)}</span>
               </button>
               <button
-                className={`h-12 min-w-0 rounded-[7.2px] px-3 text-base font-semibold transition ${
+                className={`h-16 min-w-0 rounded-[14px] px-3 text-[20px] font-semibold transition ${
                   side === "no"
                     ? "bg-[#e23939] text-white shadow-[0_4px_0_rgba(168,30,30,0.95)]"
                     : "bg-[#f4f5f6] text-[#77808d] shadow-[0_4px_0_rgba(0,0,0,0.18)] hover:text-[#0e0f11]"
@@ -705,7 +719,7 @@ export function MarketDetail({
                   </div>
                 </div>
 
-                <div className="-ml-4 h-px w-[calc(100%+32px)] bg-[#e6e8ea]" />
+                <div className="-mx-4 h-px bg-[#e6e8ea]" />
 
                 <div className="flex w-full flex-col gap-2">
                   <div className="flex w-full items-center">
@@ -753,7 +767,7 @@ export function MarketDetail({
                   <div className="h-6" />
                 </div>
 
-                <div className="-ml-4 h-px w-[calc(100%+32px)] bg-[#e6e8ea]" />
+                <div className="-mx-4 h-px bg-[#e6e8ea]" />
 
                 <div className="grid gap-3">
                   <div className="flex items-center justify-between gap-4">
@@ -792,14 +806,19 @@ export function MarketDetail({
               </>
             ) : (
               <>
-                <div className="mt-4 flex min-h-[112px] items-center justify-between gap-4">
+                <div className="mt-2 flex min-h-[132px] items-center justify-between gap-4">
                   <div className="min-w-0">
                     <span className="block text-[22px] font-medium text-[#0e0f11]">
 	                      {action === "buy" ? "Amount" : "Shares"}
                     </span>
+                    {action === "buy" ? (
+                      <span className="mt-1 block text-sm font-semibold text-[#77808d]">
+                        {formatUsd(portfolio.wallet.balance)} available
+                      </span>
+                    ) : null}
                   </div>
                   <input
-                    className="min-w-0 flex-1 bg-transparent text-right text-[64px] font-semibold leading-none text-[#a6adb7] outline-none"
+                    className="min-w-0 flex-1 bg-transparent text-right text-[72px] font-semibold leading-none text-[#697d91] outline-none"
                     inputMode="decimal"
                     onChange={(event) => setAmount(event.target.value.replace(/^\$/, ""))}
                     placeholder={usesShareInput ? "0" : "$0"}
@@ -811,7 +830,7 @@ export function MarketDetail({
                   {action === "sell" ? (
                     [0.25, 0.5, 0.75].map((value) => (
                       <button
-                        className="h-8 rounded-md border border-[#e6e8ea] bg-white px-3 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
+                        className="h-10 rounded-[12px] border border-transparent bg-[#f4f5f6] px-4 text-base font-semibold text-[#77808d] transition hover:bg-[#eef1f4] hover:text-[#0e0f11]"
                         key={value}
                         onClick={() => setSellSharePercent(value)}
                         type="button"
@@ -822,7 +841,7 @@ export function MarketDetail({
                   ) : (
                     [1, 5, 10, 100].map((value) => (
                       <button
-                        className="h-8 rounded-md border border-[#e6e8ea] bg-white px-3 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
+                        className="h-10 rounded-[12px] border border-transparent bg-[#f4f5f6] px-4 text-base font-semibold text-[#77808d] transition hover:bg-[#eef1f4] hover:text-[#0e0f11]"
                         key={value}
                         onClick={() => addQuickAmount(value)}
                         type="button"
@@ -832,7 +851,7 @@ export function MarketDetail({
                     ))
                   )}
                   <button
-                    className="h-8 rounded-md border border-[#e6e8ea] bg-white px-3 text-sm font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
+                    className="h-10 rounded-[12px] border border-transparent bg-[#f4f5f6] px-4 text-base font-semibold text-[#77808d] transition hover:bg-[#eef1f4] hover:text-[#0e0f11]"
                     onClick={setMaxAmount}
                     type="button"
                   >
@@ -842,15 +861,9 @@ export function MarketDetail({
               </>
             )}
 
-            <QuotePreview
-              error={quoteError}
-              quote={quote}
-              status={quoteStatus}
-            />
-
             <button
-              className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-[7.2px] bg-[#1f55f5] px-5 text-base font-semibold text-white shadow-[0_4px_0_#0d3dc9] transition hover:bg-[#1648df] disabled:opacity-50"
-              disabled={canTrade && !canPlaceTrade}
+              className="mt-1 flex h-16 w-full items-center justify-center gap-2 rounded-[14px] bg-[#0093fd] px-5 text-[18px] font-semibold text-white shadow-[0_7px_0_#0879c8] transition hover:bg-[#1a9cff] active:translate-y-[2px] active:shadow-[0_4px_0_#0879c8] disabled:cursor-wait disabled:opacity-90"
+              disabled={isPlacingTrade}
               onClick={() => {
                 if (canTrade) {
                   void placeTrade();
@@ -959,29 +972,21 @@ export function MarketDetail({
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-4 border-b border-[#e6e8ea] pb-4 pt-2 text-[14px] font-medium tracking-[-0.09px] text-[#77808d]">
-              <div className="flex min-w-0 items-center gap-2.5">
-		                <span className="whitespace-nowrap text-[#0e0f11]">{formatMoney(market.volume_detail?.volume ?? market.volume)} Volume</span>
-                <span className="h-1 w-1 shrink-0 rounded-full bg-[#a6adb7]" />
-                <Clock3 className="shrink-0" size={12} />
-                <span className="whitespace-nowrap">{formatDate(marketEndDate)}</span>
-              </div>
-            </div>
-
             <MarketChart
+              endsAt={marketEndDate}
               outcomes={displayOutcomes}
               history={market.history}
               selectedOutcomeName={selectedVariantLabel}
             />
 
-            <div className="clear-both divide-y divide-[#e6e8ea]">
+            <div className="market-detail-outcome-list clear-both">
               {visibleGroupMarkets.map((groupMarket) => {
                 const isSelected = groupMarket.id === tradeMarket.id;
                 const change = getGroupMarketPriceChange(market, groupMarket);
 
                 return (
                   <div
-                    className="group relative grid min-w-0 gap-3 py-3 transition md:min-h-[72px] md:grid-cols-[minmax(0,1fr)_132px_280px] md:items-center"
+                    className="market-detail-outcome-row group relative grid min-w-0 gap-3 py-3 transition md:min-h-[72px] md:grid-cols-[minmax(0,1fr)_132px_280px] md:items-center"
                     key={groupMarket.id}
                   >
                     <button
@@ -1079,6 +1084,7 @@ export function MarketDetail({
 
             <MarketActivityTabs
               activeTab={activityTab}
+              activityMarketLabels={activityMarketLabels}
               commentText={commentText}
               currentPosition={currentPosition}
               data={marketActivity}
@@ -1196,13 +1202,17 @@ export function MarketDetail({
             </span>
           </div>
 
-          <MarketChart outcomes={displayOutcomes} history={market.history} />
+          <MarketChart
+            endsAt={market.dates?.ends_at ?? market.ends_at}
+            outcomes={displayOutcomes}
+            history={market.history}
+          />
 
-          <div className="mt-4 grid gap-0 divide-y divide-[#e6e8ea]">
+          <div className="market-detail-outcome-list mt-4 grid gap-0">
             {isGroupedEvent ? groupMarkets.map((groupMarket) => {
               return (
                 <div
-                  className="grid min-w-0 gap-3 py-4 transition md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center"
+                  className="market-detail-outcome-row grid min-w-0 gap-3 py-4 transition md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center"
                   key={groupMarket.id}
                 >
                   <div className="flex min-w-0 items-center gap-3">
@@ -1323,6 +1333,7 @@ export function MarketDetail({
 
           <MarketActivityTabs
             activeTab={activityTab}
+            activityMarketLabels={activityMarketLabels}
             commentText={commentText}
             currentPosition={currentPosition}
             data={marketActivity}
@@ -1710,7 +1721,7 @@ function MarketFaqSection({
       <h2 className="mb-3 text-[20px] font-semibold leading-tight text-[#0e0f11] sm:text-[22px]">
         Frequently Asked Questions
       </h2>
-      <div className="divide-y divide-[#e6e8ea] border-b border-[#e6e8ea]">
+      <div className="market-detail-faq-list">
         {items.map((item) => {
           const isOpen = item.id === openItemId;
           const answerId = `market-faq-answer-${item.id}`;
@@ -1759,17 +1770,20 @@ function MarketFaqSection({
 
 function MarketActivityTabs({
   activeTab,
+  activityMarketLabels,
   commentText,
   currentPosition,
   data,
   framed = false,
   isLoading,
   isPostingComment,
+  market,
   onCommentTextChange,
   onPostComment,
   onTabChange,
 }: {
   activeTab: ActivityTab;
+  activityMarketLabels: Record<string, string>;
   commentText: string;
   currentPosition: LocalPosition | undefined;
   data: MarketActivityPayload;
@@ -1782,10 +1796,18 @@ function MarketActivityTabs({
   onTabChange: (tab: ActivityTab) => void;
 }) {
   const wrapperClass = framed ? `${panel} mt-6 p-5` : "mt-12";
+  const activityTrades = data.activity.filter(
+    (item): item is MarketTradeActivityItem => item.type === "trade",
+  );
   const tabs: Array<{ id: ActivityTab; label: string }> = [
     {
       id: "comments",
-      label: data.comments.length > 0 ? `Comments (${data.comments.length})` : "Comments",
+      label:
+        market.comment_count && market.comment_count > 0
+          ? `Comments (${market.comment_count})`
+          : data.comments.length > 0
+            ? `Comments (${data.comments.length})`
+            : "Comments",
     },
     { id: "holders", label: "Top Holders" },
     { id: "positions", label: "Positions" },
@@ -1794,10 +1816,14 @@ function MarketActivityTabs({
 
   return (
     <section className={wrapperClass}>
-      <div className="flex flex-wrap gap-5 text-base font-semibold">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-[18px] font-bold sm:text-[19px]">
         {tabs.map((tab) => (
-          <button
-            className={activeTab === tab.id ? activeTextTabClass : inactiveTextTabClass}
+	          <button
+	            className={
+	              activeTab === tab.id
+	                ? "text-[#dee3e7] outline-none focus-visible:outline-none"
+	                : "text-[#8794a1] outline-none transition hover:text-[#c8d0d8] focus-visible:outline-none"
+	            }
             key={tab.id}
             onClick={() => onTabChange(tab.id)}
             type="button"
@@ -1835,7 +1861,23 @@ function MarketActivityTabs({
         </div>
       ) : null}
 
-      <div className="mt-5">
+      {activeTab === "activity" ? (
+        <div className="mb-2 mt-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <ActivityFilterButton label="All" />
+            <ActivityFilterButton label="Min. Amount" />
+          </div>
+          <div className="flex items-center gap-2.5 text-sm font-semibold text-[#e23939]">
+            <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#e23939] opacity-85 [animation-duration:1.2s]" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#e23939]" />
+            </span>
+            Online
+          </div>
+        </div>
+      ) : null}
+
+      <div className={activeTab === "activity" ? "mt-0" : "mt-5"}>
         {isLoading ? (
           <MarketActivitySkeleton rows={activeTab === "comments" ? 3 : 4} />
         ) : null}
@@ -1884,10 +1926,15 @@ function MarketActivityTabs({
         ) : null}
 
         {!isLoading && activeTab === "activity" ? (
-          data.activity.length > 0 ? (
-            <div className="grid gap-3">
-              {data.activity.slice(0, 12).map((item) => (
-                <ActivityRow item={item} key={`${item.type}-${item.id}`} />
+          activityTrades.length > 0 ? (
+            <div className="w-full">
+              {activityTrades.slice(0, 40).map((item) => (
+                <ActivityRow
+                  activityMarketLabels={activityMarketLabels}
+                  item={item}
+                  market={market}
+                  key={`${item.type}-${item.id}`}
+                />
               ))}
             </div>
           ) : (
@@ -1967,38 +2014,170 @@ function PositionRow({ position }: { position: MarketPublicPosition }) {
   );
 }
 
-function ActivityRow({ item }: { item: MarketActivityItem }) {
-  if (item.type === "comment") {
-    return (
-      <div className="grid gap-2 rounded-xl border border-[#e6e8ea] bg-white p-3 text-sm">
-        <div className="flex items-center justify-between gap-3">
-          <strong className="font-semibold text-[#0e0f11]">{item.displayName} commented</strong>
-          <span className="font-semibold text-[#77808d]">{formatRelativeTime(item.createdAt)}</span>
-        </div>
-        <p className="break-words text-[#77808d]">{item.body}</p>
-      </div>
-    );
-  }
+function ActivityFilterButton({ label }: { label: string }) {
+  return (
+    <button
+      aria-label={label}
+      className="group inline-flex h-10 w-fit shrink-0 items-center gap-2 rounded-full bg-[var(--pm-surface-2)] px-4 text-sm font-semibold text-[var(--pm-text-primary)] transition duration-150 active:scale-[0.97] hover:bg-[var(--pm-surface-3)]"
+      type="button"
+    >
+      {label}
+      <ChevronDown className="transition-transform duration-200 group-data-[state=open]:rotate-180" size={12} />
+    </button>
+  );
+}
+
+function ActivityRow({
+  activityMarketLabels,
+  item,
+  market,
+}: {
+  activityMarketLabels: Record<string, string>;
+  item: MarketTradeActivityItem;
+  market: Market;
+}) {
+  const sideLabel = item.side === "yes" ? "Yes" : "No";
+  const sideClass = item.side === "yes" ? "text-[#30a159]" : "text-[#e23939]";
+  const outcomeLabel = getActivityOutcomeLabel(market, item, activityMarketLabels);
+  const actionLabel = item.action === "sell" ? "sold" : "bought";
 
   return (
-    <div className="grid gap-2 rounded-xl border border-[#e6e8ea] bg-white p-3 text-sm">
-      <div className="flex items-center justify-between gap-3">
-        <strong className="font-semibold text-[#0e0f11]">
-          {item.displayName} {item.action === "sell" ? "sold" : "bought"}{" "}
-          {item.side === "yes" ? "Yes" : "No"}
-        </strong>
-        <span className="font-semibold text-[#77808d]">{formatRelativeTime(item.createdAt)}</span>
+    <div className="flex min-h-[60px] w-full min-w-0 items-center border-b border-[var(--pm-border)] py-2">
+      <ActivityAvatar seed={`${item.userId}:${item.displayName}`} label={item.displayName} />
+      <div className="ml-2 flex min-w-0 flex-1 items-center">
+        <div className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-[var(--pm-text-primary)]">
+          <strong className="font-semibold text-[var(--pm-text-primary)]">
+            {truncateActivityName(item.displayName)}
+          </strong>{" "}
+          <span>{actionLabel}</span>{" "}
+          <strong className={`font-semibold ${sideClass}`}>
+            {formatActivityShares(item.shares)} {sideLabel}
+          </strong>{" "}
+          <span>for</span>{" "}
+          <strong className="font-semibold text-[var(--pm-text-primary)]">{outcomeLabel}</strong>{" "}
+          <span>at {formatActivityCents(item.price)}</span>{" "}
+          <span className="text-[var(--pm-text-secondary)]">({formatActivityMoney(item.amount)})</span>
+        </div>
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <strong className="font-semibold text-[#0e0f11]">
-          {formatShares(item.shares)} shares
-        </strong>
-        <span className="font-semibold text-[#77808d]">
-          {formatUsdt(item.amount)} @ {formatPercent(item.price)}
-        </span>
+      <div className="ml-2 flex shrink-0 items-center gap-2 text-sm font-medium text-[var(--pm-text-secondary)]">
+        <span className="whitespace-nowrap">{formatActivityRelativeTime(item.createdAt)}</span>
+        <button
+          aria-label="Open activity"
+          className="flex items-center text-[var(--pm-text-secondary)] transition hover:text-[var(--pm-text-primary)]"
+          type="button"
+        >
+          <ExternalLink size={12} />
+        </button>
       </div>
     </div>
   );
+}
+
+function ActivityAvatar({ seed, label }: { seed: string; label: string }) {
+  const palette = getActivityAvatarPalette(seed);
+
+  return (
+    <span
+      aria-hidden="true"
+      className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full text-xs font-black uppercase text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
+      style={{
+        background:
+          `radial-gradient(circle at 34% 28%, ${palette[0]} 0, transparent 34%), ` +
+          `radial-gradient(circle at 72% 70%, ${palette[1]} 0, transparent 42%), ` +
+          `linear-gradient(135deg, ${palette[2]}, ${palette[3]})`,
+      }}
+    >
+      {label.trim().slice(0, 1)}
+    </span>
+  );
+}
+
+function getActivityOutcomeLabel(
+  market: Market,
+  item: MarketTradeActivityItem,
+  activityMarketLabels: Record<string, string>,
+) {
+  return formatMarketText(
+    activityMarketLabels[item.marketId] ||
+      market.groupItemTitle ||
+      market.event_title ||
+      market.title ||
+      "this market",
+  );
+}
+
+function truncateActivityName(value: string) {
+  const trimmed = value.trim() || "Trader";
+
+  if (trimmed.length <= 18) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, 15)}...`;
+}
+
+function formatActivityShares(value: number) {
+  return new Intl.NumberFormat("en", {
+    maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value);
+}
+
+function formatActivityCents(value: number) {
+  return `${(value * 100).toFixed(1)}¢`;
+}
+
+function formatActivityMoney(value: number) {
+  return `$${new Intl.NumberFormat("en", { maximumFractionDigits: 0 }).format(value)}`;
+}
+
+function formatActivityRelativeTime(value: string) {
+  const timestamp = Date.parse(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return "just now";
+  }
+
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+
+  if (elapsedSeconds < 60) {
+    return `${elapsedSeconds}s ago`;
+  }
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) {
+    return `${elapsedMinutes}m ago`;
+  }
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) {
+    return `${elapsedHours}h ago`;
+  }
+
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  return `${elapsedDays}d ago`;
+}
+
+function getActivityAvatarPalette(seed: string) {
+  const palettes = [
+    ["#9b5cf6", "#17c964", "#232a50", "#0d3b35"],
+    ["#22c55e", "#f97316", "#0f766e", "#6d28d9"],
+    ["#f97316", "#f9d36a", "#111827", "#7c2d12"],
+    ["#f472b6", "#86efac", "#64748b", "#f5d0fe"],
+    ["#84cc16", "#22d3ee", "#166534", "#65a30d"],
+    ["#60a5fa", "#f43f5e", "#1e3a8a", "#0f172a"],
+  ];
+  const index = hashString(seed) % palettes.length;
+  return palettes[index] ?? palettes[0];
+}
+
+function hashString(value: string) {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+
+  return hash;
 }
 
 function EmptyActivityState({ text }: { text: string }) {

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  buildChartYAxisScale,
   buildChartSeries,
   buildCurrentPriceHistory,
   downsampleHistory,
   filterPriceHistoryByRange,
+  type ChartSeries,
   type ChartHistoryPoint,
 } from "./marketChart";
 import type { Outcome } from "./types";
@@ -19,6 +21,27 @@ function point(hoursAgo: number, yes: number, no = 1 - yes): ChartHistoryPoint {
     volume: 1000,
     liquidity: 100,
   };
+}
+
+function seriesWithValues(values: number[]): ChartSeries[] {
+  return seriesGroupWithValues([values]);
+}
+
+function seriesGroupWithValues(seriesValues: number[][]): ChartSeries[] {
+  return seriesValues.map((values, seriesIndex) => ({
+    key: `candidate-${seriesIndex}`,
+    label: `Candidate ${seriesIndex + 1}`,
+    color: "#87BFFF",
+    latest: values.at(-1) ?? null,
+    path: "",
+    points: values.map((value, index) => ({
+      timestamp: new Date(nowMs + index * 60_000).toISOString(),
+      timestampMs: nowMs + index * 60_000,
+      value,
+      x: index,
+      y: 0,
+    })),
+  }));
 }
 
 describe("market chart helpers", () => {
@@ -44,6 +67,8 @@ describe("market chart helpers", () => {
     assert.equal(series[0]?.latest, 0.62);
     assert.equal(series[1]?.latest, 0.38);
     assert.match(series[0]?.path ?? "", /^M\d/);
+    assert.equal((series[0]?.path ?? "").includes("C"), false);
+    assert.equal((series[0]?.path ?? "").includes("L"), true);
   });
 
   it("filters visible chart points by selected range", () => {
@@ -125,7 +150,7 @@ describe("market chart helpers", () => {
     assert.equal(series.every((item) => item.points.length === fallbackHistory.length), true);
   });
 
-  it("keeps the selected multi-outcome visible when it is outside the top series", () => {
+  it("limits multi-outcome chart lines to the four most likely outcomes", () => {
     const outcomes: Outcome[] = [
       { name: "Candidate A", price: 0.5, clobTokenId: null },
       { name: "Candidate B", price: 0.2, clobTokenId: null },
@@ -154,7 +179,7 @@ describe("market chart helpers", () => {
 
     assert.deepEqual(
       series.map((item) => item.label),
-      ["Candidate A", "Candidate B", "Candidate C", "Candidate D", "Candidate F"],
+      ["Candidate A", "Candidate B", "Candidate C", "Candidate D"],
     );
   });
 
@@ -199,5 +224,50 @@ describe("market chart helpers", () => {
     assert.equal(recentSampled.length <= 3, true);
     assert.equal(sampled[0], history[0]);
     assert.equal(sampled.at(-1), history.at(-1));
+  });
+
+  it("builds y-axis scale from visible data instead of forcing a full probability range", () => {
+    const scale = buildChartYAxisScale(seriesWithValues([0.002, 0.058, 0.097, 0.34]), 6);
+
+    assert.deepEqual(scale.ticks, [0, 0.076, 0.152, 0.228, 0.304, 0.38]);
+    assert.equal(scale.min, 0);
+    assert.equal(scale.max, 0.38);
+  });
+
+  it("does not pin y-axis to zero when visible data sits well above zero", () => {
+    const scale = buildChartYAxisScale(seriesWithValues([0.24, 0.28, 0.31, 0.34]), 6);
+
+    assert.equal(scale.min > 0, true);
+    assert.equal(scale.max <= 0.4, true);
+    assert.equal(scale.ticks.includes(0), false);
+  });
+
+  it("keeps old dominant spikes in range by compressing the y-axis", () => {
+    const scale = buildChartYAxisScale(
+      seriesGroupWithValues([
+        [0.48, 0.55, 0.34],
+        [0.08, 0.097, 0.12],
+        [0.06, 0.082],
+        [0.04, 0.058],
+        [0.001, 0.002],
+      ]),
+      6,
+    );
+
+    assert.equal(scale.max >= 0.55, true);
+    assert.equal(scale.max < 0.7, true);
+  });
+
+  it("keeps the absolute maximum for binary charts", () => {
+    const scale = buildChartYAxisScale(
+      seriesGroupWithValues([
+        [0.48, 0.55],
+        [0.45, 0.52],
+      ]),
+      6,
+    );
+
+    assert.equal(scale.max >= 0.55, true);
+    assert.equal(scale.max < 0.7, true);
   });
 });

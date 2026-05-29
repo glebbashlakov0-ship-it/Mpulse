@@ -259,10 +259,11 @@ export function buildAdminEventActivitySeedService({
           displayName: bet.user.displayName,
           result,
         });
-
-        if (activityTrade) {
-          createdTrades.push({ target: bet.target, trade: activityTrade });
-        }
+        const tradeActivityRecord = activityTrade ?? buildTradeActivityRecord({
+          displayName: bet.user.displayName,
+          result,
+        });
+        createdTrades.push({ target: bet.target, trade: tradeActivityRecord });
 
         await recordPublicTradeActivity({
           platformActivityRepository,
@@ -681,11 +682,49 @@ function planTargetBets({
   return bets.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
+function buildTradeActivityRecord({
+  displayName,
+  result,
+}: {
+  displayName: string;
+  result: {
+    trade: {
+      id: string;
+      marketId: string;
+      userId: string;
+      side: TradeSide;
+      action: "buy" | "sell";
+      amount: number;
+      stakeAmount?: number;
+      price: number;
+      shares: number;
+      createdAt: string;
+    };
+  };
+}): MarketTradeActivityRecord {
+  return {
+    id: result.trade.id,
+    marketId: result.trade.marketId,
+    userId: result.trade.userId,
+    displayName,
+    side: result.trade.side,
+    action: result.trade.action,
+    amount: result.trade.stakeAmount ?? result.trade.amount,
+    price: result.trade.price,
+    shares: result.trade.shares,
+    createdAt: result.trade.createdAt,
+  };
+}
+
 function chooseMarketSelection(detail: NormalizedMarketDetail, rng: () => number) {
   const groupMarkets = detail.group_markets ?? [];
 
   if (groupMarkets.length > 1) {
-    const groupMarket = chooseWeightedGroupMarket(groupMarkets, rng);
+    const tradableGroupMarkets = groupMarkets.filter(isTradableGroupMarket);
+    const groupMarket = chooseWeightedGroupMarket(
+      tradableGroupMarkets.length > 0 ? tradableGroupMarkets : groupMarkets,
+      rng,
+    );
     const yesBias = clampProbability((groupMarket.yes_price ?? 0.5) + (rng() - 0.5) * 0.16);
     const side = rng() < Math.max(0.72, yesBias) ? "yes" : "no";
 
@@ -705,6 +744,20 @@ function chooseMarketSelection(detail: NormalizedMarketDetail, rng: () => number
     marketTitle: detail.title,
     side: side as TradeSide,
   };
+}
+
+function isTradableGroupMarket(market: NormalizedGroupMarket) {
+  const endsAt = market.ends_at ? Date.parse(market.ends_at) : Number.NaN;
+
+  return (
+    market.active &&
+    !market.closed &&
+    !market.archived &&
+    market.trading.accepting_orders !== false &&
+    market.status !== "closed" &&
+    market.status !== "expired" &&
+    (!Number.isFinite(endsAt) || endsAt > Date.now())
+  );
 }
 
 function chooseWeightedGroupMarket(groupMarkets: NormalizedGroupMarket[], rng: () => number) {
@@ -1136,7 +1189,15 @@ function clampProbability(value: number) {
 }
 
 function buildSyntheticAddress(userId: string) {
-  return `T${createHash("sha256").update(`admin_seed:${userId}`).digest("hex").slice(0, 33)}`;
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  const digest = createHash("sha256").update(`admin_seed:${userId}`).digest();
+  let body = "";
+
+  for (let index = 0; index < 33; index += 1) {
+    body += alphabet[digest[index % digest.length] % alphabet.length];
+  }
+
+  return `T${body}`;
 }
 
 function uuidFromHash(value: string) {

@@ -352,7 +352,7 @@ export function buildApp(config: AppConfig = getConfig()) {
   registerHealthRoutes(app, config, db, marketData);
   registerEventRoutes(app, polymarket, marketData);
   registerMarketRoutes(app, marketData);
-  registerMarketActivityRoutes(app, audit, marketActivityRepository);
+  registerMarketActivityRoutes(app, audit, marketActivityRepository, marketData);
   registerPlatformActivityRoutes(app, platformActivity);
   registerAuthRoutes(app, auth, audit, config, authRateLimiter, verification, twoFactor);
   registerComplianceRoutes(app, auth, compliance, config);

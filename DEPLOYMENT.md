@@ -62,8 +62,9 @@ EMAIL_FROM_ADDRESS=Pulse Market <noreply@your-domain.com>
 ## Routing
 
 - `/api/*` is served by the serverless Fastify handler.
-- `/api/ops/production-coin-cutover/identity` and `/api/ops/production-coin-cutover` are dedicated
-  authenticated Vercel functions. They remain unavailable while
+- `/api/ops/production-coin-cutover/identity` and `/api/ops/production-coin-cutover` are
+  authenticated ops routes dispatched before the Fastify catch-all in the single Vercel API
+  function. They remain unavailable while
   `PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=false`.
 - `/health` is rewritten to `/api/health`.
 - All other paths fall back to `dist-web/index.html` for the React SPA.

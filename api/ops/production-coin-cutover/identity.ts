@@ -56,7 +56,11 @@ export default async function handler(
       },
       error: null,
     });
-  } catch {
+  } catch (error) {
+    console.error(
+      "Production Coin cutover identity resolution failed.",
+      toSafeProductionCoinCutoverError(error),
+    );
     return sendJson(response, 503, {
       data: null,
       error: {

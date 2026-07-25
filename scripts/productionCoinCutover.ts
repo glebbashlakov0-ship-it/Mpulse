@@ -25,9 +25,10 @@ import { runSchemaMigrations } from "../src/schemaMigrations.js";
 
 export const PRODUCTION_COIN_CUTOVER_LOCK =
   "market_pulse:production_coin_cutover";
-export const PRODUCTION_COIN_CUTOVER_MARKER_URL = new URL(
-  "../releases/2026-07-25-coins-v1-production-cutover.json",
-  import.meta.url,
+export const PRODUCTION_COIN_CUTOVER_MARKER_URL = resolve(
+  process.cwd(),
+  "releases",
+  "2026-07-25-coins-v1-production-cutover.json",
 );
 
 type ProductionCoinCutoverResult =

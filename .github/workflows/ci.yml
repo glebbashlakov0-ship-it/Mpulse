@@ -65,6 +65,14 @@ jobs:
       - name: Audit dependencies
         run: npm run security:audit
 
+      - name: Mirror managed PostgreSQL extension schema
+        run: >-
+          psql
+          postgresql://postgres:postgres@127.0.0.1:5432/mpulse_coins_ci_test
+          -v ON_ERROR_STOP=1
+          -c 'create schema if not exists extensions;
+          create extension if not exists pgcrypto with schema extensions;'
+
       - name: Apply sparse Coin migration chain
         run: npm run db:migrate
         env:

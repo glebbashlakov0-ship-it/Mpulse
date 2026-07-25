@@ -46,9 +46,10 @@ EXCHANGE_RATE_PROVIDER=coinbase
 
 This enables rate-backed withdrawal quotes, Coin reserve/cancel/reject in `review-only` state, and
 internal simulated Coin-ledger trading. It does not broadcast a withdrawal, submit a CLOB order, or
-enable any outbound custody/execution provider call. Keep `COIN_DEPOSIT_CREDITS_ENABLED=false`; enabling it requires
-the signed Fireblocks webhook provider, webhook gate, USDT TRON contract, and rate provider, and an
-incomplete combination fails startup.
+enable any outbound custody/execution provider call. Keep `COIN_DEPOSIT_CREDITS_ENABLED=false`;
+the current rejected launch artifact makes `true` a startup error even when every signed
+Fireblocks, rate, and contract prerequisite is configured. There is no environment override for
+that decision.
 
 Optional production email settings:
 

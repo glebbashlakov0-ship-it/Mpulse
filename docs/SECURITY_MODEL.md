@@ -57,7 +57,8 @@ cutover fails closed; money state never falls back to memory or the legacy ledge
 - Provider-event ID and chain-transfer coordinates are independently idempotent. Conflicting
   evidence is persisted for `manual_review`; it cannot overwrite a credited/reversing/reversed
   financial state or create a second credit.
-- The server constructs the wallet owner with `allowDepositCredits: false`. Even a valid,
+- The controlling rejected launch artifact makes `COIN_DEPOSIT_CREDITS_ENABLED=true` fail startup
+  and makes the server construct the wallet owner with `allowDepositCredits: false`. Even a valid,
   sufficiently confirmed event becomes `manual_review` with
   `REAL_MONEY_LAUNCH_NOT_APPROVED`; no rate snapshot or Coin credit is created.
 - Withdrawal quotes snapshot the indicative rate and fees. Confirming a quote atomically reserves

@@ -1,3 +1,9 @@
+import {
+  buildRealMoneyLaunchApprovalCapabilities,
+  REAL_MONEY_LAUNCH_APPROVAL_ARTIFACT_NOT_APPROVED,
+  type RealMoneyLaunchApprovalCapabilities,
+} from "./realMoneyLaunchApproval.js";
+
 export const COIN_DEPOSIT_CREDITS_DISABLED =
   "COIN_DEPOSIT_CREDITS_DISABLED" as const;
 export const COIN_DEPOSIT_SIGNED_WEBHOOK_REQUIRED =
@@ -21,6 +27,7 @@ type CoinFeatureGateConfig = {
   realMoneyDepositProvider?: string | null;
   exchangeRateProvider?: string;
   usdtTronContract?: string | null;
+  realMoneyLaunchApproval?: RealMoneyLaunchApprovalCapabilities;
 };
 
 export type CoinFeatureCapabilities = {
@@ -34,6 +41,7 @@ export type CoinFeatureCapabilities = {
       | typeof COIN_DEPOSIT_SIGNED_WEBHOOK_REQUIRED
       | typeof COIN_DEPOSIT_RATE_PROVIDER_REQUIRED
       | typeof COIN_DEPOSIT_CONTRACT_REQUIRED
+      | typeof REAL_MONEY_LAUNCH_APPROVAL_ARTIFACT_NOT_APPROVED
       | null;
   };
   withdrawals: {
@@ -66,15 +74,19 @@ export function buildCoinFeatureCapabilities(
     Boolean(config.exchangeRateProvider) &&
     config.exchangeRateProvider !== "disabled";
   const contractConfigured = Boolean(config.usdtTronContract?.trim());
+  const launchApproval =
+    config.realMoneyLaunchApproval ?? controllingRealMoneyLaunchDenial;
   const depositBlockReason = !depositRequested
     ? COIN_DEPOSIT_CREDITS_DISABLED
-    : !signedWebhookIngestionEnabled
-      ? COIN_DEPOSIT_SIGNED_WEBHOOK_REQUIRED
-      : !rateProviderEnabled
-        ? COIN_DEPOSIT_RATE_PROVIDER_REQUIRED
-        : !contractConfigured
-          ? COIN_DEPOSIT_CONTRACT_REQUIRED
-          : null;
+    : !launchApproval.approved
+      ? REAL_MONEY_LAUNCH_APPROVAL_ARTIFACT_NOT_APPROVED
+      : !signedWebhookIngestionEnabled
+        ? COIN_DEPOSIT_SIGNED_WEBHOOK_REQUIRED
+        : !rateProviderEnabled
+          ? COIN_DEPOSIT_RATE_PROVIDER_REQUIRED
+          : !contractConfigured
+            ? COIN_DEPOSIT_CONTRACT_REQUIRED
+            : null;
 
   const withdrawalRequested = config.coinWithdrawalRequestsEnabled === true;
   const withdrawalBlockReason = !withdrawalRequested
@@ -138,3 +150,9 @@ export function assertCoinFeatureGateConfiguration(
 function normalizeProvider(value: string | null | undefined) {
   return value?.trim().toLowerCase().replace(/\s+/g, "-") ?? "";
 }
+
+const controllingRealMoneyLaunchDenial =
+  buildRealMoneyLaunchApprovalCapabilities({
+    realMoneyLaunchApprovalRef: "docs/real-money-launch-approval.md",
+    realMoneyLaunchApprovalArtifactApproved: false,
+  });

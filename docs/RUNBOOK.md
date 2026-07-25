@@ -4,7 +4,8 @@
 
 Production money movement is **review-only and not approved**.
 
-- Deposit credit, review-only withdrawal request, and internal Coin trading gates default to false.
+- Deposit credit is denied by the controlling rejected launch artifact; review-only withdrawal
+  requests and internal Coin trading remain separate fail-closed gates.
 - Fireblocks integration verifies signed inbound webhooks and stores review evidence; it cannot
   credit Coins while the deposit feature gate is disabled.
 - No public or admin route broadcasts a Fireblocks withdrawal.
@@ -283,7 +284,9 @@ The only supported external asset is configured USDT TRC-20.
 10. At final confirmation, expect `manual_review` with
    `REAL_MONEY_LAUNCH_NOT_APPROVED`, no rate snapshot, and no Coin credit.
 
-Never bypass that result. The server hard-codes `allowDepositCredits: false`.
+Never bypass that result. The rejected launch artifact makes
+`COIN_DEPOSIT_CREDITS_ENABLED=true` fail startup and forces `allowDepositCredits: false`; provider
+configuration cannot override it.
 
 The unsigned legacy webhook returns `410`. Multiple live intents for the same destination, reused
 event identity with different evidence, wrong network/contract/address, invalid net amount, or

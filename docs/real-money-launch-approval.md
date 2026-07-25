@@ -4,7 +4,7 @@
 
 - Money-movement decision: **not approved**
 - Runtime posture: **review-only**
-- Deposit Coin credit: **disabled by default and requires guarded explicit opt-in**
+- Deposit Coin credit: **denied by this controlling artifact**
 - Fireblocks withdrawal broadcast: **not implemented in public/admin routes**
 - Production Coin migration: **implemented for one committed release marker; not deployed here**
 - Deployment in this change: **none**
@@ -14,15 +14,17 @@ This is a denial/status record, not an approval artifact. Mpulse Coins are an in
 unit (`1 Coin = 1 USD`, `1 Coin = 1,000,000` micros), not a blockchain token. The Coin ledger,
 Fireblocks custody, and Polymarket CLOB are separate systems with separate controls.
 
-All Coin feature flags default to false. Deposit credits additionally require the signed Fireblocks
-webhook gate/provider, an exchange-rate provider, and the USDT TRON contract; a partial opt-in fails
-startup. A review-only withdrawal request can reserve Coins and reach `approved_for_review`, but no
-public or admin route initiates a Fireblocks transaction. Explicitly enabled internal Coin trading
-uses simulated local execution and never loads a CLOB runtime. Market cancellation and no-winner
-refunds can return recorded Coin cost basis, but winner redemption credits fail closed until
-authoritative external CLOB funding evidence is persisted and verified. None of these controls may
-be bypassed by database edits, manual ledger inserts, provider environment variables, or UI
-changes.
+All Coin feature flags default to false. This rejected artifact is the controlling deposit-credit
+gate: `COIN_DEPOSIT_CREDITS_ENABLED=true` fails startup and the runtime capability remains false
+even when the signed Fireblocks webhook, exchange-rate provider, and USDT TRON contract are fully
+configured. There is no environment override; a future reviewed code change must wire a new
+explicitly approved artifact. A review-only withdrawal request can reserve Coins and reach
+`approved_for_review`, but no public or admin route initiates a Fireblocks transaction. Explicitly
+enabled internal Coin trading uses simulated local execution and never loads a CLOB runtime.
+Market cancellation and no-winner refunds can return recorded Coin cost basis, but winner
+redemption credits fail closed until authoritative external CLOB funding evidence is persisted and
+verified. None of these controls may be bypassed by database edits, manual ledger inserts, provider
+environment variables, or UI changes.
 
 ## Allowed review scope
 

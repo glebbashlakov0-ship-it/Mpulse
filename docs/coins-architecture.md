@@ -3,8 +3,9 @@
 ## Status and trust boundaries
 
 The Coin cutover is implemented for PostgreSQL-backed application state, but production money
-movement is **review-only and not approved**. The runtime deliberately sets deposit crediting to
-disabled and does not initiate a Fireblocks withdrawal. The only external money-provider
+movement is **review-only and not approved**. The runtime evaluates the controlling rejected launch
+artifact before deposit prerequisites, so deposit crediting cannot be enabled by environment
+configuration. It does not initiate a Fireblocks withdrawal. The only external money-provider
 integration in this focused cutover verifies signed inbound Fireblocks webhooks and ingests their
 review evidence. It cannot credit Coins, and no withdrawal broadcast or real CLOB execution path is
 reachable.
@@ -134,11 +135,11 @@ Only USDT on TRON using the configured `USDT_TRON_CONTRACT` is accepted.
    the newest intent.
 6. A valid event progresses through `detected` / `confirming`. When the confirmation threshold is
    reached, launch policy is checked before any rate or credit.
-7. The server enables crediting only when `COIN_DEPOSIT_CREDITS_ENABLED=true` and the signed
-   Fireblocks webhook, rate provider, and USDT TRON contract prerequisites are all configured.
-   The default false gate also disables deposit-intent creation; partial configuration fails
-   startup instead of exposing an unsafe rail.
-8. In an explicitly enabled runtime, a fresh final rate is required. Unavailable rates use
+7. The controlling rejected launch artifact forces deposit-intent creation and crediting off.
+   `COIN_DEPOSIT_CREDITS_ENABLED=true` fails startup even when the signed Fireblocks webhook, rate
+   provider, and USDT TRON contract prerequisites are complete. A future reviewed code change must
+   wire a new explicitly approved artifact before those prerequisites may enable the rail.
+8. In a future approved runtime, a fresh final rate is required. Unavailable rates use
    `pending_rate`; stale rates use `confirmed_unpriced`. An admin retry is limited to safe,
    fully-confirmed rate failures.
 9. A future allowed credit would atomically store the immutable rate snapshot, append

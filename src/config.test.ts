@@ -254,7 +254,7 @@ test("Coin money features require explicit flags and safe prerequisites", () => 
     () => {
       assert.throws(
         () => getConfig(),
-        /COIN_DEPOSIT_SIGNED_WEBHOOK_REQUIRED/,
+        /REAL_MONEY_LAUNCH_APPROVAL_ARTIFACT_NOT_APPROVED/,
       );
     },
   );
@@ -268,7 +268,10 @@ test("Coin money features require explicit flags and safe prerequisites", () => 
       USDT_TRON_CONTRACT: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
     },
     () => {
-      assert.equal(getConfig().coinDepositCreditsEnabled, true);
+      assert.throws(
+        () => getConfig(),
+        /REAL_MONEY_LAUNCH_APPROVAL_ARTIFACT_NOT_APPROVED/,
+      );
     },
   );
 });

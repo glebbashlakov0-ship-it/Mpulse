@@ -128,6 +128,10 @@ export function toSafeProductionCoinCutoverError(error: unknown) {
         "$1://[redacted]@",
       )
       .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+      .replace(
+        /\b(tenant(?:\/|\s+or\s+)user)\s+[^\s"'`;]+/gi,
+        "$1 [redacted]",
+      )
       .slice(0, 1_000),
   };
 }

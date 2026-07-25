@@ -2,8 +2,8 @@
 
 The application packages as a Vite SPA plus a Node.js serverless API. The Coin cutover in this
 branch is **not approved for production deployment or real-money launch**: there is no production
-balance-migration workflow, deposit crediting is disabled, trading/settlement are production-gated,
-and no Fireblocks broadcast route exists.
+balance-migration workflow and no Fireblocks broadcast route exists. Supported Coin functions are
+separately production-gated and default fail-closed.
 
 ## Vercel Settings
 
@@ -28,10 +28,27 @@ APP_BASE_URL=https://your-domain.vercel.app
 LEDGER_CREDIT_API_ENABLED=false
 WALLET_DEPOSIT_WEBHOOK_ENABLED=false
 ADMIN_MANUAL_DEPOSIT_APPROVAL_ENABLED=false
+COIN_DEPOSIT_CREDITS_ENABLED=false
+COIN_WITHDRAWAL_REQUESTS_ENABLED=false
+COIN_INTERNAL_TRADING_ENABLED=false
 REAL_MONEY_DEPOSIT_PROVIDER=
 EXCHANGE_RATE_PROVIDER=disabled
 COINS_MIGRATION_APPLY=false
 ```
+
+Without Fireblocks or CLOB, the only supported opt-ins are:
+
+```dotenv
+COIN_WITHDRAWAL_REQUESTS_ENABLED=true
+COIN_INTERNAL_TRADING_ENABLED=true
+EXCHANGE_RATE_PROVIDER=coinbase
+```
+
+This enables rate-backed withdrawal quotes, Coin reserve/cancel/reject in `review-only` state, and
+internal simulated Coin-ledger trading. It does not broadcast a withdrawal, submit a CLOB order, or
+enable any outbound custody/execution provider call. Keep `COIN_DEPOSIT_CREDITS_ENABLED=false`; enabling it requires
+the signed Fireblocks webhook provider, webhook gate, USDT TRON contract, and rate provider, and an
+incomplete combination fails startup.
 
 Optional production email settings:
 

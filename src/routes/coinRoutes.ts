@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { AuthError, type AuthService, getAuthContext, requireAuth } from "../auth.js";
 import type { AppConfig } from "../config.js";
 import type { PostgresCoinLedgerRepository } from "../coins.js";
+import { buildCoinFeatureCapabilities } from "../coinFeatureGates.js";
 import {
   SUPPORTED_SETTLEMENT_ASSET,
   SUPPORTED_SETTLEMENT_NETWORK,
@@ -14,6 +15,8 @@ export function registerCoinRoutes(
   config: AppConfig,
   coins: PostgresCoinLedgerRepository | null,
 ) {
+  const features = buildCoinFeatureCapabilities(config);
+
   app.get("/api/money/supported-assets", async () => ({
     data: {
       internalCurrency: {
@@ -29,11 +32,22 @@ export function registerCoinRoutes(
           network: SUPPORTED_SETTLEMENT_NETWORK,
           rail: "TRC-20",
           decimals: USDT_TRC20_DECIMALS,
-          depositEnabled: false,
-          withdrawalEnabled: false,
+          depositEnabled: features.deposits.intentCreationEnabled,
+          withdrawalEnabled: features.withdrawals.requestsEnabled,
           reviewOnly: true,
         },
       ],
+      capabilities: {
+        depositCreditsEnabled: features.deposits.creditsEnabled,
+        depositBlockReason: features.deposits.blockReason,
+        withdrawalRequestsEnabled: features.withdrawals.requestsEnabled,
+        withdrawalBroadcastEnabled: features.withdrawals.broadcastEnabled,
+        withdrawalBlockReason: features.withdrawals.blockReason,
+        internalTradingEnabled: features.trading.internalExecutionEnabled,
+        externalTradingEnabled: features.trading.externalExecutionEnabled,
+        outboundFundsProviderCallsEnabled:
+          features.outboundFundsProviderCallsEnabled,
+      },
     },
   }));
 

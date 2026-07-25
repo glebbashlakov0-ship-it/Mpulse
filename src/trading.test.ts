@@ -864,6 +864,21 @@ test("production deployment context blocks local simulated trading before NODE_E
   );
 });
 
+test("production internal Coin trading requires an explicit opt-in and never enables CLOB execution", () => {
+  const tradingMode = buildTradingMode({
+    appMode: "local",
+    nodeEnv: "production",
+    productionDeployment: true,
+    coinInternalTradingEnabled: true,
+  });
+
+  assert.equal(tradingMode.mode, "local_simulated");
+  assert.equal(tradingMode.localSimulationEnabled, true);
+  assert.equal(tradingMode.orders.simulatedExecutionEnabled, true);
+  assert.equal(tradingMode.realMoneyEnabled, false);
+  assert.equal(tradingMode.orders.realExecutionEnabled, false);
+});
+
 test("verified production real-money trading mode enables real execution readiness", () => {
   const tradingMode = buildTradingMode({
     appMode: "real_money",

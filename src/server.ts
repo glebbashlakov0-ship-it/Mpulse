@@ -67,6 +67,7 @@ import {
   WalletError,
 } from "./wallets.js";
 import { buildCoinWalletService, CoinWalletError } from "./coinWallets.js";
+import { buildCoinFeatureCapabilities } from "./coinFeatureGates.js";
 import {
   buildExchangeRateProvider,
   ExchangeRateError,
@@ -136,6 +137,7 @@ export function buildApp(config: AppConfig = getConfig()) {
   });
   const coins = db.enabled ? new PostgresCoinLedgerRepository(db) : null;
   const exchangeRates = buildExchangeRateProvider(config);
+  const coinFeatures = buildCoinFeatureCapabilities(config);
   const coinWallets = db.enabled
     ? buildCoinWalletService({
         db,
@@ -143,7 +145,7 @@ export function buildApp(config: AppConfig = getConfig()) {
         rateTtlSeconds: config.exchangeRateTtlSeconds,
         requiredConfirmations: config.walletDepositMinConfirmations,
         usdtTronContract: config.usdtTronContract,
-        allowDepositCredits: false,
+        allowDepositCredits: coinFeatures.deposits.creditsEnabled,
       })
     : null;
   const portfolioRepository = db.enabled

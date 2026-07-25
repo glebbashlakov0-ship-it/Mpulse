@@ -4,7 +4,7 @@
 
 - Money-movement decision: **not approved**
 - Runtime posture: **review-only**
-- Deposit Coin credit: **disabled in server construction**
+- Deposit Coin credit: **disabled by default and requires guarded explicit opt-in**
 - Fireblocks withdrawal broadcast: **not implemented in public/admin routes**
 - Production Coin migration: **not implemented**
 - Deployment in this change: **none**
@@ -14,14 +14,15 @@ This is a denial/status record, not an approval artifact. Mpulse Coins are an in
 unit (`1 Coin = 1 USD`, `1 Coin = 1,000,000` micros), not a blockchain token. The Coin ledger,
 Fireblocks custody, and Polymarket CLOB are separate systems with separate controls.
 
-The server constructs the Coin wallet service with `allowDepositCredits: false`. A valid,
-sufficiently confirmed Fireblocks deposit event can be stored for review but cannot create a Coin
-credit. A withdrawal can reserve Coins and reach `approved_for_review`, but no public or admin route
-initiates a Fireblocks transaction. Real venue execution is also unavailable in this focused
-cutover. Market cancellation and no-winner refunds can return recorded Coin cost basis, but winner
-redemption credits fail closed until authoritative external CLOB funding evidence is persisted and
-verified. None of these controls may be bypassed by database edits, manual ledger inserts, provider
-environment variables, or UI changes.
+All Coin feature flags default to false. Deposit credits additionally require the signed Fireblocks
+webhook gate/provider, an exchange-rate provider, and the USDT TRON contract; a partial opt-in fails
+startup. A review-only withdrawal request can reserve Coins and reach `approved_for_review`, but no
+public or admin route initiates a Fireblocks transaction. Explicitly enabled internal Coin trading
+uses simulated local execution and never loads a CLOB runtime. Market cancellation and no-winner
+refunds can return recorded Coin cost basis, but winner redemption credits fail closed until
+authoritative external CLOB funding evidence is persisted and verified. None of these controls may
+be bypassed by database edits, manual ledger inserts, provider environment variables, or UI
+changes.
 
 ## Allowed review scope
 
@@ -59,6 +60,9 @@ APP_MODE=local
 LEDGER_CREDIT_API_ENABLED=false
 WALLET_DEPOSIT_WEBHOOK_ENABLED=false
 ADMIN_MANUAL_DEPOSIT_APPROVAL_ENABLED=false
+COIN_DEPOSIT_CREDITS_ENABLED=false
+COIN_WITHDRAWAL_REQUESTS_ENABLED=false
+COIN_INTERNAL_TRADING_ENABLED=false
 REAL_MONEY_DEPOSIT_PROVIDER=
 EXCHANGE_RATE_PROVIDER=disabled
 COINS_MIGRATION_APPLY=false

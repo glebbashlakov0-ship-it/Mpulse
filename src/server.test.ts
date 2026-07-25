@@ -2005,7 +2005,7 @@ test("signed Fireblocks deposits bypass browser CSRF and require the PostgreSQL 
   const app = buildApp(
     testConfig({
       realMoneyDepositProvider: "Fireblocks",
-      walletDepositWebhookEnabled: false,
+      walletDepositWebhookEnabled: true,
       csrfProtectionEnabled: true,
     }),
   );
@@ -2048,7 +2048,7 @@ test("Fireblocks deposit webhook still rejects missing JWS when browser CSRF is 
   const app = buildApp(
     testConfig({
       realMoneyDepositProvider: "Fireblocks",
-      walletDepositWebhookEnabled: false,
+      walletDepositWebhookEnabled: true,
       csrfProtectionEnabled: true,
     }),
   );

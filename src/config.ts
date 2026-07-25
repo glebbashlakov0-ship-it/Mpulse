@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { assertCoinFeatureGateConfiguration } from "./coinFeatureGates.js";
 
 export type AppConfig = {
   host: string;
@@ -31,6 +32,9 @@ export type AppConfig = {
   authRateLimitMax: number;
   ledgerCreditApiEnabled: boolean;
   walletDepositWebhookEnabled: boolean;
+  coinDepositCreditsEnabled: boolean;
+  coinWithdrawalRequestsEnabled: boolean;
+  coinInternalTradingEnabled: boolean;
   adminManualDepositApprovalEnabled: boolean;
   adminActivitySeedApiEnabled: boolean;
   adminEmails: string[];
@@ -162,6 +166,24 @@ export function getConfig(): AppConfig {
   const adminPanelUsername = stringFromEnv("ADMIN_PANEL_USERNAME");
   const adminPanelPassword = stringFromEnv("ADMIN_PANEL_PASSWORD");
   const exchangeRateProvider = stringFromEnv("EXCHANGE_RATE_PROVIDER") ?? "disabled";
+  const walletDepositWebhookEnabled = booleanFromEnv(
+    "WALLET_DEPOSIT_WEBHOOK_ENABLED",
+    false,
+  );
+  const coinDepositCreditsEnabled = booleanFromEnv(
+    "COIN_DEPOSIT_CREDITS_ENABLED",
+    false,
+  );
+  const coinWithdrawalRequestsEnabled = booleanFromEnv(
+    "COIN_WITHDRAWAL_REQUESTS_ENABLED",
+    false,
+  );
+  const coinInternalTradingEnabled = booleanFromEnv(
+    "COIN_INTERNAL_TRADING_ENABLED",
+    false,
+  );
+  const realMoneyDepositProvider = stringFromEnv("REAL_MONEY_DEPOSIT_PROVIDER");
+  const usdtTronContract = stringFromEnv("USDT_TRON_CONTRACT");
   const authRateLimitBackend = stringFromEnv("AUTH_RATE_LIMIT_BACKEND")
     ?? (nodeEnv === "production" ? (redisUrl ? "redis" : "external") : "memory");
 
@@ -177,6 +199,15 @@ export function getConfig(): AppConfig {
   if (!["disabled", "coinbase"].includes(exchangeRateProvider)) {
     throw new Error("EXCHANGE_RATE_PROVIDER must be disabled or coinbase.");
   }
+  assertCoinFeatureGateConfiguration({
+    coinDepositCreditsEnabled,
+    coinWithdrawalRequestsEnabled,
+    coinInternalTradingEnabled,
+    walletDepositWebhookEnabled,
+    realMoneyDepositProvider,
+    exchangeRateProvider,
+    usdtTronContract,
+  });
 
   const sessionCookieSecure = booleanFromEnv("SESSION_COOKIE_SECURE", nodeEnv === "production");
 
@@ -241,7 +272,10 @@ export function getConfig(): AppConfig {
     authRateLimitWindowMs: numberFromEnv("AUTH_RATE_LIMIT_WINDOW_MS", 60_000, { min: 1 }),
     authRateLimitMax: numberFromEnv("AUTH_RATE_LIMIT_MAX", 20, { min: 1, integer: true }),
     ledgerCreditApiEnabled: booleanFromEnv("LEDGER_CREDIT_API_ENABLED", false),
-    walletDepositWebhookEnabled: booleanFromEnv("WALLET_DEPOSIT_WEBHOOK_ENABLED", false),
+    walletDepositWebhookEnabled,
+    coinDepositCreditsEnabled,
+    coinWithdrawalRequestsEnabled,
+    coinInternalTradingEnabled,
     adminManualDepositApprovalEnabled: booleanFromEnv(
       "ADMIN_MANUAL_DEPOSIT_APPROVAL_ENABLED",
       false,
@@ -260,7 +294,7 @@ export function getConfig(): AppConfig {
       min: 0,
       integer: true,
     }),
-    realMoneyDepositProvider: stringFromEnv("REAL_MONEY_DEPOSIT_PROVIDER"),
+    realMoneyDepositProvider,
     exchangeRateProvider: exchangeRateProvider as "disabled" | "coinbase",
     exchangeRateTtlSeconds: numberFromEnv("EXCHANGE_RATE_TTL_SECONDS", 30, {
       min: 1,
@@ -275,7 +309,7 @@ export function getConfig(): AppConfig {
       "EXCHANGE_RATE_COINBASE_URL",
       "https://api.coinbase.com/v2/exchange-rates?currency=USDT",
     ),
-    usdtTronContract: stringFromEnv("USDT_TRON_CONTRACT"),
+    usdtTronContract,
     databaseUrl,
     databaseSsl: booleanFromEnv("DATABASE_SSL", nodeEnv === "production"),
     resendApiKey: stringFromEnv("RESEND_API_KEY") ?? "local",

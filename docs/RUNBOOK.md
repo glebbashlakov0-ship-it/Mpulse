@@ -4,15 +4,31 @@
 
 Production money movement is **review-only and not approved**.
 
-- The server hard-codes `allowDepositCredits: false`.
+- Deposit credit, review-only withdrawal request, and internal Coin trading gates default to false.
 - Fireblocks integration verifies signed inbound webhooks and stores review evidence; it cannot
-  credit Coins.
+  credit Coins while the deposit feature gate is disabled.
 - No public or admin route broadcasts a Fireblocks withdrawal.
+- Internal Coin trading never enables a Polymarket CLOB runtime.
 - Coin balance apply is restricted to a dedicated `TEST_DATABASE_URL`.
 - This runbook does not authorize deployment or a production migration.
 
 Keep `APP_MODE=local`. See [real-money-launch-approval.md](real-money-launch-approval.md) for the
 denial record and [coins-architecture.md](coins-architecture.md) for units and invariants.
+
+For a production runtime without Fireblocks or CLOB, the maximum supported capability set is:
+
+```dotenv
+COIN_DEPOSIT_CREDITS_ENABLED=false
+COIN_WITHDRAWAL_REQUESTS_ENABLED=true
+COIN_INTERNAL_TRADING_ENABLED=true
+EXCHANGE_RATE_PROVIDER=coinbase
+```
+
+This permits only rate-backed withdrawal quotes, Coin reserve/cancel/reject under manual review,
+and internal simulated execution against the Coin ledger. Confirm through
+`GET /api/money/supported-assets` that `withdrawalBroadcastEnabled`,
+`externalTradingEnabled`, and `outboundFundsProviderCallsEnabled` remain `false`. If withdrawal
+operations are not staffed for manual review, leave `COIN_WITHDRAWAL_REQUESTS_ENABLED=false`.
 
 ## Local startup
 

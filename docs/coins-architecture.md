@@ -134,10 +134,11 @@ Only USDT on TRON using the configured `USDT_TRON_CONTRACT` is accepted.
    the newest intent.
 6. A valid event progresses through `detected` / `confirming`. When the confirmation threshold is
    reached, launch policy is checked before any rate or credit.
-7. The current server hard-codes `allowDepositCredits: false`. A confirmed event therefore ends in
-   `manual_review` with `REAL_MONEY_LAUNCH_NOT_APPROVED`; no rate snapshot and no Coin credit are
-   created.
-8. In a future explicitly approved runtime, a fresh final rate is required. Unavailable rates use
+7. The server enables crediting only when `COIN_DEPOSIT_CREDITS_ENABLED=true` and the signed
+   Fireblocks webhook, rate provider, and USDT TRON contract prerequisites are all configured.
+   The default false gate also disables deposit-intent creation; partial configuration fails
+   startup instead of exposing an unsafe rail.
+8. In an explicitly enabled runtime, a fresh final rate is required. Unavailable rates use
    `pending_rate`; stale rates use `confirmed_unpriced`. An admin retry is limited to safe,
    fully-confirmed rate failures.
 9. A future allowed credit would atomically store the immutable rate snapshot, append
@@ -169,7 +170,9 @@ Provider reversals before credit are rejected. A reversal after credit posts a
    requires a fresh final rate, exact final amount/fee agreement, provider reference, transaction
    hash, and evidence hash before posting `withdrawal_debit` from reserved Coins.
 
-The public/admin routes in this cutover do not expose a Fireblocks broadcast action.
+Creation is separately gated by `COIN_WITHDRAWAL_REQUESTS_ENABLED` and requires a configured rate
+provider. The public/admin routes do not expose a Fireblocks broadcast action, so an enabled
+withdrawal rail remains review-only.
 
 ## Trading and settlement lifecycle
 
@@ -193,8 +196,9 @@ or stale local position transitions remain in manual reconciliation without rele
 Sell execution has a database uniqueness guard per user/market/side while it is pending or under
 manual review. Trading reserve/finalization and market settlement share the same advisory market
 lock; reserve and finalization both reject an already settled market, while settlement rejects any
-pending execution. Local simulated execution remains policy-labelled and is not evidence of
-real-money readiness. There is no reachable real venue runtime in this cutover. Any future venue
+pending execution. `COIN_INTERNAL_TRADING_ENABLED=true` may explicitly enable this internal
+simulated execution in production, but it remains policy-labelled and is not evidence of
+real-money readiness. It never enables a real venue runtime. Any future venue
 integration would also require an audited `launchApproval.approved` capability; provider
 configuration alone must never reach the venue.
 

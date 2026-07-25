@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { AuthError, type AuthService, getAuthContext, requireAuth } from "../auth.js";
 import { type AuditService } from "../audit.js";
 import type { CoinWalletService } from "../coinWallets.js";
+import { buildCoinFeatureCapabilities } from "../coinFeatureGates.js";
 import type { AppConfig } from "../config.js";
 import {
   FireblocksDepositWebhookError,
@@ -50,6 +51,8 @@ export function registerWalletRoutes(
   config: AppConfig,
   coinWallets: CoinWalletService | null = null,
 ) {
+  const features = buildCoinFeatureCapabilities(config);
+
   app.get(
     "/api/wallets/me",
     {
@@ -94,6 +97,17 @@ export function registerWalletRoutes(
             error: {
               code: "COIN_WALLET_DATABASE_REQUIRED",
               message: "Coin deposit intents require PostgreSQL.",
+            },
+          });
+        }
+        if (!features.deposits.intentCreationEnabled) {
+          return reply.status(503).send({
+            data: null,
+            error: {
+              code: "COIN_DEPOSITS_DISABLED",
+              message:
+                "Coin deposit intake is disabled until signed provider crediting is explicitly enabled.",
+              reason: features.deposits.blockReason,
             },
           });
         }
@@ -171,6 +185,16 @@ export function registerWalletRoutes(
             },
           });
         }
+        if (!features.withdrawals.requestsEnabled) {
+          return reply.status(503).send({
+            data: null,
+            error: {
+              code: "COIN_WITHDRAWAL_REQUESTS_DISABLED",
+              message: "Review-only Coin withdrawal requests are disabled.",
+              reason: features.withdrawals.blockReason,
+            },
+          });
+        }
         const coinBody: Record<string, unknown> = isRecord(body) ? body : {};
         const result = await coinWallets.confirmWithdrawal({
           userId: context.user.id,
@@ -244,6 +268,16 @@ export function registerWalletRoutes(
           error: {
             code: "COIN_WALLET_DATABASE_REQUIRED",
             message: "Coin withdrawal quotes require PostgreSQL.",
+          },
+        });
+      }
+      if (!features.withdrawals.requestsEnabled) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WITHDRAWAL_REQUESTS_DISABLED",
+            message: "Review-only Coin withdrawal requests are disabled.",
+            reason: features.withdrawals.blockReason,
           },
         });
       }
@@ -372,7 +406,7 @@ export function registerWalletRoutes(
   app.post<{
     Body: unknown;
   }>("/api/wallets/webhooks/deposits", async (request, reply) => {
-    if (isFireblocksDepositProvider(config)) {
+    if (features.deposits.signedWebhookIngestionEnabled) {
       try {
         const verified = await fireblocksDepositWebhookAdapter.verifyDepositWebhook({
           rawBody: getRawBody(request) ?? "",
@@ -441,6 +475,16 @@ export function registerWalletRoutes(
 
         throw error;
       }
+    }
+
+    if (isFireblocksDepositProvider(config)) {
+      return reply.status(503).send({
+        data: null,
+        error: {
+          code: "COIN_DEPOSIT_WEBHOOK_DISABLED",
+          message: "Signed deposit webhook ingestion is disabled.",
+        },
+      });
     }
 
     return reply.status(410).send({

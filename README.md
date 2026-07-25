@@ -10,10 +10,12 @@ Real-money launch is **not approved**. The implemented posture is review-only:
 - `1 Coin = 1 USD` as an internal accounting policy.
 - `1 Coin = 1,000,000` integer Coin micros.
 - USDT TRC-20 is an external rail, never the internal balance unit.
-- the server constructs the wallet service with `allowDepositCredits: false`;
+- Coin deposits, review-only withdrawal requests, and internal Coin trading each require a
+  separate explicit environment opt-in and default to disabled;
 - Fireblocks support is limited to signed inbound-webhook verification and review-evidence
-  ingestion; deposit crediting remains disabled;
+  ingestion unless the independently guarded deposit-credit prerequisites are all configured;
 - there is no public or admin Fireblocks withdrawal-broadcast route;
+- internal Coin trading never enables or calls a Polymarket CLOB execution runtime;
 - the balance-migration CLI accepts only a dedicated test database;
 - this change does not deploy anything and does not apply a production migration.
 
@@ -21,6 +23,23 @@ The Coin ledger, Fireblocks custody, and Polymarket CLOB execution are separate 
 Provider configuration, a green test run, or a successful rehearsal does not enable real money.
 The controlling denial is recorded in
 [docs/real-money-launch-approval.md](docs/real-money-launch-approval.md).
+
+The production capability switches are:
+
+```dotenv
+COIN_DEPOSIT_CREDITS_ENABLED=false
+COIN_WITHDRAWAL_REQUESTS_ENABLED=false
+COIN_INTERNAL_TRADING_ENABLED=false
+```
+
+Without Fireblocks or CLOB credentials, operators may enable only
+`COIN_WITHDRAWAL_REQUESTS_ENABLED=true` (with `EXCHANGE_RATE_PROVIDER=coinbase`) and
+`COIN_INTERNAL_TRADING_ENABLED=true`. The former creates a rate-backed, review-only request and
+reserves Coins; it never broadcasts. The latter executes only against the internal Coin ledger and
+keeps real/CLOB execution disabled. Deposit intake and credits must remain disabled without a
+signed Fireblocks webhook configuration. `GET /api/money/supported-assets` returns the effective
+gates and explicitly reports that withdrawal broadcast, external trading, and outbound funds
+provider calls remain disabled.
 
 ## Coin ownership and invariants
 
@@ -126,9 +145,11 @@ persisted.
 
 Only configured USDT/TRON transfers to an owned address can progress. Payload conflicts, ambiguous
 intents, wrong contract/network, decreasing confirmations, and other inconsistent evidence fail
-closed. Because `allowDepositCredits` is hard-coded to `false`, a valid final event enters
-`manual_review` with `REAL_MONEY_LAUNCH_NOT_APPROVED`; it does not obtain a final rate or credit
-Coins.
+closed. Coin crediting is enabled only when `COIN_DEPOSIT_CREDITS_ENABLED=true`,
+`WALLET_DEPOSIT_WEBHOOK_ENABLED=true`, `REAL_MONEY_DEPOSIT_PROVIDER=fireblocks`,
+`EXCHANGE_RATE_PROVIDER=coinbase`, and `USDT_TRON_CONTRACT` are all configured. An unsafe partial
+configuration fails startup. With the default false gate, no deposit intent is exposed and no
+deposit can credit Coins.
 
 ### Withdrawal
 
@@ -136,6 +157,7 @@ A withdrawal quote snapshots an indicative rate and returns integer-string amoun
 quote atomically posts `withdrawal_reserve`, moving Coins from available to reserved. Cancellation
 or rejection can post `withdrawal_release` only before any ambiguous external outcome.
 
+Creation requires `COIN_WITHDRAWAL_REQUESTS_ENABLED=true` and a configured exchange-rate provider.
 Admin approval remains `approved_for_review`. There is no Fireblocks broadcast action. Unknown or
 incomplete provider evidence keeps the reserve locked. The internal outcome reconciler may consume
 separately verified completion/failure evidence, but it never initiates the provider call.

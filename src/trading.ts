@@ -116,6 +116,7 @@ type TradingModeConfig = {
   appMode?: string;
   nodeEnv?: string;
   productionDeployment?: boolean;
+  coinInternalTradingEnabled?: boolean;
   localSimulatedTradingEnabled?: boolean;
   realMoneyCustodyProvider?: string | null;
   realMoneyDepositProvider?: string | null;
@@ -576,11 +577,17 @@ export function getTradingMode(config: TradingModeConfig = {}) {
 function getLocalSimulatedTradingBlockReason(
   config: TradingModeConfig,
 ): LocalSimulatedTradingBlockReason | null {
-  if (config.localSimulatedTradingEnabled === false) {
+  if (
+    config.coinInternalTradingEnabled === false ||
+    config.localSimulatedTradingEnabled === false
+  ) {
     return LOCAL_SIMULATED_TRADING_DISABLED_REASON;
   }
 
-  if (config.productionDeployment || config.nodeEnv === "production") {
+  if (
+    (config.productionDeployment || config.nodeEnv === "production") &&
+    config.coinInternalTradingEnabled !== true
+  ) {
     return LOCAL_SIMULATED_TRADING_PRODUCTION_DISABLED_REASON;
   }
 

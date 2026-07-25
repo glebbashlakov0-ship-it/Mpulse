@@ -26,6 +26,13 @@ const managedEnvKeys = [
   "ADMIN_PANEL_COOKIE_NAME",
   "ADMIN_PANEL_TTL_MS",
   "DATABASE_URL",
+  "WALLET_DEPOSIT_WEBHOOK_ENABLED",
+  "COIN_DEPOSIT_CREDITS_ENABLED",
+  "COIN_WITHDRAWAL_REQUESTS_ENABLED",
+  "COIN_INTERNAL_TRADING_ENABLED",
+  "REAL_MONEY_DEPOSIT_PROVIDER",
+  "EXCHANGE_RATE_PROVIDER",
+  "USDT_TRON_CONTRACT",
   "APP_BASE_URL",
   "VERCEL_PROJECT_PRODUCTION_URL",
   "VERCEL_URL",
@@ -66,6 +73,9 @@ test("config defaults to local development mode", () => {
     assert.equal(config.sessionCookieSecure, false);
     assert.equal(config.authRateLimitBackend, "memory");
     assert.deepEqual(config.corsAllowedOrigins, []);
+    assert.equal(config.coinDepositCreditsEnabled, false);
+    assert.equal(config.coinWithdrawalRequestsEnabled, false);
+    assert.equal(config.coinInternalTradingEnabled, false);
   });
 });
 
@@ -80,6 +90,13 @@ test("config rejects unsafe app mode and malformed env values", () => {
 
   withEnv({ CACHE_ENABLED: "sometimes" }, () => {
     assert.throws(() => getConfig(), /CACHE_ENABLED must be a boolean value/);
+  });
+
+  withEnv({ COIN_INTERNAL_TRADING_ENABLED: "sometimes" }, () => {
+    assert.throws(
+      () => getConfig(),
+      /COIN_INTERNAL_TRADING_ENABLED must be a boolean value/,
+    );
   });
 
   withEnv({ MARKET_SNAPSHOT_COLLECTOR_INTERVAL_MS: "999" }, () => {
@@ -132,6 +149,21 @@ test("production config requires explicit secure guardrails", () => {
     assert.equal(config.redisUrl, "redis://localhost:6379");
   });
 
+  withEnv(
+    {
+      ...productionEnv,
+      COIN_WITHDRAWAL_REQUESTS_ENABLED: "true",
+      COIN_INTERNAL_TRADING_ENABLED: "true",
+      EXCHANGE_RATE_PROVIDER: "coinbase",
+    },
+    () => {
+      const config = getConfig();
+      assert.equal(config.coinWithdrawalRequestsEnabled, true);
+      assert.equal(config.coinInternalTradingEnabled, true);
+      assert.equal(config.coinDepositCreditsEnabled, false);
+    },
+  );
+
   withEnv({ ...productionEnv, SESSION_COOKIE_SECURE: "false" }, () => {
     assert.throws(() => getConfig(), /SESSION_COOKIE_SECURE must be true/);
   });
@@ -147,4 +179,59 @@ test("production config requires explicit secure guardrails", () => {
   withEnv({ ...productionEnv, AUTH_RATE_LIMIT_BACKEND: "memory" }, () => {
     assert.throws(() => getConfig(), /AUTH_RATE_LIMIT_BACKEND must be redis or external/);
   });
+});
+
+test("Coin money features require explicit flags and safe prerequisites", () => {
+  withEnv(
+    {
+      COIN_WITHDRAWAL_REQUESTS_ENABLED: "true",
+      EXCHANGE_RATE_PROVIDER: "disabled",
+    },
+    () => {
+      assert.throws(
+        () => getConfig(),
+        /COIN_WITHDRAWAL_RATE_PROVIDER_REQUIRED/,
+      );
+    },
+  );
+
+  withEnv(
+    {
+      COIN_WITHDRAWAL_REQUESTS_ENABLED: "true",
+      COIN_INTERNAL_TRADING_ENABLED: "true",
+      EXCHANGE_RATE_PROVIDER: "coinbase",
+    },
+    () => {
+      const config = getConfig();
+      assert.equal(config.coinWithdrawalRequestsEnabled, true);
+      assert.equal(config.coinInternalTradingEnabled, true);
+      assert.equal(config.coinDepositCreditsEnabled, false);
+    },
+  );
+
+  withEnv(
+    {
+      COIN_DEPOSIT_CREDITS_ENABLED: "true",
+      EXCHANGE_RATE_PROVIDER: "coinbase",
+    },
+    () => {
+      assert.throws(
+        () => getConfig(),
+        /COIN_DEPOSIT_SIGNED_WEBHOOK_REQUIRED/,
+      );
+    },
+  );
+
+  withEnv(
+    {
+      COIN_DEPOSIT_CREDITS_ENABLED: "true",
+      WALLET_DEPOSIT_WEBHOOK_ENABLED: "true",
+      REAL_MONEY_DEPOSIT_PROVIDER: "fireblocks",
+      EXCHANGE_RATE_PROVIDER: "coinbase",
+      USDT_TRON_CONTRACT: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    },
+    () => {
+      assert.equal(getConfig().coinDepositCreditsEnabled, true);
+    },
+  );
 });

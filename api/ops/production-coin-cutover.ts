@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { getConfig } from "../../src/config.js";
 import {
   authorizeProductionCoinCutoverEndpoint,
+  toSafeProductionCoinCutoverError,
   toSafeProductionCoinCutoverResult,
 } from "../../src/productionCoinCutoverOps.js";
 
@@ -51,7 +52,11 @@ export default async function handler(
       data: toSafeProductionCoinCutoverResult(result),
       error: null,
     });
-  } catch {
+  } catch (error) {
+    console.error(
+      "Production Coin cutover failed.",
+      toSafeProductionCoinCutoverError(error),
+    );
     return sendJson(response, 409, {
       data: null,
       error: {

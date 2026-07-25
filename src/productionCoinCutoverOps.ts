@@ -103,6 +103,35 @@ export function toSafeProductionCoinCutoverResult(
   };
 }
 
+export function toSafeProductionCoinCutoverError(error: unknown) {
+  const candidate =
+    error && typeof error === "object"
+      ? (error as { name?: unknown; code?: unknown; message?: unknown })
+      : {};
+  const rawMessage =
+    typeof candidate.message === "string"
+      ? candidate.message
+      : "Unknown production Coin cutover error.";
+  return {
+    name:
+      typeof candidate.name === "string"
+        ? candidate.name.slice(0, 80)
+        : "Error",
+    code:
+      typeof candidate.code === "string" &&
+      /^[A-Z0-9_-]{1,40}$/i.test(candidate.code)
+        ? candidate.code
+        : null,
+    message: rawMessage
+      .replace(
+        /\b(postgres(?:ql)?):\/\/[^\s@]+@/gi,
+        "$1://[redacted]@",
+      )
+      .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
+      .slice(0, 1_000),
+  };
+}
+
 function hasValidBearerAuthorization(
   authorization: string | string[] | undefined,
   secret: string | null,

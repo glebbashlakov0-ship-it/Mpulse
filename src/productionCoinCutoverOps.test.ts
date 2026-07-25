@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   authorizeProductionCoinCutoverEndpoint,
+  toSafeProductionCoinCutoverError,
   toSafeProductionCoinCutoverResult,
   toSafeProductionDatabaseIdentity,
 } from "./productionCoinCutoverOps.js";
@@ -115,6 +116,19 @@ test("production cutover ops responses exclude credentials and detailed money re
     reconciliationDiscrepancyCount: 0,
     noOp: false,
   });
+});
+
+test("production cutover ops logs redact credentials and bearer tokens", () => {
+  const safe = toSafeProductionCoinCutoverError(
+    new Error(
+      "connect postgres://operator:secret@db.example.com/app with Bearer private-token",
+    ),
+  );
+  assert.equal(safe.name, "Error");
+  assert.equal(safe.code, null);
+  assert.match(safe.message, /postgres:\/\/\[redacted\]@db\.example\.com/);
+  assert.match(safe.message, /Bearer \[redacted\]/);
+  assert.doesNotMatch(safe.message, /operator|secret|private-token/);
 });
 
 test("Vercel build runs only non-mutating preflight before compilation", async () => {

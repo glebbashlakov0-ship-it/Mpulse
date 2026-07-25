@@ -282,12 +282,14 @@ micros; apply is atomically blocked until all legacy pending operations are drai
 share projections must fit signed `BIGINT` micros and have no more than six decimals. A second
 apply is a no-op.
 
-The 2026-07-25 authorized release adds a production-only Vercel build wrapper guarded by a committed
-one-time marker. It uses exactly the SSL `DATABASE_URL` target, rejects `TEST_DATABASE_URL`, holds a
-release advisory lock, applies the locked schema plan, inspects, snapshots, applies, reconciles, and
-records completion. Preview/local builds skip it, pending or invalid data fails closed, and a repeat
-is a verified no-op. The in-database snapshot preserves computed per-user legacy balances and
-credential-free target metadata; legacy history itself remains intact and fenced.
+The 2026-07-25 authorized release uses a committed one-time marker and an authenticated post-deploy
+operation; Vercel builds never run the balance cutover. A read-only identity step discovers the
+credential-free, database-principal-bound fingerprint, which must then be committed before the
+reviewed artifact is redeployed. The operation uses verified TLS, rejects `TEST_DATABASE_URL`,
+applies the transaction-locked schema plan, inspects, snapshots, applies, reconciles, and records
+sealed completion evidence. Pending or invalid data fails closed, and a repeat verifies evidence
+without taking the legacy migration table locks or issuing a second credit. Legacy history remains
+intact and fenced.
 
 ## Reconciliation and recovery
 

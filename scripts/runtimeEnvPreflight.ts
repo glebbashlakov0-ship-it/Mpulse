@@ -1,14 +1,26 @@
 import { getConfig } from "../src/config.js";
 
-const config = getConfig();
+const vercelEnvironment = process.env.VERCEL_ENV?.trim() || null;
 
-console.log(
-  JSON.stringify(
-    {
+if (vercelEnvironment && vercelEnvironment !== "production") {
+  console.log(
+    JSON.stringify({
       ok: true,
       check: "runtime-environment",
+      skipped: true,
+      reason: "non-production-vercel-build",
+      vercelEnvironment,
+    }),
+  );
+} else {
+  const config = getConfig();
+  console.log(
+    JSON.stringify({
+      ok: true,
+      check: "runtime-environment",
+      skipped: false,
       nodeEnv: config.nodeEnv,
-      vercelEnvironment: process.env.VERCEL_ENV?.trim() || null,
+      vercelEnvironment,
       appMode: config.appMode,
       productionDeployment: config.productionDeployment,
       databaseConfigured: Boolean(config.databaseUrl),
@@ -18,8 +30,6 @@ console.log(
         config.moneyOutboxDrainEndpointEnabled,
       productionCoinCutoverEndpointEnabled:
         config.productionCoinCutoverEndpointEnabled,
-    },
-    null,
-    2,
-  ),
-);
+    }),
+  );
+}

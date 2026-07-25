@@ -82,6 +82,8 @@ The repository uses an explicit sparse migration plan:
 - `031_coins_ledger_cutover.sql` is the structural Coin migration.
 - `032_money_outbox_worker.sql` adds durable outbox leasing, retries, and dead-letter state.
 - `033_production_coin_cutover_evidence.sql` stores immutable release snapshot/completion evidence.
+- `034_seal_production_coin_cutover_snapshot.sql` prevents snapshot rows from being appended after
+  completion.
 
 The gap is intentional and is validated against the explicit plan rather than inferred as a
 contiguous sequence:
@@ -93,8 +95,9 @@ npm run migration:plan-check
 Migration `031` creates Coin accounts, immutable ledger entries, exchange-rate snapshots, provider
 events, crypto deposits, withdrawal quotes/requests, execution orders, outbox events, migration
 markers, cutover runs, reconciliation reports, and global write fences. It does not copy balances.
-The schema runner holds `market_pulse:schema_migrations` on one PostgreSQL session while applying
-the checked plan, so concurrent explicitly authorized cutover invocations serialize safely.
+The schema runner takes `market_pulse:schema_migrations` as a transaction-scoped advisory lock for
+each checked step and forces `search_path=public`, so concurrent invocations serialize safely even
+through a transaction pooler.
 
 ## Authorized post-deploy production cutover
 
@@ -131,15 +134,17 @@ The wrapper runs only when all of these are true:
 - `VERCEL_PROJECT_PRODUCTION_URL` resolves to the host recorded in the marker;
 - `DATABASE_URL` names one non-local, non-test PostgreSQL database;
 - `DATABASE_SSL=true`;
+- the principal-bound database fingerprint exactly matches the committed marker;
 - the connected database name exactly matches the database named by `DATABASE_URL`.
 
-It takes a release-scoped advisory lock, applies schema migrations, runs
+It uses transaction-scoped schema/finalization locks, applies schema migrations, runs
 `inspectMigration -> applyMigration -> reconciliation`, and stops on pending deposits,
 withdrawals, invalid precision/range, negative balances, projection errors, or reconciliation
 discrepancies. The apply transaction writes a header manifest, SHA-256 balance digest, and exact
 per-user legacy balance rows before moving the fence. Credentials are never stored; target evidence
-contains only host/port/database, connected server identity, SSL state, and a credential-free
-fingerprint.
+contains only host/port/database, a one-way database principal hash, connected server identity, SSL
+state, and a credential-free fingerprint. TLS certificate and hostname verification are forced
+even if the connection URL contains weaker SSL query parameters.
 
 After a passing reconciliation it records immutable completion evidence. A repeated authorized POST
 for the same marker/target checks the snapshot, migration run, and reconciliation but does not add a

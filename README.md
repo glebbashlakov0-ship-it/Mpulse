@@ -203,11 +203,13 @@ vault, or broadcast configuration belongs in this app.
 
 The checked migration plan is intentionally sparse: existing migrations `001` through `016`, then
 `031_coins_ledger_cutover.sql`, `032_money_outbox_worker.sql`, and
-`033_production_coin_cutover_evidence.sql`. Migration `031` creates the Coin schema, immutable
+`033_production_coin_cutover_evidence.sql`, followed by
+`034_seal_production_coin_cutover_snapshot.sql`. Migration `031` creates the Coin schema, immutable
 guards, global fences, provider evidence, withdrawals, trading, settlement, outbox, cutover, and
 reconciliation tables. Migration `032` adds durable leases, fencing tokens, retry/dead-letter
 state, and claim indexes. Migration `033` adds immutable pre-cutover snapshots and completion
-evidence. None of the schema migrations copies balances.
+evidence. Migration `034` seals per-user snapshot rows once completion is recorded. None of the
+schema migrations copies balances.
 
 Validate the explicit plan:
 
@@ -274,12 +276,13 @@ needed to verify the target. After the marker is pinned and the reviewed artifac
 authenticated `POST /api/ops/production-coin-cutover` invokes the guarded wrapper. Both endpoints
 require the production Vercel runtime and `Authorization: Bearer <CRON_SECRET>`.
 
-The wrapper requires the marked `mpulse.vercel.app` project, SSL, and exactly `DATABASE_URL`, and
-rejects `TEST_DATABASE_URL`. Under a global advisory lock it applies the schema plan, inspects legacy
-state, atomically stores an in-database per-user balance snapshot, applies the Coin migration,
-reconciles, and records immutable completion evidence. Pending or invalid legacy data and any
-reconciliation discrepancy fail the operation. Repeating the same marked release verifies the
-evidence and performs no second migration.
+The wrapper requires the marked `mpulse.vercel.app` project, verified TLS, and the exact
+principal-bound `DATABASE_URL` fingerprint committed in the release marker; it rejects
+`TEST_DATABASE_URL`. Transaction-scoped advisory locks remain valid through a transaction pooler.
+The wrapper applies the schema plan, inspects legacy state, atomically stores an in-database
+per-user balance snapshot, applies the Coin migration, reconciles, and records immutable completion
+evidence. Pending or invalid legacy data and any reconciliation discrepancy fail the operation.
+Repeating the same marked release verifies the sealed evidence and performs no second migration.
 
 The detailed operator sequence, expected output, reconciliation categories, and incident handling
 are in [docs/RUNBOOK.md](docs/RUNBOOK.md).

@@ -1,9 +1,9 @@
 # Deployment
 
-The application packages as a Vite SPA plus a Node.js serverless API. The Coin cutover in this
-branch is **not approved for production deployment or real-money launch**. A guarded post-deploy
-balance-migration workflow exists but defaults disabled, and no Fireblocks broadcast route exists.
-Supported Coin functions are separately production-gated and default fail-closed.
+The application packages as a Vite SPA plus a Node.js serverless API. Real-money launch remains
+**not approved**. The separately authorized Coin balance cutover uses a guarded post-deploy
+workflow that defaults disabled, and no Fireblocks broadcast route exists. Supported Coin
+functions are separately production-gated and default fail-closed.
 
 ## Vercel Settings
 

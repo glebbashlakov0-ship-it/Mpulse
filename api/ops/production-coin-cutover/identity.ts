@@ -1,21 +1,11 @@
-import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { join } from "node:path";
 import { getConfig } from "../../../src/config.js";
 import {
   authorizeProductionCoinCutoverEndpoint,
+  toSafeProductionCoinCutoverError,
   toSafeProductionDatabaseIdentity,
 } from "../../../src/productionCoinCutoverOps.js";
-import {
-  guardProductionCoinCutover,
-  type ProductionCoinCutoverReleaseMarker,
-} from "../../../src/productionCoinCutover.js";
-
-const markerPath = join(
-  process.cwd(),
-  "releases",
-  "2026-07-25-coins-v1-production-cutover.json",
-);
+import { resolveProductionDatabaseTarget } from "../../../src/productionCoinCutover.js";
 
 export default async function handler(
   request: IncomingMessage,
@@ -32,7 +22,11 @@ export default async function handler(
   let config;
   try {
     config = getConfig();
-  } catch {
+  } catch (error) {
+    console.error(
+      "Production Coin cutover identity failed.",
+      toSafeProductionCoinCutoverError(error),
+    );
     return sendJson(response, 503, {
       data: null,
       error: {
@@ -55,20 +49,10 @@ export default async function handler(
   }
 
   try {
-    const marker = JSON.parse(
-      await readFile(markerPath, "utf8"),
-    ) as ProductionCoinCutoverReleaseMarker;
-    const guarded = guardProductionCoinCutover(
-      process.env,
-      marker,
-      "coins-v1-legacy-usdt-parity",
-    );
-    if (!guarded.shouldRun) {
-      throw new Error("Production guard did not resolve a database target.");
-    }
+    const resolved = resolveProductionDatabaseTarget(process.env);
     return sendJson(response, 200, {
       data: {
-        database: toSafeProductionDatabaseIdentity(guarded.target),
+        database: toSafeProductionDatabaseIdentity(resolved.target),
       },
       error: null,
     });

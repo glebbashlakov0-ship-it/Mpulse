@@ -113,9 +113,11 @@ backend-enforced Redis limits, or `AUTH_RATE_LIMIT_BACKEND=external` only when e
 rate limits are enforced outside this process.
 
 The checked migration plan is intentionally sparse: migrations `001` through `016`, then
-`031_coins_ledger_cutover.sql`. Migration `031` adds the Coin accounts, immutable ledger, rate
-snapshots, provider evidence, withdrawal/trading/settlement state, database fences, outbox, cutover
-runs, and reconciliation surfaces. It is structural and never copies balances automatically.
+`031_coins_ledger_cutover.sql` through `034_seal_production_coin_cutover_snapshot.sql`. Migration
+`031` adds the Coin accounts, immutable ledger, rate snapshots, provider evidence,
+withdrawal/trading/settlement state, database fences, outbox, cutover runs, and reconciliation
+surfaces; `032` adds durable outbox delivery state, while `033` and `034` add and seal production
+cutover evidence. These schema migrations never copy balances automatically.
 The separate test-only CLI performs a dry-run/apply/no-op/reconciliation rehearsal against a
 dedicated disposable database. None of those steps enables provider broadcast or production money.
 

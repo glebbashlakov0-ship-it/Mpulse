@@ -72,8 +72,8 @@ test(
         await client.query(
           `insert into money_outbox_events (
              id, aggregate_type, aggregate_id, event_type, idempotency_key, payload
-           ) values ($1, 'test', $1, 'test.event', $2, '{}'::jsonb)`,
-          [id, `outbox-postgres-${index}-${id}`],
+           ) values ($1, 'test', $2, 'test.event', $3, '{}'::jsonb)`,
+          [id, id, `outbox-postgres-${index}-${id}`],
         );
       }
 

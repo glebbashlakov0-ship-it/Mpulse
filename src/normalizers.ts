@@ -90,6 +90,8 @@ function normalizeOutcomes(market: PolymarketMarket): NormalizedOutcome[] {
   const outcomes = parseJsonArray(market.outcomes);
   const clobTokenIds = parseJsonArray(market.clobTokenIds);
   const defaultPrices = getDefaultOutcomePrices(outcomes);
+  const defaultPriceDecimals =
+    outcomes.length === 2 ? ["0.5", "0.5"] : outcomes.map(() => null);
 
   return outcomes.map((name, index) => {
     const price = defaultPrices[index] ?? null;
@@ -97,6 +99,7 @@ function normalizeOutcomes(market: PolymarketMarket): NormalizedOutcome[] {
     return {
       name,
       price,
+      priceDecimal: defaultPriceDecimals[index] ?? null,
       probability: price,
       price_cents: price === null ? null : Math.round(price * 100),
       clobTokenId: clobTokenIds[index] ?? null,

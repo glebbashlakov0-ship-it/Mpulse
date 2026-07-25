@@ -10,11 +10,7 @@ import {
   type AdminPanelAuthService,
 } from "../adminPanelAuth.js";
 import type { SettlementService } from "../settlement.js";
-import { AdminLedgerActivityError, type AdminLedgerActivityService } from "../adminLedgerActivityService.js";
-import {
-  AdminEventActivitySeedError,
-  type AdminEventActivitySeedService,
-} from "../adminEventActivitySeedService.js";
+import type { CoinWalletService } from "../coinWallets.js";
 import { MarketSeedError, type MarketSeedService } from "../marketSeedService.js";
 
 function parseAdminLimit(value: unknown) {
@@ -50,9 +46,8 @@ export function registerAdminRoutes(
   config: AppConfig,
   settlement?: SettlementService,
   marketSeed?: MarketSeedService,
-  ledgerActivity?: AdminLedgerActivityService,
-  eventActivitySeed?: AdminEventActivitySeedService,
   adminPanelAuth?: AdminPanelAuthService,
+  coinWallets?: CoinWalletService | null,
 ) {
   if (!adminPanelAuth) {
     throw new Error("Admin panel auth service is required.");
@@ -190,7 +185,7 @@ export function registerAdminRoutes(
     {
       preHandler: adminPreHandler(),
     },
-    async (request) => {
+    async (request, reply) => {
       const actor = getActor(request);
 
       const users = await auth.listUsers(parseAdminLimit((request.query as { limit?: unknown }).limit));
@@ -251,7 +246,7 @@ export function registerAdminRoutes(
     {
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
-    async (request) => {
+    async (request, reply) => {
       const actor = getActor(request);
 
       await audit.record({
@@ -265,45 +260,308 @@ export function registerAdminRoutes(
         },
       });
 
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Admin Coin withdrawal views require PostgreSQL.",
+          },
+        });
+      }
       return {
-        data: await admin.listWithdrawalRequests(
-          parseAdminLimit((request.query as { limit?: unknown }).limit),
-        ),
+        data: {
+          withdrawalRequests: await coinWallets.listAdminWithdrawals(
+            parseAdminLimit((request.query as { limit?: unknown }).limit),
+          ),
+          reviewOnly: true,
+        },
+      };
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { reason?: unknown } }>(
+    "/api/admin/wallet-withdrawals/:id/reject",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const actor = getActor(request);
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Coin withdrawal rejection requires PostgreSQL.",
+          },
+        });
+      }
+      return {
+        data: await coinWallets.rejectWithdrawal({
+          withdrawalId: request.params.id,
+          adminActor: actor.username,
+          reason: request.body?.reason,
+        }),
+      };
+    },
+  );
+
+  app.get(
+    "/api/admin/wallet-deposit-requests",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      const actor = getActor(request);
+      await audit.record({
+        eventType: "admin.deposit_request_view",
+        userId: actor.auditUserId,
+        sessionId: actor.auditSessionId,
+        metadata: {
+          adminUsername: actor.username,
+          resource: "wallet_deposit_requests",
+          manualReview: true,
+        },
+      });
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Admin Coin deposit views require PostgreSQL.",
+          },
+        });
+      }
+      return {
+        data: {
+          deposits: await coinWallets.listAdminDeposits(
+            parseAdminLimit((request.query as { limit?: unknown }).limit),
+          ),
+          reviewOnly: true,
+        },
       };
     },
   );
 
   app.post<{ Params: { id: string } }>(
-    "/api/admin/wallet-withdrawals/:id/reject",
+    "/api/admin/wallet-deposit-requests/:id/approve",
     {
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
-    async (request) => {
-      const actor = getActor(request);
-
-      const result = await admin.reviewWithdrawal({
-        id: request.params.id,
-        status: "rejected",
-      });
-      await audit.record({
-        eventType: "admin.withdrawal_review",
-        userId: actor.auditUserId,
-        sessionId: actor.auditSessionId,
-        metadata: {
-          adminUsername: actor.username,
-          withdrawalRequestId: result.withdrawalRequest.id,
-          status: result.withdrawalRequest.status,
-          realTransferBlocked: true,
-          ledgerMutationBlocked: true,
-          manualReview: true,
+    async (_request, reply) =>
+      reply.status(410).send({
+        data: null,
+        error: {
+          code: "LEGACY_ADMIN_DEPOSIT_CREDIT_RETIRED",
+          message:
+            "Direct manual deposit credits are retired; retry a verified crypto deposit or create a compensating correction.",
         },
-      });
+      }),
+  );
 
+  app.post<{ Params: { id: string } }>(
+    "/api/admin/wallet-deposit-requests/:id/reject",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (_request, reply) =>
+      reply.status(410).send({
+        data: null,
+        error: {
+          code: "LEGACY_ADMIN_DEPOSIT_REVIEW_RETIRED",
+          message:
+            "Legacy deposit review is retired; use the verified crypto-deposit money endpoints.",
+        },
+      }),
+  );
+
+  app.get<{ Params: { userId: string } }>(
+    "/api/admin/money/users/:userId",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Admin Coin money views require PostgreSQL.",
+          },
+        });
+      }
+      return { data: await coinWallets.getAdminMoneyUser(request.params.userId) };
+    },
+  );
+
+  app.post<{
+    Params: { userId: string };
+    Body: {
+      deltaCoinMicros?: unknown;
+      idempotencyKey?: unknown;
+      reason?: unknown;
+      relatedEntityType?: unknown;
+      relatedEntityId?: unknown;
+    };
+  }>(
+    "/api/admin/money/users/:userId/corrections",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Coin corrections require PostgreSQL.",
+          },
+        });
+      }
+      const actor = getActor(request);
       return {
-        data: result,
+        data: await coinWallets.createCorrection({
+          userId: request.params.userId,
+          deltaCoinMicros: request.body?.deltaCoinMicros,
+          idempotencyKey: getIdempotencyKey(request, request.body),
+          adminActor: actor.username,
+          reason: request.body?.reason,
+          relatedEntityType: request.body?.relatedEntityType,
+          relatedEntityId: request.body?.relatedEntityId,
+        }),
       };
     },
   );
+
+  app.get(
+    "/api/admin/money/deposits",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Admin crypto deposit views require PostgreSQL.",
+          },
+        });
+      }
+      return {
+        data: {
+          deposits: await coinWallets.listAdminDeposits(
+            parseAdminLimit((request.query as { limit?: unknown }).limit),
+          ),
+          reviewOnly: true,
+        },
+      };
+    },
+  );
+
+  app.get<{ Params: { id: string } }>(
+    "/api/admin/money/deposits/:id",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Crypto deposit detail requires PostgreSQL.",
+          },
+        });
+      }
+      return { data: await coinWallets.getAdminDepositDetail(request.params.id) };
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { reason?: unknown } }>(
+    "/api/admin/money/deposits/:id/retry",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Crypto deposit retry requires PostgreSQL.",
+          },
+        });
+      }
+      const actor = getActor(request);
+      return {
+        data: await coinWallets.retryDeposit({
+          depositId: request.params.id,
+          adminActor: actor.username,
+          reason: request.body?.reason,
+        }),
+      };
+    },
+  );
+
+  app.get(
+    "/api/admin/money/withdrawals",
+    {
+      preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+    },
+    async (request, reply) => {
+      if (!coinWallets) {
+        return reply.status(503).send({
+          data: null,
+          error: {
+            code: "COIN_WALLET_DATABASE_REQUIRED",
+            message: "Admin Coin withdrawal views require PostgreSQL.",
+          },
+        });
+      }
+      return {
+        data: {
+          withdrawalRequests: await coinWallets.listAdminWithdrawals(
+            parseAdminLimit((request.query as { limit?: unknown }).limit),
+          ),
+          reviewOnly: true,
+        },
+      };
+    },
+  );
+
+  for (const action of ["approve", "reject", "retry"] as const) {
+    app.post<{ Params: { id: string }; Body: { reason?: unknown } }>(
+      `/api/admin/money/withdrawals/:id/${action}`,
+      {
+        preHandler: adminPreHandler(["finance_admin", "super_admin"]),
+      },
+      async (request, reply) => {
+        if (!coinWallets) {
+          return reply.status(503).send({
+            data: null,
+            error: {
+              code: "COIN_WALLET_DATABASE_REQUIRED",
+              message: "Coin withdrawal review requires PostgreSQL.",
+            },
+          });
+        }
+        const actor = getActor(request);
+        const input = {
+          withdrawalId: request.params.id,
+          adminActor: actor.username,
+          reason: request.body?.reason,
+        };
+        const data =
+          action === "approve"
+            ? await coinWallets.approveWithdrawalForReview(input)
+            : action === "reject"
+              ? await coinWallets.rejectWithdrawal(input)
+              : await coinWallets.safeRetryWithdrawal(input);
+        return { data };
+      },
+    );
+  }
 
   app.post<{ Params: { id: string }; Body: { reason?: unknown } }>(
     "/api/admin/markets/:id/hide",
@@ -511,56 +769,14 @@ export function registerAdminRoutes(
     {
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
-    async (request, reply) => {
-      const actor = getActor(request);
-
-      if (!eventActivitySeed) {
-        return reply.status(503).send({
-          data: null,
-          error: {
-            code: "EVENT_ACTIVITY_SEED_UNAVAILABLE",
-            message: "Admin event activity seed service is unavailable.",
-          },
-        });
-      }
-
-      try {
-        const result = await eventActivitySeed.seedEventActivity({
-          body: request.body,
-          adminUserId: actor.username,
-          createdByUserId: actor.dbUserId,
-        });
-
-        await audit.record({
-          eventType: "admin.event_activity_seed",
-          userId: actor.auditUserId,
-          sessionId: actor.auditSessionId,
-          metadata: {
-            adminUsername: actor.username,
-            batchId: result.batchId,
-            summary: result.summary,
-            targetCount: result.targets.length,
-            manualReview: true,
-          },
-        });
-
-        return {
-          data: result,
-        };
-      } catch (error) {
-        if (error instanceof AdminEventActivitySeedError) {
-          return reply.status(error.statusCode).send({
-            data: null,
-            error: {
-              code: error.code,
-              message: error.message,
-            },
-          });
-        }
-
-        throw error;
-      }
-    },
+    async (_request, reply) =>
+      reply.status(410).send({
+        data: null,
+        error: {
+          code: "LEGACY_EVENT_MONEY_SEED_RETIRED",
+          message: "The legacy event money seed is retired after the Coin ledger cutover.",
+        },
+      }),
   );
 
   app.post<{
@@ -579,55 +795,14 @@ export function registerAdminRoutes(
     {
       preHandler: adminPreHandler(["finance_admin", "super_admin"]),
     },
-    async (request, reply) => {
-      const actor = getActor(request);
-
-      if (!ledgerActivity) {
-        return reply.status(503).send({
-          data: null,
-          error: {
-            code: "ADMIN_LEDGER_ACTIVITY_UNAVAILABLE",
-            message: "Admin ledger activity service is unavailable.",
-          },
-        });
-      }
-
-      try {
-        const result = await ledgerActivity.seedActivity({
-          body: request.body,
-          adminUserId: actor.username,
-        });
-
-        await audit.record({
-          eventType: "admin.ledger_seed_activity",
-          userId: actor.auditUserId,
-          sessionId: actor.auditSessionId,
-          metadata: {
-            adminUsername: actor.username,
-            batchId: result.batchId,
-            kind: result.kind,
-            summary: result.summary,
-            manualReview: true,
-          },
-        });
-
-        return {
-          data: result,
-        };
-      } catch (error) {
-        if (error instanceof AdminLedgerActivityError) {
-          return reply.status(error.statusCode).send({
-            data: null,
-            error: {
-              code: error.code,
-              message: error.message,
-            },
-          });
-        }
-
-        throw error;
-      }
-    },
+    async (_request, reply) =>
+      reply.status(410).send({
+        data: null,
+        error: {
+          code: "LEGACY_LEDGER_ACTIVITY_SEED_RETIRED",
+          message: "The legacy ledger activity seed is retired after the Coin ledger cutover.",
+        },
+      }),
   );
 
   app.post<{ Params: { id: string }; Body: { winningSide?: unknown; idempotencyKey?: unknown } }>(
@@ -638,12 +813,12 @@ export function registerAdminRoutes(
     async (request, reply) => {
       const actor = getActor(request);
 
-      if (!settlement) {
+      if (!settlement || !coinWallets) {
         return reply.status(503).send({
           data: null,
           error: {
-            code: "SETTLEMENT_UNAVAILABLE",
-            message: "Settlement service is unavailable.",
+            code: "COIN_SETTLEMENT_DATABASE_REQUIRED",
+            message: "Coin settlement requires PostgreSQL.",
           },
         });
       }
@@ -669,12 +844,12 @@ export function registerAdminRoutes(
     async (request, reply) => {
       const actor = getActor(request);
 
-      if (!settlement) {
+      if (!settlement || !coinWallets) {
         return reply.status(503).send({
           data: null,
           error: {
-            code: "SETTLEMENT_UNAVAILABLE",
-            message: "Settlement service is unavailable.",
+            code: "COIN_SETTLEMENT_DATABASE_REQUIRED",
+            message: "Coin settlement requires PostgreSQL.",
           },
         });
       }

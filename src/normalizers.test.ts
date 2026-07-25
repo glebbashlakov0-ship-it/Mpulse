@@ -30,7 +30,7 @@ test("normalizes market fields with stable nulls, arrays, category, and fallback
   assert.equal(market.trading.best_bid, null);
 });
 
-test("normalizes own default price summary for binary markets", () => {
+test("normalizes the exact local binary opening price independently of upstream display data", () => {
   const market = normalizeMarket(
     marketFixture({
       outcomePrices: JSON.stringify(["0.7", "0.3"]),
@@ -40,6 +40,8 @@ test("normalizes own default price summary for binary markets", () => {
   );
   const prices = normalizePriceSummary(market);
 
+  assert.equal(market.outcomes[0]?.priceDecimal, "0.5");
+  assert.equal(market.outcomes[1]?.priceDecimal, "0.5");
   assert.equal(prices.yes, 0.5);
   assert.equal(prices.no, 0.5);
   assert.equal(prices.midpoint, null);

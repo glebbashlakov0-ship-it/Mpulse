@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router";
 import { AuthPage as AuthComponent } from "../components/AuthPage";
 import { useAuth } from "../hooks/useAuth";
 

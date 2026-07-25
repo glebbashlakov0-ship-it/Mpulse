@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import { buildApp } from "./server.js";
 import { marketFixture, testConfig } from "./testUtils.js";
@@ -16,6 +17,46 @@ function getCookieHeader(response: {
   const setCookie = getSetCookie(response);
   assert.ok(setCookie.length > 0);
   return setCookie.split(";")[0];
+}
+
+function createTestFireblocksWebhookSigner() {
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const keyId = "server-fireblocks-webhook-key";
+  const publicJwk = publicKey.export({ format: "jwk" });
+  const jwks = {
+    keys: [
+      {
+        kty: publicJwk.kty ?? "RSA",
+        n: publicJwk.n,
+        e: publicJwk.e,
+        kid: keyId,
+        alg: "RS512",
+        use: "sig",
+      },
+    ],
+  };
+
+  return {
+    jwks,
+    signBody(body: string) {
+      const encodedHeader = base64UrlJson({ alg: "RS512", kid: keyId, typ: "JWT" });
+      const signingInput = `${encodedHeader}.${base64Url(Buffer.from(body, "utf8"))}`;
+      const signature = sign("RSA-SHA512", Buffer.from(signingInput), privateKey);
+      return `${encodedHeader}..${base64Url(signature)}`;
+    },
+  };
+}
+
+function base64UrlJson(value: unknown) {
+  return base64Url(Buffer.from(JSON.stringify(value)));
+}
+
+function base64Url(value: Buffer) {
+  return value
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
 }
 
 async function loginAdmin(app: ReturnType<typeof buildApp>) {
@@ -41,7 +82,6 @@ test("buildApp fails fast instead of using memory fallback in production without
           databaseUrl: null,
           sessionCookieSecure: true,
           corsAllowedOrigins: ["https://market.example"],
-          walletDepositWebhookSecret: "prod-webhook-secret-32-characters-long",
         }),
       ),
     /DATABASE_URL is required in production/,
@@ -176,9 +216,11 @@ test("market comments validate empty payloads", async () => {
   const app = buildApp(testConfig());
 
   try {
+    const cookie = await registerForTrading(app, "comment-validator@example.com");
     const response = await app.inject({
       method: "POST",
       url: "/api/markets/comment-market/comments",
+      headers: { cookie },
       payload: { body: "   " },
     });
     const body = JSON.parse(response.body) as { error: { code: string } };
@@ -208,9 +250,11 @@ test("market activity routes list and publish comments", async () => {
     assert.deepEqual(emptyBody.data.positions, []);
     assert.deepEqual(emptyBody.data.activity, []);
 
+    const cookie = await registerForTrading(app, "demo-commenter@example.com");
     const postResponse = await app.inject({
       method: "POST",
       url: "/api/markets/demo-market/comments",
+      headers: { cookie },
       payload: {
         body: "This market finally has a working comments tab.",
         positionLabel: "Demo Yes",
@@ -226,7 +270,7 @@ test("market activity routes list and publish comments", async () => {
     assert.equal(postResponse.statusCode, 200);
     assert.equal(postBody.data.comments.length, 1);
     assert.equal(postBody.data.comments[0]?.body, "This market finally has a working comments tab.");
-    assert.equal(postBody.data.comments[0]?.displayName, "Guest Trader");
+    assert.equal(postBody.data.comments[0]?.displayName, "Trading Tester");
     assert.equal(postBody.data.comments[0]?.positionLabel, "Demo Yes");
     assert.equal(postBody.data.activity[0]?.type, "comment");
     assert.equal(postBody.data.activity[0]?.body, "This market finally has a working comments tab.");
@@ -234,6 +278,7 @@ test("market activity routes list and publish comments", async () => {
     const invalidResponse = await app.inject({
       method: "POST",
       url: "/api/markets/demo-market/comments",
+      headers: { cookie },
       payload: { body: "" },
     });
 
@@ -512,7 +557,7 @@ test("GET /api/markets treats topic=all as no-op", async () => {
   }
 });
 
-test("GET /api/markets search uses market-specific event titles", async () => {
+test("GET /api/markets search uses market-specific event titles without a canonical slug", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
@@ -907,29 +952,6 @@ test("GET /api/ready reports DB/config/market readiness without exposing secrets
   }
 });
 
-test("GET /api/ready fails configuration when webhook secret is missing", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json([marketFixture({ id: "ready-market" })]);
-  const app = buildApp(testConfig({ walletDepositWebhookSecret: null }));
-
-  try {
-    const response = await app.inject({
-      method: "GET",
-      url: "/api/ready",
-    });
-    const body = JSON.parse(response.body) as {
-      data: { checks: Record<string, { status: string; message?: string }> };
-    };
-
-    assert.equal(response.statusCode, 503);
-    assert.equal(body.data.checks.configuration.status, "failed");
-    assert.match(body.data.checks.configuration.message ?? "", /WALLET_DEPOSIT_WEBHOOK_SECRET/);
-  } finally {
-    await app.close();
-    globalThis.fetch = originalFetch;
-  }
-});
-
 test("POST /api/auth/register creates a user and HttpOnly session", async () => {
   const app = buildApp(testConfig());
 
@@ -1029,6 +1051,48 @@ test("state-changing auth routes reject mismatched CSRF tokens", async () => {
 
     assert.equal(response.statusCode, 403);
     assert.equal(body.error.code, "CSRF_TOKEN_INVALID");
+  } finally {
+    await app.close();
+  }
+});
+
+test("state-changing admin money routes require admin CSRF token when protection is enabled", async () => {
+  const app = buildApp(testConfig({ csrfProtectionEnabled: true }));
+
+  try {
+    const csrf = await app.inject({
+      method: "GET",
+      url: "/api/admin/csrf",
+    });
+    const csrfBody = JSON.parse(csrf.body) as { data: { csrfToken: string } };
+    const csrfCookie = getCookieHeader(csrf);
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/admin/login",
+      headers: {
+        cookie: csrfCookie,
+        "x-csrf-token": csrfBody.data.csrfToken,
+      },
+      payload: {
+        username: "admin",
+        password: "admin",
+      },
+    });
+    const adminCookie = getCookieHeader(login);
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/admin/markets/csrf-market/resolve",
+      headers: {
+        cookie: adminCookie,
+        "Idempotency-Key": "csrf-admin-settlement",
+      },
+      payload: { winningSide: "yes" },
+    });
+    const blockedBody = JSON.parse(blocked.body) as { error: { code: string } };
+
+    assert.equal(login.statusCode, 200);
+    assert.equal(blocked.statusCode, 403);
+    assert.equal(blockedBody.error.code, "CSRF_TOKEN_INVALID");
   } finally {
     await app.close();
   }
@@ -1353,7 +1417,7 @@ test("standalone admin login lists public users without using email roles", asyn
   }
 });
 
-test("standalone admin login can use finance and moderation actions", async () => {
+test("standalone admin login keeps moderation available while Coin finance requires DB", async () => {
   const app = buildApp(testConfig());
 
   try {
@@ -1371,7 +1435,9 @@ test("standalone admin login can use finance and moderation actions", async () =
       url: "/api/admin/wallet-withdrawals",
       headers: { cookie: adminCookie },
     });
-    assert.equal(withdrawals.statusCode, 200);
+    const withdrawalsBody = JSON.parse(withdrawals.body) as { error: { code: string } };
+    assert.equal(withdrawals.statusCode, 503);
+    assert.equal(withdrawalsBody.error.code, "COIN_WALLET_DATABASE_REQUIRED");
 
     const hide = await app.inject({
       method: "POST",
@@ -1494,7 +1560,7 @@ test("PATCH /api/compliance/me updates the authenticated user's self-declared pr
   }
 });
 
-test("PATCH /api/compliance/me rejects frontend KYC approval and junk fields", async () => {
+test("PATCH /api/compliance/me rejects frontend-owned compliance statuses and junk fields", async () => {
   const app = buildApp(testConfig());
 
   try {
@@ -1506,14 +1572,14 @@ test("PATCH /api/compliance/me rejects frontend KYC approval and junk fields", a
       payload: {
         countryCode: "US",
         dateOfBirth: "1990-04-28",
-        kycStatus: "approved",
+        accountStatus: "approved",
       },
     });
     const body = JSON.parse(response.body) as { error: { code: string; message: string } };
 
     assert.equal(response.statusCode, 400);
     assert.equal(body.error.code, "INVALID_COMPLIANCE_PROFILE");
-    assert.equal(body.error.message, "Unsupported field: kycStatus.");
+    assert.equal(body.error.message, "Unsupported field: accountStatus.");
   } finally {
     await app.close();
   }
@@ -1627,23 +1693,6 @@ test("GET /api/compliance/eligibility returns age and country reasons", async ()
   }
 });
 
-function installTradingFetchStub(overrides = {}) {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
-    const url = new URL(String(input));
-
-    if (url.pathname.startsWith("/markets/")) {
-      return Response.json(marketFixture({ id: "trade-market", ...overrides }));
-    }
-
-    return Response.json([marketFixture({ id: "related-market" })]);
-  };
-
-  return () => {
-    globalThis.fetch = originalFetch;
-  };
-}
-
 async function registerForTrading(app: ReturnType<typeof buildApp>, email: string) {
   const response = await app.inject({
     method: "POST",
@@ -1659,822 +1708,106 @@ async function registerForTrading(app: ReturnType<typeof buildApp>, email: strin
   return getCookieHeader(response);
 }
 
-async function registerEligibleTrader(app: ReturnType<typeof buildApp>, email: string) {
-  const cookie = await registerForTrading(app, email);
-
-  const profile = await app.inject({
-    method: "PATCH",
-    url: "/api/compliance/me",
-    headers: { cookie },
-    payload: {
-      countryCode: "US",
-      dateOfBirth: "1990-01-01",
-    },
-  });
-  const terms = await app.inject({
-    method: "POST",
-    url: "/api/compliance/accept-terms",
-    headers: { cookie },
-    payload: {
-      termsVersion: "terms-2026.04",
-      privacyVersion: "privacy-2026.04",
-      riskDisclosureVersion: "risk-2026.04",
-    },
-  });
-
-  assert.equal(profile.statusCode, 200);
-  assert.equal(terms.statusCode, 200);
-  return cookie;
-}
-
-test("POST /api/trading/quote returns a backend quote without mutating portfolio", async () => {
-  const restoreFetch = installTradingFetchStub();
+test("DB-disabled Coin trading routes fail closed and portfolio reset remains retired", async () => {
   const app = buildApp(testConfig());
 
   try {
-    await app.inject({
+    const cookie = await registerForTrading(app, "coin-trading-db-required@example.com");
+    const unavailableResponses = await Promise.all([
+      app.inject({
+        method: "POST",
+        url: "/api/trading/quote",
+        headers: { cookie },
+        payload: {
+          marketId: "trade-market",
+          side: "yes",
+          action: "buy",
+          amountCoinMicros: "1000000",
+        },
+      }),
+      app.inject({
+        method: "POST",
+        url: "/api/trading/orders",
+        headers: { cookie, "Idempotency-Key": "coin-trading-db-required" },
+        payload: {
+          marketId: "trade-market",
+          side: "yes",
+          action: "buy",
+          amountCoinMicros: "1000000",
+        },
+      }),
+      app.inject({ method: "GET", url: "/api/portfolio", headers: { cookie } }),
+      app.inject({ method: "GET", url: "/api/trading/positions", headers: { cookie } }),
+      app.inject({ method: "GET", url: "/api/trading/trades", headers: { cookie } }),
+    ]);
+
+    for (const response of unavailableResponses) {
+      const body = JSON.parse(response.body) as { error: { code: string } };
+      assert.equal(response.statusCode, 503);
+      assert.equal(body.error.code, "COIN_LEDGER_UNAVAILABLE");
+    }
+
+    const resetResponse = await app.inject({
       method: "POST",
       url: "/api/portfolio/reset",
-    });
-    const quoteResponse = await app.inject({
-      method: "POST",
-      url: "/api/trading/quote",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    });
-    const portfolioResponse = await app.inject({
-      method: "GET",
-      url: "/api/trading/positions",
-    });
-    const quoteBody = JSON.parse(quoteResponse.body) as {
-      data: {
-        price: number;
-        currentOdds: number;
-        shares: number;
-        estimatedCost: number;
-        platformFee: number;
-        fee: number;
-        stakeAmount: number;
-        estimatedPayout: number;
-        estimatedProfit: number;
-        balanceAfterBet: number;
-        poolBefore: number;
-        poolAfter: number;
-        priceImpact: number;
-        nextOdds: number;
-      };
-    };
-    const portfolioBody = JSON.parse(portfolioResponse.body) as {
-      data: { wallet: { balance: number }; trades: unknown[] };
-    };
-
-    assert.equal(quoteResponse.statusCode, 200);
-    assert.equal(quoteBody.data.price, 0.5);
-    assert.equal(quoteBody.data.currentOdds, 0.5);
-    assert.equal(quoteBody.data.shares, 122);
-    assert.equal(quoteBody.data.estimatedCost, 61);
-    assert.equal(quoteBody.data.platformFee, 1.22);
-    assert.equal(quoteBody.data.fee, 1.22);
-    assert.equal(quoteBody.data.stakeAmount, 61);
-    assert.equal(quoteBody.data.estimatedPayout, 59.78);
-    assert.equal(quoteBody.data.estimatedProfit, -1.22);
-    assert.equal(quoteBody.data.balanceAfterBet, 9939);
-    assert.equal(quoteBody.data.poolBefore, 0);
-    assert.equal(quoteBody.data.poolAfter, 61);
-    assert.equal(quoteBody.data.priceImpact, 0.5);
-    assert.equal(quoteBody.data.nextOdds, 1);
-    assert.equal(portfolioBody.data.wallet.balance, 10000);
-    assert.equal(portfolioBody.data.trades.length, 0);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders buys shares and updates backend portfolio", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    await app.inject({
-      method: "POST",
-      url: "/api/portfolio/reset",
-    });
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    });
-    const body = JSON.parse(response.body) as {
-      data: {
-        trade: { action: string; shares: number; platformFee: number; stakeAmount: number };
-        portfolio: {
-          wallet: { balance: number };
-          positions: Array<{ yesShares: number; totalCost: number; currentValue: number; pnl: number }>;
-          trades: unknown[];
-        };
-        marketOdds: { volume: number; liquidity: number; prices: { yes: number | null; no: number | null } };
-      };
-    };
-
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.data.trade.action, "buy");
-    assert.equal(body.data.trade.shares, 122);
-    assert.equal(body.data.trade.platformFee, 1.22);
-    assert.equal(body.data.trade.stakeAmount, 61);
-    assert.equal(body.data.portfolio.wallet.balance, 9939);
-    assert.equal(body.data.portfolio.positions[0]?.yesShares, 122);
-    assert.equal(body.data.portfolio.positions[0]?.totalCost, 61);
-    assert.equal(body.data.portfolio.positions[0]?.currentValue, 122);
-    assert.equal(body.data.portfolio.positions[0]?.pnl, 61);
-    assert.equal(body.data.portfolio.trades.length, 1);
-    assert.equal(body.data.marketOdds.volume, 61);
-    assert.equal(body.data.marketOdds.liquidity, 61);
-    assert.equal(body.data.marketOdds.prices.yes, 1);
-    assert.equal(body.data.marketOdds.prices.no, 0);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders rejects buys with insufficient balance", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    await app.inject({
-      method: "POST",
-      url: "/api/portfolio/reset",
-    });
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 10001,
-      },
-    });
-    const body = JSON.parse(response.body) as { error: { code: string } };
-
-    assert.equal(response.statusCode, 400);
-    assert.equal(body.error.code, "INSUFFICIENT_BALANCE");
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders rejects authenticated users before KYC eligibility", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "kyc-required-order@example.com");
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
       headers: { cookie },
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
     });
-    const body = JSON.parse(response.body) as { error: { code: string; reasons: string[] } };
+    const resetBody = JSON.parse(resetResponse.body) as { error: { code: string } };
 
-    assert.equal(response.statusCode, 403);
-    assert.equal(body.error.code, "KYC_ELIGIBILITY_REQUIRED");
-    assert.ok(body.error.reasons.includes("DATE_OF_BIRTH_REQUIRED_FOR_COMPLIANCE"));
-    assert.ok(body.error.reasons.includes("LEGAL_CONSENTS_REQUIRED"));
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders rejects closed markets", async () => {
-  const restoreFetch = installTradingFetchStub({
-    active: false,
-    closed: true,
-    endDate: "2026-05-01T00:00:00.000Z",
-  });
-  const app = buildApp(testConfig());
-
-  try {
-    await app.inject({
-      method: "POST",
-      url: "/api/portfolio/reset",
-    });
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    });
-    const body = JSON.parse(response.body) as { error: { code: string } };
-
-    assert.equal(response.statusCode, 400);
-    assert.equal(body.error.code, "MARKET_CLOSED");
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders sells shares and reduces the position", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    await app.inject({
-      method: "POST",
-      url: "/api/portfolio/reset",
-    });
-    await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    });
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "sell",
-        shares: 40,
-      },
-    });
-    const body = JSON.parse(response.body) as {
-      data: {
-        trade: { action: string; amount: number; realizedPnl: number };
-        portfolio: {
-          wallet: { balance: number };
-          positions: Array<{ yesShares: number; totalCost: number }>;
-        };
-      };
-    };
-
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.data.trade.action, "sell");
-    assert.equal(body.data.trade.amount, 40);
-    assert.equal(body.data.trade.realizedPnl, 20);
-    assert.equal(body.data.portfolio.wallet.balance, 9979);
-    assert.equal(body.data.portfolio.positions[0]?.yesShares, 82);
-    assert.equal(body.data.portfolio.positions[0]?.totalCost, 41);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders rejects sells with insufficient shares", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    await app.inject({
-      method: "POST",
-      url: "/api/portfolio/reset",
-    });
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "sell",
-        shares: 3,
-      },
-    });
-    const body = JSON.parse(response.body) as { error: { code: string } };
-
-    assert.equal(response.statusCode, 400);
-    assert.equal(body.error.code, "INSUFFICIENT_SHARES");
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/trading/orders idempotency key prevents duplicate buys", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerEligibleTrader(app, "idempotent@example.com");
-    const order = {
-      method: "POST" as const,
-      url: "/api/trading/orders",
-      headers: {
-        cookie,
-        "Idempotency-Key": "same-buy-key",
-      },
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    };
-    const firstResponse = await app.inject(order);
-    const secondResponse = await app.inject(order);
-    const firstBody = JSON.parse(firstResponse.body) as {
-      data: { trade: { id: string }; portfolio: { wallet: { balance: number }; trades: unknown[] } };
-    };
-    const secondBody = JSON.parse(secondResponse.body) as {
-      data: {
-        idempotent: boolean;
-        trade: { id: string };
-        portfolio: { wallet: { balance: number }; trades: unknown[] };
-      };
-    };
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 200);
-    assert.equal(secondBody.data.idempotent, true);
-    assert.equal(secondBody.data.trade.id, firstBody.data.trade.id);
-    assert.equal(secondBody.data.portfolio.wallet.balance, 9939);
-    assert.equal(secondBody.data.portfolio.trades.length, 1);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("GET /api/trading/trades returns user-scoped trade history", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    const firstCookie = await registerEligibleTrader(app, "first-trader@example.com");
-    const secondCookie = await registerEligibleTrader(app, "second-trader@example.com");
-
-    await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      headers: { cookie: firstCookie },
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    });
-    await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      headers: { cookie: secondCookie },
-      payload: {
-        marketId: "trade-market",
-        side: "no",
-        action: "buy",
-        amount: 39,
-      },
-    });
-
-    const firstHistory = await app.inject({
-      method: "GET",
-      url: "/api/trading/trades",
-      headers: { cookie: firstCookie },
-    });
-    const secondHistory = await app.inject({
-      method: "GET",
-      url: "/api/trading/trades",
-      headers: { cookie: secondCookie },
-    });
-    const firstBody = JSON.parse(firstHistory.body) as { data: Array<{ userId: string; side: string }> };
-    const secondBody = JSON.parse(secondHistory.body) as { data: Array<{ userId: string; side: string }> };
-
-    assert.equal(firstBody.data.length, 1);
-    assert.equal(secondBody.data.length, 1);
-    assert.equal(firstBody.data[0]?.side, "yes");
-    assert.equal(secondBody.data[0]?.side, "no");
-    assert.notEqual(firstBody.data[0]?.userId, secondBody.data[0]?.userId);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("guest trading flow still works without auth", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    await app.inject({
-      method: "POST",
-      url: "/api/portfolio/reset",
-    });
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 61,
-      },
-    });
-    const body = JSON.parse(response.body) as {
-      data: { portfolio: { user: { id: string }; trades: unknown[] } };
-    };
-
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.data.portfolio.user.id, "local-user");
-    assert.equal(body.data.portfolio.trades.length, 1);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/ledger/credits requires authentication", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: {
-        "Idempotency-Key": "ledger-guest-credit",
-      },
-      payload: {
-        amount: 25,
-      },
-    });
-    const body = JSON.parse(response.body) as { error: { code: string } };
-
-    assert.equal(response.statusCode, 401);
-    assert.equal(body.error.code, "UNAUTHENTICATED");
+    assert.equal(resetResponse.statusCode, 410);
+    assert.equal(resetBody.error.code, "PORTFOLIO_RESET_DISABLED");
   } finally {
     await app.close();
   }
 });
 
-test("POST /api/admin/markets/:id/resolve settles Pulse positions and rejects duplicates", async () => {
-  const restoreFetch = installTradingFetchStub();
+test("legacy ledger API routes remain retired", async () => {
+  const app = buildApp(testConfig({ ledgerCreditApiEnabled: true }));
+
+  try {
+    const responses = await Promise.all([
+      app.inject({ method: "GET", url: "/api/ledger/balance" }),
+      app.inject({ method: "GET", url: "/api/ledger/entries" }),
+      app.inject({
+        method: "POST",
+        url: "/api/ledger/credits",
+        headers: { "Idempotency-Key": "retired-ledger-credit" },
+        payload: { amount: 25 },
+      }),
+    ]);
+
+    for (const response of responses) {
+      assert.equal(response.statusCode, 404);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("DB-disabled Coin settlement routes fail closed", async () => {
   const app = buildApp(testConfig());
 
   try {
-    const yesCookie = await registerEligibleTrader(app, "settlement-yes@example.com");
-    const noCookie = await registerEligibleTrader(app, "settlement-no@example.com");
     const adminCookie = await loginAdmin(app);
+    const responses = await Promise.all([
+      app.inject({
+        method: "POST",
+        url: "/api/admin/markets/trade-market/resolve",
+        headers: { cookie: adminCookie, "Idempotency-Key": "coin-resolve-db-required" },
+        payload: { winningSide: "yes" },
+      }),
+      app.inject({
+        method: "POST",
+        url: "/api/admin/markets/trade-market/cancel",
+        headers: { cookie: adminCookie, "Idempotency-Key": "coin-cancel-db-required" },
+      }),
+    ]);
 
-    const yesOrder = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      headers: { cookie: yesCookie, "Idempotency-Key": "settlement-yes-buy" },
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 60,
-      },
-    });
-    const noOrder = await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      headers: { cookie: noCookie, "Idempotency-Key": "settlement-no-buy" },
-      payload: {
-        marketId: "trade-market",
-        side: "no",
-        action: "buy",
-        amount: 40,
-      },
-    });
-    const resolveResponse = await app.inject({
-      method: "POST",
-      url: "/api/admin/markets/trade-market/resolve",
-      headers: { cookie: adminCookie, "Idempotency-Key": "settlement-resolve" },
-      payload: { winningSide: "yes" },
-    });
-    const duplicateResponse = await app.inject({
-      method: "POST",
-      url: "/api/admin/markets/trade-market/resolve",
-      headers: { cookie: adminCookie, "Idempotency-Key": "settlement-resolve-duplicate" },
-      payload: { winningSide: "yes" },
-    });
-    const yesPortfolio = await app.inject({
-      method: "GET",
-      url: "/api/trading/positions",
-      headers: { cookie: yesCookie },
-    });
-    const noPortfolio = await app.inject({
-      method: "GET",
-      url: "/api/trading/positions",
-      headers: { cookie: noCookie },
-    });
-    const resolveBody = JSON.parse(resolveResponse.body) as {
-      data: {
-        settlement: { totalPool: number; winningPool: number; platformFee: number; distributablePool: number };
-        balancing: { payoutTotal: number; balanced: boolean };
-        payouts: Array<{ userId: string; payout: number; profit: number; kind: string }>;
-      };
-    };
-    const duplicateBody = JSON.parse(duplicateResponse.body) as { error: { code: string } };
-    const yesBody = JSON.parse(yesPortfolio.body) as {
-      data: {
-        wallet: { balance: number };
-        positions: unknown[];
-        settlements: Array<{ payout: number; profit: number; kind: string }>;
-        summary: { realizedPnl: number };
-      };
-    };
-    const noBody = JSON.parse(noPortfolio.body) as {
-      data: {
-        wallet: { balance: number };
-        positions: unknown[];
-        settlements: Array<{ payout: number; profit: number; kind: string }>;
-        summary: { realizedPnl: number };
-      };
-    };
-
-    assert.equal(yesOrder.statusCode, 200);
-    assert.equal(noOrder.statusCode, 200);
-    assert.equal(resolveResponse.statusCode, 200);
-    assert.equal(resolveBody.data.settlement.totalPool, 100);
-    assert.equal(resolveBody.data.settlement.winningPool, 60);
-    assert.equal(resolveBody.data.settlement.platformFee, 2);
-    assert.equal(resolveBody.data.settlement.distributablePool, 98);
-    assert.equal(resolveBody.data.balancing.payoutTotal, 98);
-    assert.equal(resolveBody.data.balancing.balanced, true);
-    assert.equal(resolveBody.data.payouts.some((payout) => payout.kind === "loss" && payout.profit === -40), true);
-    assert.equal(duplicateResponse.statusCode, 409);
-    assert.equal(duplicateBody.error.code, "MARKET_ALREADY_SETTLED");
-    assert.equal(yesBody.data.wallet.balance, 10038);
-    assert.equal(yesBody.data.positions.length, 0);
-    assert.equal(yesBody.data.settlements[0]?.payout, 98);
-    assert.equal(yesBody.data.settlements[0]?.profit, 38);
-    assert.equal(yesBody.data.summary.realizedPnl, 38);
-    assert.equal(noBody.data.wallet.balance, 9960);
-    assert.equal(noBody.data.positions.length, 0);
-    assert.equal(noBody.data.settlements[0]?.payout, 0);
-    assert.equal(noBody.data.settlements[0]?.profit, -40);
-    assert.equal(noBody.data.summary.realizedPnl, -40);
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/admin/markets/:id/cancel refunds all Pulse stakes", async () => {
-  const restoreFetch = installTradingFetchStub();
-  const app = buildApp(testConfig());
-
-  try {
-    const userCookie = await registerEligibleTrader(app, "refund-user@example.com");
-    const adminCookie = await loginAdmin(app);
-
-    await app.inject({
-      method: "POST",
-      url: "/api/trading/orders",
-      headers: { cookie: userCookie, "Idempotency-Key": "refund-user-buy" },
-      payload: {
-        marketId: "trade-market",
-        side: "yes",
-        action: "buy",
-        amount: 25,
-      },
-    });
-    const cancelResponse = await app.inject({
-      method: "POST",
-      url: "/api/admin/markets/trade-market/cancel",
-      headers: { cookie: adminCookie, "Idempotency-Key": "refund-cancel" },
-    });
-    const portfolioResponse = await app.inject({
-      method: "GET",
-      url: "/api/trading/positions",
-      headers: { cookie: userCookie },
-    });
-    const cancelBody = JSON.parse(cancelResponse.body) as {
-      data: {
-        settlement: { status: string; platformFee: number };
-        balancing: { payoutTotal: number; balanced: boolean };
-      };
-    };
-    const portfolioBody = JSON.parse(portfolioResponse.body) as {
-      data: {
-        wallet: { balance: number };
-        positions: unknown[];
-        settlements: Array<{ payout: number; profit: number; kind: string }>;
-      };
-    };
-
-    assert.equal(cancelResponse.statusCode, 200);
-    assert.equal(cancelBody.data.settlement.status, "cancelled");
-    assert.equal(cancelBody.data.settlement.platformFee, 0);
-    assert.equal(cancelBody.data.balancing.payoutTotal, 25);
-    assert.equal(cancelBody.data.balancing.balanced, true);
-    assert.equal(portfolioBody.data.wallet.balance, 10000);
-    assert.equal(portfolioBody.data.positions.length, 0);
-    assert.equal(portfolioBody.data.settlements[0]?.payout, 25);
-    assert.equal(portfolioBody.data.settlements[0]?.profit, 0);
-    assert.equal(portfolioBody.data.settlements[0]?.kind, "refund");
-  } finally {
-    await app.close();
-    restoreFetch();
-  }
-});
-
-test("POST /api/ledger/credits credits local ledger balance with idempotency", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "ledger-credit@example.com");
-    const request = {
-      method: "POST" as const,
-      url: "/api/ledger/credits",
-      headers: {
-        cookie,
-        "Idempotency-Key": "ledger-credit-1",
-      },
-      payload: {
-        amount: 125,
-      },
-    };
-    const firstResponse = await app.inject(request);
-    const secondResponse = await app.inject(request);
-    const balanceResponse = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie },
-    });
-    const firstBody = JSON.parse(firstResponse.body) as {
-      data: {
-        complianceMode: string;
-        entry: { id: string; entryType: string; reason: string };
-        balance: { availableBalance: number };
-      };
-    };
-    const secondBody = JSON.parse(secondResponse.body) as {
-      data: { entry: { id: string }; balance: { availableBalance: number }; idempotent: boolean };
-    };
-    const balanceBody = JSON.parse(balanceResponse.body) as {
-      data: { mode: string; balance: { availableBalance: number; totalCredited: number } };
-    };
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 200);
-    assert.equal(firstBody.data.complianceMode, "ledger_restricted");
-    assert.equal(firstBody.data.entry.entryType, "credit");
-    assert.equal(firstBody.data.entry.reason, "ledger_credit");
-    assert.equal(firstBody.data.balance.availableBalance, 125);
-    assert.equal(secondBody.data.idempotent, true);
-    assert.equal(secondBody.data.entry.id, firstBody.data.entry.id);
-    assert.equal(secondBody.data.balance.availableBalance, 125);
-    assert.equal(balanceBody.data.mode, "ledger");
-    assert.equal(balanceBody.data.balance.availableBalance, 125);
-    assert.equal(balanceBody.data.balance.totalCredited, 125);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/ledger/credits rejects same idempotency key with different payload", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "ledger-credit-mismatch@example.com");
-    const firstResponse = await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: {
-        cookie,
-        "Idempotency-Key": "ledger-credit-mismatch",
-      },
-      payload: {
-        amount: 125,
-      },
-    });
-    const secondResponse = await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: {
-        cookie,
-        "Idempotency-Key": "ledger-credit-mismatch",
-      },
-      payload: {
-        amount: 126,
-      },
-    });
-    const balanceResponse = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie },
-    });
-    const secondBody = JSON.parse(secondResponse.body) as {
-      error: { code: string; message: string };
-    };
-    const balanceBody = JSON.parse(balanceResponse.body) as {
-      data: { balance: { availableBalance: number; totalCredited: number } };
-    };
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 409);
-    assert.equal(secondBody.error.code, "IDEMPOTENCY_KEY_REUSE_MISMATCH");
-    assert.match(secondBody.error.message, /different ledger entry/);
-    assert.equal(balanceBody.data.balance.availableBalance, 125);
-    assert.equal(balanceBody.data.balance.totalCredited, 125);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/ledger/credits rejects missing idempotency key", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "ledger-missing-key@example.com");
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: { cookie },
-      payload: {
-        amount: 25,
-      },
-    });
-    const body = JSON.parse(response.body) as { error: { code: string } };
-
-    assert.equal(response.statusCode, 400);
-    assert.equal(body.error.code, "IDEMPOTENCY_KEY_REQUIRED");
-  } finally {
-    await app.close();
-  }
-});
-
-test("GET /api/ledger/entries returns only the authenticated user's local ledger entries", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const firstCookie = await registerForTrading(app, "ledger-first@example.com");
-    const secondCookie = await registerForTrading(app, "ledger-second@example.com");
-
-    await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: {
-        cookie: firstCookie,
-        "Idempotency-Key": "ledger-first-credit",
-      },
-      payload: { amount: 50 },
-    });
-    await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: {
-        cookie: secondCookie,
-        "Idempotency-Key": "ledger-second-credit",
-      },
-      payload: { amount: 30 },
-    });
-
-    const firstEntries = await app.inject({
-      method: "GET",
-      url: "/api/ledger/entries",
-      headers: { cookie: firstCookie },
-    });
-    const secondEntries = await app.inject({
-      method: "GET",
-      url: "/api/ledger/entries",
-      headers: { cookie: secondCookie },
-    });
-    const firstBody = JSON.parse(firstEntries.body) as {
-      data: { entries: Array<{ userId: string; amount: number }> };
-    };
-    const secondBody = JSON.parse(secondEntries.body) as {
-      data: { entries: Array<{ userId: string; amount: number }> };
-    };
-
-    assert.equal(firstEntries.statusCode, 200);
-    assert.equal(secondEntries.statusCode, 200);
-    assert.equal(firstBody.data.entries.length, 1);
-    assert.equal(secondBody.data.entries.length, 1);
-    assert.equal(firstBody.data.entries[0]?.amount, 50);
-    assert.equal(secondBody.data.entries[0]?.amount, 30);
-    assert.notEqual(firstBody.data.entries[0]?.userId, secondBody.data.entries[0]?.userId);
+    for (const response of responses) {
+      const body = JSON.parse(response.body) as { error: { code: string } };
+      assert.equal(response.statusCode, 503);
+      assert.equal(body.error.code, "COIN_SETTLEMENT_DATABASE_REQUIRED");
+    }
   } finally {
     await app.close();
   }
@@ -2518,214 +1851,47 @@ test("wallet endpoints require authentication", async () => {
   }
 });
 
-test("GET /api/wallets/me creates and reuses a wallet", async () => {
+test("DB-disabled Coin wallet routes fail closed for authenticated users", async () => {
   const app = buildApp(testConfig());
 
   try {
-    const cookie = await registerForTrading(app, "wallet-me@example.com");
-    const firstResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/me",
-      headers: { cookie },
-    });
-    const secondResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/me",
-      headers: { cookie },
-    });
-    const firstBody = JSON.parse(firstResponse.body) as {
-      data: { mode: string; warning: string; created: boolean; wallet: { id: string; address: string } };
-    };
-    const secondBody = JSON.parse(secondResponse.body) as {
-      data: { created: boolean; wallet: { id: string; address: string } };
-    };
+    const cookie = await registerForTrading(app, "coin-wallet-db-required@example.com");
+    const responses = await Promise.all([
+      app.inject({ method: "GET", url: "/api/wallets/me", headers: { cookie } }),
+      app.inject({
+        method: "POST",
+        url: "/api/wallets/deposit-intents",
+        headers: { cookie },
+        payload: { expectedUsdtAtomic: "25000000" },
+      }),
+      app.inject({
+        method: "POST",
+        url: "/api/wallets/withdrawal-quotes",
+        headers: { cookie, "Idempotency-Key": "coin-withdrawal-quote-db-required" },
+        payload: {
+          destinationAddress: VALID_TRON_ADDRESS,
+          coinAmountMicros: "25000000",
+        },
+      }),
+      app.inject({
+        method: "POST",
+        url: "/api/wallets/withdrawal-requests",
+        headers: { cookie, "Idempotency-Key": "coin-withdrawal-db-required" },
+        payload: { quoteId: "missing-without-database" },
+      }),
+      app.inject({ method: "GET", url: "/api/wallets/deposits", headers: { cookie } }),
+      app.inject({
+        method: "GET",
+        url: "/api/wallets/withdrawal-requests",
+        headers: { cookie },
+      }),
+    ]);
 
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 200);
-    assert.equal(firstBody.data.mode, "wallet_review_only");
-    assert.match(firstBody.data.warning, /Wallet requests are reviewed before processing./);
-    assert.equal(firstBody.data.created, true);
-    assert.equal(secondBody.data.created, false);
-    assert.equal(secondBody.data.wallet.id, firstBody.data.wallet.id);
-    assert.match(firstBody.data.wallet.address, /^T[1-9A-HJ-NP-Za-km-z]{33}$/);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/deposit-intents creates a deposit intent", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "wallet-deposit@example.com");
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/wallets/deposit-intents",
-      headers: { cookie },
-      payload: {
-        expectedAmount: 42,
-        reference: "local-ref",
-      },
-    });
-    const body = JSON.parse(response.body) as {
-      data: {
-        mode: string;
-        warning: string;
-        depositIntent: {
-          expectedAmount: number;
-          status: string;
-          address: string;
-          reference: string;
-        };
-      };
-    };
-
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.data.mode, "wallet_review_only");
-    assert.match(body.data.warning, /Wallet requests are reviewed before processing./);
-    assert.equal(body.data.depositIntent.expectedAmount, 42);
-    assert.equal(body.data.depositIntent.status, "waiting");
-    assert.equal(body.data.depositIntent.reference, "local-ref");
-    assert.match(body.data.depositIntent.address, /^T[1-9A-HJ-NP-Za-km-z]{33}$/);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/withdrawal-requests creates and lists a blocked withdrawal request", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "wallet-withdrawal@example.com");
-    const request = {
-      method: "POST" as const,
-      url: "/api/wallets/withdrawal-requests",
-      headers: {
-        cookie,
-        "Idempotency-Key": "withdrawal-api-key",
-      },
-      payload: {
-        asset: "USDT",
-        network: "TRON",
-        destinationAddress: VALID_TRON_ADDRESS,
-        amount: 15,
-        manualReview: true,
-      },
-    };
-    const firstResponse = await app.inject(request);
-    const secondResponse = await app.inject(request);
-    const listResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/withdrawal-requests",
-      headers: { cookie },
-    });
-    const firstBody = JSON.parse(firstResponse.body) as {
-      data: {
-        mode: string;
-        warning: string;
-        idempotent: boolean;
-        compliance: { realTransferBlocked: boolean; reason: string; canUseRealMoney: boolean };
-        withdrawalRequest: { id: string; status: string; realTransferBlocked: boolean };
-      };
-    };
-    const secondBody = JSON.parse(secondResponse.body) as {
-      data: { idempotent: boolean; withdrawalRequest: { id: string } };
-    };
-    const listBody = JSON.parse(listResponse.body) as {
-      data: { mode: string; warning: string; withdrawalRequests: Array<{ id: string }> };
-    };
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 200);
-    assert.equal(listResponse.statusCode, 200);
-    assert.equal(firstBody.data.mode, "wallet_review_only");
-    assert.match(firstBody.data.warning, /Wallet requests are reviewed before processing./);
-    assert.equal(firstBody.data.idempotent, false);
-    assert.equal(firstBody.data.withdrawalRequest.status, "pending_review");
-    assert.equal(firstBody.data.withdrawalRequest.realTransferBlocked, true);
-    assert.equal(firstBody.data.compliance.canUseRealMoney, false);
-    assert.equal(firstBody.data.compliance.realTransferBlocked, true);
-    assert.equal(firstBody.data.compliance.reason, "TRANSFERS_UNAVAILABLE");
-    assert.equal(secondBody.data.idempotent, true);
-    assert.equal(secondBody.data.withdrawalRequest.id, firstBody.data.withdrawalRequest.id);
-    assert.equal(listBody.data.mode, "wallet_review_only");
-    assert.match(listBody.data.warning, /Wallet requests are reviewed before processing./);
-    assert.equal(listBody.data.withdrawalRequests.length, 1);
-  } finally {
-    await app.close();
-  }
-});
-
-test("admin withdrawal reject blocks real transfer and does not move ledger", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const userCookie = await registerForTrading(app, "wallet-review-user@example.com");
-    const adminCookie = await loginAdmin(app);
-    await app.inject({
-      method: "POST",
-      url: "/api/ledger/credits",
-      headers: {
-        cookie: userCookie,
-        "Idempotency-Key": "admin-review-ledger-credit",
-      },
-      payload: { amount: 50 },
-    });
-    const withdrawalResponse = await app.inject({
-      method: "POST",
-      url: "/api/wallets/withdrawal-requests",
-      headers: {
-        cookie: userCookie,
-        "Idempotency-Key": "admin-review-withdrawal",
-      },
-      payload: {
-        destinationAddress: VALID_TRON_ADDRESS,
-        amount: 15,
-        manualReview: true,
-      },
-    });
-    const withdrawalBody = JSON.parse(withdrawalResponse.body) as {
-      data: { withdrawalRequest: { id: string } };
-    };
-    const beforeBalance = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie: userCookie },
-    });
-    const rejectResponse = await app.inject({
-      method: "POST",
-      url: `/api/admin/wallet-withdrawals/${withdrawalBody.data.withdrawalRequest.id}/reject`,
-      headers: { cookie: adminCookie },
-    });
-    const afterBalance = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie: userCookie },
-    });
-    const rejectBody = JSON.parse(rejectResponse.body) as {
-      data: {
-        mode: string;
-        realTransferBlocked: boolean;
-        ledgerMutationBlocked: boolean;
-        withdrawalRequest: { status: string; realTransferBlocked: boolean };
-      };
-    };
-    const beforeBody = JSON.parse(beforeBalance.body) as {
-      data: { balance: { availableBalance: number; totalDebited: number } };
-    };
-    const afterBody = JSON.parse(afterBalance.body) as {
-      data: { balance: { availableBalance: number; totalDebited: number } };
-    };
-
-    assert.equal(rejectResponse.statusCode, 200);
-    assert.equal(rejectBody.data.mode, "wallet_review_only");
-    assert.equal(rejectBody.data.realTransferBlocked, true);
-    assert.equal(rejectBody.data.ledgerMutationBlocked, true);
-    assert.equal(rejectBody.data.withdrawalRequest.status, "rejected");
-    assert.equal(rejectBody.data.withdrawalRequest.realTransferBlocked, true);
-    assert.equal(beforeBody.data.balance.availableBalance, 50);
-    assert.equal(afterBody.data.balance.availableBalance, 50);
-    assert.equal(afterBody.data.balance.totalDebited, 0);
+    for (const response of responses) {
+      const body = JSON.parse(response.body) as { error: { code: string } };
+      assert.equal(response.statusCode, 503);
+      assert.equal(body.error.code, "COIN_WALLET_DATABASE_REQUIRED");
+    }
   } finally {
     await app.close();
   }
@@ -2799,475 +1965,114 @@ test("admin market hide and unhide work and write audit events", async () => {
   }
 });
 
-test("POST /api/wallets/withdrawal-requests rejects mismatched idempotency reuse", async () => {
+test("unsigned legacy deposit webhook remains retired", async () => {
   const app = buildApp(testConfig());
 
   try {
-    const cookie = await registerForTrading(app, "wallet-withdrawal-mismatch@example.com");
-    const firstResponse = await app.inject({
-      method: "POST",
-      url: "/api/wallets/withdrawal-requests",
-      headers: {
-        cookie,
-        "Idempotency-Key": "withdrawal-api-mismatch-key",
-      },
-      payload: {
-        destinationAddress: VALID_TRON_ADDRESS,
-        amount: 15,
-        manualReview: true,
-      },
-    });
-    const secondResponse = await app.inject({
-      method: "POST",
-      url: "/api/wallets/withdrawal-requests",
-      headers: {
-        cookie,
-        "Idempotency-Key": "withdrawal-api-mismatch-key",
-      },
-      payload: {
-        destinationAddress: VALID_TRON_ADDRESS,
-        amount: 16,
-        manualReview: true,
-      },
-    });
-    const body = JSON.parse(secondResponse.body) as { error: { code: string; message: string } };
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(secondResponse.statusCode, 409);
-    assert.equal(body.error.code, "IDEMPOTENCY_KEY_REUSE_MISMATCH");
-    assert.match(body.error.message, /different withdrawal request/);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/withdrawal-requests rejects frontend approved status", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "wallet-approved-status@example.com");
     const response = await app.inject({
       method: "POST",
-      url: "/api/wallets/withdrawal-requests",
+      url: "/api/wallets/webhooks/deposits",
       headers: {
-        cookie,
-        "Idempotency-Key": "withdrawal-approved-status",
+        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
       },
       payload: {
-        destinationAddress: VALID_TRON_ADDRESS,
-        amount: 15,
-        manualReview: true,
-        status: "approved",
+        txHash: "legacy-deposit-retired",
+        logIndex: "0",
+        provider: "internal_wallet",
+        recipientAddress: VALID_TRON_ADDRESS,
+        amount: 50,
+        asset: "USDT",
+        network: "TRON",
+        confirmations: 2,
       },
     });
     const body = JSON.parse(response.body) as { error: { code: string } };
 
-    assert.equal(response.statusCode, 400);
-    assert.equal(body.error.code, "INVALID_WITHDRAWAL_STATUS");
+    assert.equal(response.statusCode, 410);
+    assert.equal(body.error.code, "LEGACY_DEPOSIT_WEBHOOK_RETIRED");
   } finally {
     await app.close();
   }
 });
 
-test("POST /api/wallets/webhooks/deposits credits confirmed USDT/TRON deposits idempotently", async () => {
-  const app = buildApp(testConfig());
+test("signed Fireblocks deposits bypass browser CSRF and require the PostgreSQL Coin ledger", async () => {
+  const signer = createTestFireblocksWebhookSigner();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => ({
+    ok: true,
+    json: async () => signer.jwks,
+  })) as unknown as typeof fetch;
+  const app = buildApp(
+    testConfig({
+      realMoneyDepositProvider: "Fireblocks",
+      walletDepositWebhookEnabled: false,
+      csrfProtectionEnabled: true,
+    }),
+  );
 
   try {
-    const cookie = await registerForTrading(app, "wallet-webhook-ledger@example.com");
-    const walletResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/me",
-      headers: { cookie },
-    });
-    const walletBody = JSON.parse(walletResponse.body) as {
-      data: { wallet: { address: string } };
-    };
-    const beforeResponse = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie },
-    });
     const payload = {
-      txHash: "deposit-webhook-api-1",
-      logIndex: "0",
-      provider: "internal_wallet",
-      recipientAddress: walletBody.data.wallet.address,
-      amount: 100,
-      asset: "USDT",
-      network: "TRON",
-      confirmations: 2,
+      eventType: "TRANSACTION_STATUS_UPDATED",
+      data: {
+        id: "fireblocks-provider-tx-db-required",
+        status: "COMPLETED",
+        txHash: "fireblocks-route-tx-db-required",
+        assetId: "TRX_USDT_S2UZ",
+        destinationAddress: VALID_TRON_ADDRESS,
+        amountInfo: {
+          amount: "42.5",
+        },
+      },
     };
-    const webhookResponse = await app.inject({
+    const rawBody = JSON.stringify(payload);
+    const response = await app.inject({
       method: "POST",
       url: "/api/wallets/webhooks/deposits",
       headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
+        "content-type": "application/json",
+        "Fireblocks-Webhook-Signature": signer.signBody(rawBody),
       },
-      payload,
+      payload: rawBody,
     });
-    const duplicateResponse = await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
-      },
-      payload,
-    });
-    const afterResponse = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie },
-    });
-    const depositsResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/deposits",
-      headers: { cookie },
-    });
-    const webhookBody = JSON.parse(webhookResponse.body) as {
-      data: {
-        mode: string;
-        warning: string;
-        idempotent: boolean;
-        depositEvent: { status: string; amount: number; rawPayload?: unknown };
-        ledgerCredit: { idempotent: boolean };
-      };
-    };
-    const duplicateBody = JSON.parse(duplicateResponse.body) as {
-      data: { idempotent: boolean; depositEvent: { id: string }; ledgerCredit: null };
-    };
-    const beforeBody = JSON.parse(beforeResponse.body) as {
-      data: { balance: { availableBalance: number } };
-    };
-    const afterBody = JSON.parse(afterResponse.body) as {
-      data: { balance: { availableBalance: number } };
-    };
-    const depositsBody = JSON.parse(depositsResponse.body) as {
-      data: {
-        depositEvents: Array<{ status: string; amount: number; rawPayload?: unknown }>;
-      };
-    };
+    const body = JSON.parse(response.body) as { error: { code: string } };
 
-    assert.equal(webhookResponse.statusCode, 200);
-    assert.equal(duplicateResponse.statusCode, 200);
-    assert.equal(webhookBody.data.mode, "wallet_review_only");
-    assert.match(webhookBody.data.warning, /Wallet requests are reviewed before processing./);
-    assert.equal(webhookBody.data.idempotent, false);
-    assert.equal(webhookBody.data.depositEvent.status, "credited");
-    assert.equal(webhookBody.data.depositEvent.amount, 100);
-    assert.equal(webhookBody.data.depositEvent.rawPayload, undefined);
-    assert.equal(webhookBody.data.ledgerCredit.idempotent, false);
-    assert.equal(duplicateBody.data.idempotent, true);
-    assert.equal(duplicateBody.data.ledgerCredit, null);
-    assert.equal(beforeBody.data.balance.availableBalance, 0);
-    assert.equal(afterBody.data.balance.availableBalance, 100);
-    assert.equal(depositsBody.data.depositEvents.length, 1);
-    assert.equal(depositsBody.data.depositEvents[0]?.status, "credited");
-    assert.equal(depositsBody.data.depositEvents[0]?.rawPayload, undefined);
+    assert.equal(response.statusCode, 503);
+    assert.equal(body.error.code, "COIN_WALLET_DATABASE_REQUIRED");
   } finally {
+    globalThis.fetch = originalFetch;
     await app.close();
   }
 });
 
-test("POST /api/wallets/webhooks/deposits saves unknown wallet deposits as rejected", async () => {
-  const app = buildApp(testConfig());
+test("Fireblocks deposit webhook still rejects missing JWS when browser CSRF is enabled", async () => {
+  const app = buildApp(
+    testConfig({
+      realMoneyDepositProvider: "Fireblocks",
+      walletDepositWebhookEnabled: false,
+      csrfProtectionEnabled: true,
+    }),
+  );
 
   try {
     const response = await app.inject({
       method: "POST",
       url: "/api/wallets/webhooks/deposits",
       headers: {
+        "content-type": "application/json",
         "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
       },
-      payload: {
-        txHash: "deposit-unknown-wallet",
-        logIndex: "0",
-        provider: "internal_wallet",
-        recipientAddress: VALID_TRON_ADDRESS,
-        amount: 50,
-        asset: "USDT",
-        network: "TRON",
-        confirmations: 2,
-      },
-    });
-    const body = JSON.parse(response.body) as {
-      data: {
-        depositEvent: { status: string; rejectionReason: string; walletId: null; userId: null };
-        ledgerCredit: null;
-      };
-    };
-
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.data.depositEvent.status, "rejected");
-    assert.equal(body.data.depositEvent.rejectionReason, "WALLET_NOT_FOUND");
-    assert.equal(body.data.depositEvent.walletId, null);
-    assert.equal(body.data.depositEvent.userId, null);
-    assert.equal(body.data.ledgerCredit, null);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/webhooks/deposits rejects tx hash without log index or provider event id", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
-      },
-      payload: {
-        txHash: "deposit-missing-event-key",
-        provider: "internal_wallet",
-        recipientAddress: VALID_TRON_ADDRESS,
-        amount: 50,
-        asset: "USDT",
-        network: "TRON",
-        confirmations: 2,
-      },
-    });
-    const body = JSON.parse(response.body) as { error: { code: string; message: string } };
-
-    assert.equal(response.statusCode, 400);
-    assert.equal(body.error.code, "INVALID_WEBHOOK_EVENT");
-    assert.match(body.error.message, /logIndex or unique provider eventId/);
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/webhooks/deposits rejects same tx/log with mismatched payload", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "wallet-webhook-conflict@example.com");
-    const adminCookie = await loginAdmin(app);
-    const walletResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/me",
-      headers: { cookie },
-    });
-    const walletBody = JSON.parse(walletResponse.body) as {
-      data: { wallet: { address: string } };
-    };
-    const payload = {
-      txHash: "deposit-conflict",
-      logIndex: "0",
-      provider: "internal_wallet",
-      recipientAddress: walletBody.data.wallet.address,
-      amount: 100,
-      asset: "USDT",
-      network: "TRON",
-      confirmations: 2,
-      payload: {
-        providerEventId: "provider-event-original",
-      },
-    };
-    const firstResponse = await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
-      },
-      payload,
-    });
-    const conflictResponse = await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
-      },
-      payload: {
-        ...payload,
-        amount: 101,
-      },
-    });
-    const balanceResponse = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie },
-    });
-    const auditResponse = await app.inject({
-      method: "GET",
-      url: "/api/admin/audit-logs",
-      headers: { cookie: adminCookie },
-    });
-    const conflictBody = JSON.parse(conflictResponse.body) as {
-      data: {
-        conflict: boolean;
-        depositEvent: { status: string; rejectionReason: string; amount: number };
-        ledgerCredit: null;
-        creditBlockedReason: string;
-      };
-      error: { code: string };
-    };
-    const balanceBody = JSON.parse(balanceResponse.body) as {
-      data: { balance: { availableBalance: number } };
-    };
-    const auditBody = JSON.parse(auditResponse.body) as {
-      data: { auditLogs: Array<{ eventType: string; metadata: { rejectionReason?: string } }> };
-    };
-
-    assert.equal(firstResponse.statusCode, 200);
-    assert.equal(conflictResponse.statusCode, 409);
-    assert.equal(conflictBody.error.code, "DEPOSIT_EVENT_FINGERPRINT_MISMATCH");
-    assert.equal(conflictBody.data.conflict, true);
-    assert.equal(conflictBody.data.depositEvent.status, "manual_review");
-    assert.equal(conflictBody.data.depositEvent.amount, 100);
-    assert.equal(conflictBody.data.depositEvent.rejectionReason, "IDEMPOTENCY_PAYLOAD_MISMATCH");
-    assert.equal(conflictBody.data.ledgerCredit, null);
-    assert.equal(conflictBody.data.creditBlockedReason, "IDEMPOTENCY_PAYLOAD_MISMATCH");
-    assert.equal(balanceBody.data.balance.availableBalance, 100);
-    assert.equal(
-      auditBody.data.auditLogs.some(
-        (event) =>
-          event.eventType === "wallet.deposit_rejected" &&
-          event.metadata.rejectionReason === "IDEMPOTENCY_PAYLOAD_MISMATCH",
-      ),
-      true,
-    );
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/webhooks/deposits does not credit blocked compliance users", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const cookie = await registerForTrading(app, "wallet-webhook-blocked@example.com");
-    await app.inject({
-      method: "PATCH",
-      url: "/api/compliance/me",
-      headers: { cookie },
-      payload: {
-        countryCode: "IR",
-        dateOfBirth: "1990-01-01",
-      },
-    });
-    const walletResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/me",
-      headers: { cookie },
-    });
-    const walletBody = JSON.parse(walletResponse.body) as {
-      data: { wallet: { address: string } };
-    };
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
-      },
-      payload: {
-        txHash: "deposit-blocked-user",
-        logIndex: "0",
-        provider: "internal_wallet",
-        recipientAddress: walletBody.data.wallet.address,
-        amount: 75,
-        asset: "USDT",
-        network: "TRON",
-        confirmations: 2,
-      },
-    });
-    const balanceResponse = await app.inject({
-      method: "GET",
-      url: "/api/ledger/balance",
-      headers: { cookie },
-    });
-    const body = JSON.parse(response.body) as {
-      data: {
-        depositEvent: { status: string; amount: number };
-        creditBlockedReason: string;
-        ledgerCredit: null;
-      };
-    };
-    const balanceBody = JSON.parse(balanceResponse.body) as {
-      data: { balance: { availableBalance: number } };
-    };
-
-    assert.equal(response.statusCode, 200);
-    assert.equal(body.data.depositEvent.status, "confirmed");
-    assert.equal(body.data.depositEvent.amount, 75);
-    assert.equal(body.data.creditBlockedReason, "COMPLIANCE_BLOCKED");
-    assert.equal(body.data.ledgerCredit, null);
-    assert.equal(balanceBody.data.balance.availableBalance, 0);
-  } finally {
-    await app.close();
-  }
-});
-
-test("admin audit logs include deposit status events", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const userCookie = await registerForTrading(app, "wallet-webhook-audit-user@example.com");
-    const adminCookie = await loginAdmin(app);
-    const walletResponse = await app.inject({
-      method: "GET",
-      url: "/api/wallets/me",
-      headers: { cookie: userCookie },
-    });
-    const walletBody = JSON.parse(walletResponse.body) as {
-      data: { wallet: { address: string } };
-    };
-    await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      headers: {
-        "X-Deposit-Webhook-Secret": "test-local-webhook-secret",
-      },
-      payload: {
-        txHash: "deposit-audit-log",
-        logIndex: "0",
-        provider: "internal_wallet",
-        recipientAddress: walletBody.data.wallet.address,
-        amount: 25,
-        asset: "USDT",
-        network: "TRON",
-        confirmations: 2,
-      },
-    });
-    const auditResponse = await app.inject({
-      method: "GET",
-      url: "/api/admin/audit-logs",
-      headers: { cookie: adminCookie },
-    });
-    const auditBody = JSON.parse(auditResponse.body) as {
-      data: { auditLogs: Array<{ eventType: string; metadata: { status?: string } }> };
-    };
-
-    assert.equal(auditResponse.statusCode, 200);
-    assert.equal(
-      auditBody.data.auditLogs.some(
-        (event) =>
-          event.eventType === "wallet.deposit_credited" && event.metadata.status === "credited",
-      ),
-      true,
-    );
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/wallets/webhooks/deposits requires the configured local secret", async () => {
-  const app = buildApp(testConfig());
-
-  try {
-    const response = await app.inject({
-      method: "POST",
-      url: "/api/wallets/webhooks/deposits",
-      payload: {
-        eventId: "local-webhook-missing-secret",
-        provider: "internal_wallet",
-        eventType: "local.deposit_detected",
-      },
+      payload: JSON.stringify({
+        eventType: "TRANSACTION_STATUS_UPDATED",
+        data: {
+          id: "fireblocks-missing-signature",
+          status: "COMPLETED",
+        },
+      }),
     });
     const body = JSON.parse(response.body) as { error: { code: string } };
 
     assert.equal(response.statusCode, 401);
-    assert.equal(body.error.code, "MOCK_WEBHOOK_SECRET_REQUIRED");
+    assert.equal(body.error.code, "SIGNATURE_REQUIRED");
   } finally {
     await app.close();
   }

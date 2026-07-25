@@ -1,13 +1,15 @@
 import * as React from "react";
-import { useLocation, useParams, useNavigate } from "react-router-dom";
+import { useLocation, useParams, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import { MarketDetail } from "../components/MarketDetail";
 import { MarketDetailSkeleton } from "../components/MarketSkeleton";
+import { useAuth } from "../hooks/useAuth";
 import { useMarketDetail } from "../hooks/useMarketDetail";
 import type { Market } from "../lib/types";
 
 export function MarketDetailPage() {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -42,9 +44,13 @@ export function MarketDetailPage() {
 
       {state.status === "ready" && state.data && (
         <MarketDetail
+          canComment={Boolean(user)}
+          isAuthenticated={Boolean(user)}
           market={state.data}
           detailStatus={state.status}
           onBack={() => navigate("/")}
+          onDepositRequested={() => navigate("/wallet?action=deposit")}
+          onLoginRequested={() => navigate("/auth?mode=login")}
         />
       )}
     </div>

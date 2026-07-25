@@ -2,30 +2,37 @@ import type {
   ApiListResponse,
   ApiResponse,
   AdminAuditPayload,
+  AdminCorrectionResult,
   AdminEventActivitySeedResult,
   AdminLedgerSeedActivityResult,
+  AdminMoneyDepositDetailPayload,
+  AdminMoneyDepositsPayload,
+  AdminMoneyUserPayload,
+  AdminMoneyWithdrawalsPayload,
   AdminOddsOverrideResult,
   AdminPanelSessionPayload,
   AdminSeedOddsResult,
   AdminSettlementResult,
   AdminUsersPayload,
+  AdminWithdrawalActionResult,
   AdminWithdrawalsPayload,
+  CoinBalance,
+  CoinLedgerPayload,
   ComplianceEligibilityPayload,
   ComplianceMePayload,
   CreateDepositIntentPayload,
+  CreateWithdrawalQuotePayload,
   CreateWithdrawalPayload,
-  LedgerCreditPayload,
   AuthSessionInfo,
   AuthUser,
   HiddenMarketRule,
-  LedgerBalancePayload,
-  LedgerEntriesPayload,
   Market,
   MarketActivityPayload,
   MarketCategory,
   MarketTag,
   PlatformActivityPayload,
   Portfolio,
+  SupportedMoneyAssetsPayload,
   TradingQuote,
   Trade,
   MyWalletPayload,
@@ -201,31 +208,18 @@ export async function loadPortfolio() {
   return payload.data;
 }
 
-export async function resetPortfolioApi() {
-  const response = await apiFetch("/api/portfolio/reset", {
-    method: "POST",
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error("Could not reset portfolio");
-  }
-
-  const payload = (await response.json()) as ApiResponse<Portfolio>;
-  return payload.data;
-}
-
 export async function placeTradeApi({
   marketId,
   side,
   action,
-  amount,
+  amountCoinMicros,
   shares,
 }: {
   marketId: string;
   side: "yes" | "no";
   action?: "buy" | "sell";
-  amount?: number;
-  shares?: number;
+  amountCoinMicros?: string;
+  shares?: string;
 }) {
   const idempotencyKey =
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -238,11 +232,18 @@ export async function placeTradeApi({
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
     },
-    body: JSON.stringify({ marketId, side, action: action ?? "buy", amount, shares }),
+    body: JSON.stringify({
+      marketId,
+      side,
+      action: action ?? "buy",
+      amountCoinMicros,
+      shares,
+    }),
   });
   const payload = (await response.json()) as
     | ApiResponse<{
         ok: true;
+        quote: TradingQuote;
         trade: Trade;
         portfolio: Portfolio;
         market: Market | null;
@@ -264,14 +265,14 @@ export async function createTradingQuoteApi({
   marketId,
   side,
   action,
-  amount,
+  amountCoinMicros,
   shares,
 }: {
   marketId: string;
   side: "yes" | "no";
   action: "buy" | "sell";
-  amount?: number;
-  shares?: number;
+  amountCoinMicros?: string;
+  shares?: string;
 }) {
   const response = await apiFetch("/api/trading/quote", {
     method: "POST",
@@ -279,7 +280,7 @@ export async function createTradingQuoteApi({
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ marketId, side, action, amount, shares }),
+    body: JSON.stringify({ marketId, side, action, amountCoinMicros, shares }),
   });
   if (!response.ok) {
     throw new Error(await readApiError(response, "Could not quote trade"));
@@ -655,6 +656,48 @@ export async function loadTags(signal: AbortSignal) {
   return payload.data;
 }
 
+export async function loadSupportedMoneyAssets(signal?: AbortSignal) {
+  const response = await apiFetch("/api/money/supported-assets", {
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load supported money rails"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<SupportedMoneyAssetsPayload>;
+  return payload.data;
+}
+
+export async function loadCoinBalance(signal?: AbortSignal) {
+  const response = await apiFetch("/api/coins/balance", {
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load Coin balance"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<CoinBalance>;
+  return payload.data;
+}
+
+export async function loadCoinLedger(limit = 100, signal?: AbortSignal) {
+  const response = await apiFetch(
+    `/api/coins/ledger?limit=${encodeURIComponent(String(limit))}`,
+    {
+      credentials: "same-origin",
+      signal,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load Coin activity"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<CoinLedgerPayload>;
+  return payload.data;
+}
+
 export async function loadMyWallet() {
   const response = await apiFetch("/api/wallets/me", {
     credentials: "same-origin",
@@ -668,9 +711,8 @@ export async function loadMyWallet() {
 }
 
 export async function createDepositIntent(input: {
-  expectedAmount: number;
+  expectedUsdtAtomic: string;
   memo?: string | null;
-  reference?: string | null;
 }) {
   const response = await apiFetch("/api/wallets/deposit-intents", {
     method: "POST",
@@ -712,9 +754,34 @@ export async function loadWithdrawalRequests() {
   return payload.data;
 }
 
-export async function createWithdrawalRequest(input: {
-  amount: number;
+export async function createWithdrawalQuote(input: {
+  coinAmountMicros: string;
   destinationAddress: string;
+  idempotencyKey?: string;
+}) {
+  const idempotencyKey = input.idempotencyKey ?? createIdempotencyKey("withdrawal-quote");
+  const response = await apiFetch("/api/wallets/withdrawal-quotes", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify({
+      coinAmountMicros: input.coinAmountMicros,
+      destinationAddress: input.destinationAddress,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not create withdrawal quote"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<CreateWithdrawalQuotePayload>;
+  return payload.data;
+}
+
+export async function createWithdrawalRequest(input: {
+  quoteId: string;
   idempotencyKey?: string;
 }) {
   const idempotencyKey = input.idempotencyKey ?? createIdempotencyKey("withdrawal");
@@ -725,16 +792,46 @@ export async function createWithdrawalRequest(input: {
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
     },
-    body: JSON.stringify({
-      asset: "USDT",
-      network: "TRON",
-      amount: input.amount,
-      destinationAddress: input.destinationAddress,
-      manualReview: true,
-    }),
+    body: JSON.stringify({ quoteId: input.quoteId }),
   });
   if (!response.ok) {
     throw new Error(await readApiError(response, "Could not create withdrawal request"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<CreateWithdrawalPayload>;
+  return payload.data;
+}
+
+export async function loadWithdrawalRequest(id: string) {
+  const response = await apiFetch(
+    `/api/wallets/withdrawal-requests/${encodeURIComponent(id)}`,
+    { credentials: "same-origin" },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load withdrawal request"));
+  }
+
+  const payload = (await response.json()) as ApiResponse<{
+    withdrawalRequest: WithdrawalRequestsPayload["withdrawalRequests"][number];
+  }>;
+  return payload.data;
+}
+
+export async function cancelWithdrawalRequest(id: string, reason?: string) {
+  const response = await apiFetch(
+    `/api/wallets/withdrawal-requests/${encodeURIComponent(id)}/cancel`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": createIdempotencyKey("withdrawal-cancel"),
+      },
+      body: JSON.stringify({ reason }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not cancel withdrawal request"));
   }
 
   const payload = (await response.json()) as ApiResponse<CreateWithdrawalPayload>;
@@ -807,53 +904,6 @@ export async function acceptLegalAcknowledgements() {
   const payload = (await response.json()) as ApiResponse<
     Pick<ComplianceMePayload, "legalConsents" | "acceptedVersions">
   >;
-  return payload.data;
-}
-
-export async function loadLedgerBalance() {
-  const response = await apiFetch("/api/ledger/balance?asset=USDT", {
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error(await readApiError(response, "Could not load ledger balance"));
-  }
-
-  const payload = (await response.json()) as ApiResponse<LedgerBalancePayload>;
-  return payload.data;
-}
-
-export async function loadLedgerEntries(limit = 50) {
-  const response = await apiFetch(`/api/ledger/entries?asset=USDT&limit=${encodeURIComponent(limit)}`, {
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error(await readApiError(response, "Could not load ledger entries"));
-  }
-
-  const payload = (await response.json()) as ApiResponse<LedgerEntriesPayload>;
-  return payload.data;
-}
-
-export async function createLedgerCreditApi(amount: number, idempotencyKey = createIdempotencyKey("ledger-credit")) {
-  const response = await apiFetch("/api/ledger/credits", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "Idempotency-Key": idempotencyKey,
-    },
-    body: JSON.stringify({
-      amount,
-      metadata: {
-        source: "wallet_page",
-      },
-    }),
-  });
-  if (!response.ok) {
-    throw new Error(await readApiError(response, "Could not update balance"));
-  }
-
-  const payload = (await response.json()) as ApiResponse<LedgerCreditPayload>;
   return payload.data;
 }
 
@@ -959,6 +1009,141 @@ export async function loadAdminAuditLogs(signal: AbortSignal) {
 
   const payload = (await response.json()) as ApiResponse<AdminAuditPayload>;
   return payload.data;
+}
+
+export async function loadAdminMoneyUser(userId: string, signal?: AbortSignal) {
+  const response = await adminApiFetch(
+    `/api/admin/money/users/${encodeURIComponent(userId)}`,
+    { credentials: "same-origin", signal },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load user Coin activity"));
+  }
+  const payload = (await response.json()) as ApiResponse<AdminMoneyUserPayload>;
+  return payload.data;
+}
+
+export async function loadAdminMoneyDeposits(signal?: AbortSignal) {
+  const response = await adminApiFetch("/api/admin/money/deposits?limit=200", {
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load crypto deposits"));
+  }
+  const payload = (await response.json()) as ApiResponse<AdminMoneyDepositsPayload>;
+  return payload.data;
+}
+
+export async function loadAdminMoneyDepositDetail(
+  id: string,
+  signal?: AbortSignal,
+) {
+  const response = await adminApiFetch(
+    `/api/admin/money/deposits/${encodeURIComponent(id)}`,
+    { credentials: "same-origin", signal },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load crypto deposit detail"));
+  }
+  const payload = (await response.json()) as ApiResponse<AdminMoneyDepositDetailPayload>;
+  return payload.data;
+}
+
+export async function loadAdminMoneyWithdrawals(signal?: AbortSignal) {
+  const response = await adminApiFetch("/api/admin/money/withdrawals?limit=200", {
+    credentials: "same-origin",
+    signal,
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not load Coin withdrawals"));
+  }
+  const payload = (await response.json()) as ApiResponse<AdminMoneyWithdrawalsPayload>;
+  return payload.data;
+}
+
+export async function createAdminCoinCorrection(input: {
+  userId: string;
+  deltaCoinMicros: string;
+  reason: string;
+  relatedEntityType: string;
+  relatedEntityId: string;
+  idempotencyKey?: string;
+}) {
+  const idempotencyKey = input.idempotencyKey ?? createIdempotencyKey("admin-correction");
+  const response = await adminApiFetch(
+    `/api/admin/money/users/${encodeURIComponent(input.userId)}/corrections`,
+    {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify({
+        deltaCoinMicros: input.deltaCoinMicros,
+        idempotencyKey,
+        reason: input.reason,
+        relatedEntityType: input.relatedEntityType,
+        relatedEntityId: input.relatedEntityId,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not create Coin correction"));
+  }
+  const payload = (await response.json()) as ApiResponse<AdminCorrectionResult>;
+  return payload.data;
+}
+
+export async function retryAdminMoneyDeposit(id: string, reason: string) {
+  const response = await adminMoneyAction(
+    `/api/admin/money/deposits/${encodeURIComponent(id)}/retry`,
+    reason,
+  );
+  const payload = (await response.json()) as ApiResponse<unknown>;
+  return payload.data;
+}
+
+export async function approveAdminMoneyWithdrawal(id: string, reason: string) {
+  return adminWithdrawalAction(id, "approve", reason);
+}
+
+export async function rejectAdminMoneyWithdrawal(id: string, reason: string) {
+  return adminWithdrawalAction(id, "reject", reason);
+}
+
+export async function retryAdminMoneyWithdrawal(id: string, reason: string) {
+  return adminWithdrawalAction(id, "retry", reason);
+}
+
+async function adminWithdrawalAction(
+  id: string,
+  action: "approve" | "reject" | "retry",
+  reason: string,
+) {
+  const response = await adminMoneyAction(
+    `/api/admin/money/withdrawals/${encodeURIComponent(id)}/${action}`,
+    reason,
+  );
+  const payload = (await response.json()) as ApiResponse<AdminWithdrawalActionResult>;
+  return payload.data;
+}
+
+async function adminMoneyAction(endpoint: string, reason: string) {
+  const response = await adminApiFetch(endpoint, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": createIdempotencyKey("admin-money-action"),
+    },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, "Could not complete admin money action"));
+  }
+  return response;
 }
 
 export async function loadAdminWithdrawals(signal: AbortSignal) {

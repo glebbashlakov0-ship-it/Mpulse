@@ -28,7 +28,7 @@ export type AdminRole = Exclude<UserRole, "user">;
 
 export type UserSettings = {
   language: "en" | "ar";
-  currency: "USDT";
+  currency: "COIN";
   country: string | null;
   emailNotifications: boolean;
   marketNotifications: boolean;
@@ -260,7 +260,7 @@ export function toPublicUser(user: AuthUser): PublicUser {
 export function defaultUserSettings(): UserSettings {
   return {
     language: "en",
-    currency: "USDT",
+    currency: "COIN",
     country: null,
     emailNotifications: true,
     marketNotifications: true,

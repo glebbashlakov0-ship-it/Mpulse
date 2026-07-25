@@ -35,12 +35,7 @@ import {
 import { type AppConfig, getConfig } from "./config.js";
 import { isStateChangingMethod, validateCsrfRequest } from "./csrf.js";
 import { buildDatabase } from "./db.js";
-import {
-  buildLedgerService,
-  LedgerError,
-  MemoryLedgerRepository,
-  PostgresLedgerRepository,
-} from "./ledger.js";
+import { CoinLedgerError, PostgresCoinLedgerRepository } from "./coins.js";
 import {
   buildSettlementService,
   MemorySettlementRepository,
@@ -60,12 +55,6 @@ import {
 } from "./marketPriceHistoryRepository.js";
 import { buildMarketSeedService } from "./marketSeedService.js";
 import {
-  buildAdminLedgerActivityService,
-} from "./adminLedgerActivityService.js";
-import {
-  buildAdminEventActivitySeedService,
-} from "./adminEventActivitySeedService.js";
-import {
   buildPlatformActivityService,
   MemoryPlatformActivityRepository,
   PostgresPlatformActivityRepository,
@@ -73,19 +62,22 @@ import {
 import { buildPolymarketClient, UpstreamError } from "./polymarketClient.js";
 import { buildAuthRateLimiter } from "./rateLimit.js";
 import {
-  buildWalletService,
   MemoryWalletRepository,
-  WalletProviderAdapter,
   PostgresWalletRepository,
   WalletError,
 } from "./wallets.js";
+import { buildCoinWalletService, CoinWalletError } from "./coinWallets.js";
+import {
+  buildExchangeRateProvider,
+  ExchangeRateError,
+} from "./exchangeRates.js";
 import { registerHealthRoutes } from "./routes/healthRoutes.js";
 import { registerMarketRoutes } from "./routes/marketRoutes.js";
 import { registerEventRoutes } from "./routes/eventRoutes.js";
 import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerComplianceRoutes } from "./routes/complianceRoutes.js";
 import { registerWalletRoutes } from "./routes/walletRoutes.js";
-import { registerLedgerRoutes } from "./routes/ledgerRoutes.js";
+import { registerCoinRoutes } from "./routes/coinRoutes.js";
 import { registerTradingRoutes } from "./routes/tradingRoutes.js";
 import { registerMarketActivityRoutes } from "./routes/marketActivityRoutes.js";
 import { registerPlatformActivityRoutes } from "./routes/platformActivityRoutes.js";
@@ -100,6 +92,15 @@ export function buildApp(config: AppConfig = getConfig()) {
 
   const app = Fastify({
     logger: true,
+  });
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
+    const rawBody = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+    (request as typeof request & { rawBody?: Buffer }).rawBody = rawBody;
+    try {
+      done(null, rawBody.length ? JSON.parse(rawBody.toString("utf8")) : null);
+    } catch (error) {
+      done(error as Error);
+    }
   });
   const db = buildDatabase(config);
   const polymarket = buildPolymarketClient(config);
@@ -133,9 +134,18 @@ export function buildApp(config: AppConfig = getConfig()) {
       : new MemoryComplianceRepository(),
     audit,
   });
-  const ledger = buildLedgerService(
-    db.enabled ? new PostgresLedgerRepository(db) : new MemoryLedgerRepository(),
-  );
+  const coins = db.enabled ? new PostgresCoinLedgerRepository(db) : null;
+  const exchangeRates = buildExchangeRateProvider(config);
+  const coinWallets = db.enabled
+    ? buildCoinWalletService({
+        db,
+        rateProvider: exchangeRates,
+        rateTtlSeconds: config.exchangeRateTtlSeconds,
+        requiredConfirmations: config.walletDepositMinConfirmations,
+        usdtTronContract: config.usdtTronContract,
+        allowDepositCredits: false,
+      })
+    : null;
   const portfolioRepository = db.enabled
     ? new PostgresPortfolioRepository(db)
     : new MemoryPortfolioRepository();
@@ -148,16 +158,12 @@ export function buildApp(config: AppConfig = getConfig()) {
   const watchlistRepository = db.enabled
     ? new PostgresWatchlistRepository(db)
     : new MemoryWatchlistRepository();
-  const wallets = buildWalletService({
-    repository: db.enabled ? new PostgresWalletRepository(db) : new MemoryWalletRepository(),
-    provider: new WalletProviderAdapter(),
-    ledger,
-    depositMinConfirmations: config.walletDepositMinConfirmations,
-    getComplianceEligibility: (userId) => compliance.getEligibility({ userId }),
-  });
+  const walletRepository = db.enabled
+    ? new PostgresWalletRepository(db)
+    : new MemoryWalletRepository();
   const admin = buildAdminService({
     repository: db.enabled ? new PostgresAdminRepository(db) : new MemoryAdminRepository(),
-    walletRepository: wallets.repository,
+    walletRepository,
   });
   const adminPanelAuth = buildAdminPanelAuthService(config);
   const settlement = buildSettlementService({
@@ -165,8 +171,9 @@ export function buildApp(config: AppConfig = getConfig()) {
       ? new PostgresSettlementRepository(db)
       : new MemorySettlementRepository(),
     portfolioRepository,
-    ledger,
+    coinLedger: coins,
     audit,
+    requireAtomicSettlementCommits: true,
   });
   const authRateLimiter = buildAuthRateLimiter(config);
   const marketData = buildMarketDataService({
@@ -182,22 +189,6 @@ export function buildApp(config: AppConfig = getConfig()) {
     priceHistoryRepository: marketPriceHistoryRepository,
   });
   const platformActivity = buildPlatformActivityService(platformActivityRepository);
-  const adminLedgerActivity = buildAdminLedgerActivityService({
-    ledger,
-    walletRepository: wallets.repository,
-    platformActivityRepository,
-  });
-  const adminEventActivitySeed = buildAdminEventActivitySeedService({
-    auth,
-    marketData,
-    marketSeed,
-    ledger,
-    walletRepository: wallets.repository,
-    portfolioRepository,
-    marketActivityRepository,
-    priceHistoryRepository: marketPriceHistoryRepository,
-    platformActivityRepository,
-  });
   let snapshotCollectorTimer: ReturnType<typeof setInterval> | null = null;
 
   if (!db.enabled) {
@@ -219,7 +210,15 @@ export function buildApp(config: AppConfig = getConfig()) {
   });
 
   app.addHook("preHandler", async (request, reply) => {
-    if (!config.csrfProtectionEnabled || !isStateChangingMethod(request.method)) {
+    const isSignedDepositWebhook =
+      request.method === "POST" &&
+      request.routeOptions.url === "/api/wallets/webhooks/deposits";
+
+    if (
+      !config.csrfProtectionEnabled ||
+      !isStateChangingMethod(request.method) ||
+      isSignedDepositWebhook
+    ) {
       return;
     }
 
@@ -308,8 +307,28 @@ export function buildApp(config: AppConfig = getConfig()) {
       });
     }
 
-    if (error instanceof LedgerError) {
+    if (error instanceof CoinLedgerError) {
       return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+    }
+
+    if (error instanceof CoinWalletError) {
+      return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+    }
+
+    if (error instanceof ExchangeRateError) {
+      return reply.status(503).send({
         data: null,
         error: {
           code: error.code,
@@ -356,21 +375,22 @@ export function buildApp(config: AppConfig = getConfig()) {
   registerPlatformActivityRoutes(app, platformActivity);
   registerAuthRoutes(app, auth, audit, config, authRateLimiter, verification, twoFactor);
   registerComplianceRoutes(app, auth, compliance, config);
-  registerWalletRoutes(app, auth, audit, wallets, config);
-  registerLedgerRoutes(app, auth, audit, ledger, config);
+  registerWalletRoutes(app, auth, audit, config, coinWallets);
+  registerCoinRoutes(app, auth, config, coins);
   registerTradingRoutes(
     app,
     auth,
     config,
     audit,
     marketData,
-    ledger,
+    coins,
     portfolioRepository,
     compliance,
     marketActivityRepository,
     settlement.repository,
     {
       requirePersistentUserState: db.enabled || config.nodeEnv === "production",
+      requireAtomicTradeCommits: true,
     },
   );
   registerAdminRoutes(
@@ -381,9 +401,8 @@ export function buildApp(config: AppConfig = getConfig()) {
     config,
     settlement,
     marketSeed,
-    adminLedgerActivity,
-    adminEventActivitySeed,
     adminPanelAuth,
+    coinWallets,
   );
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
 
@@ -567,7 +586,6 @@ const requiredProductionEnv = [
   "SESSION_SECRET",
   "SESSION_COOKIE_SECURE",
   "CORS_ALLOWED_ORIGINS",
-  "WALLET_DEPOSIT_WEBHOOK_SECRET",
 ];
 
 const isEntrypoint = process.argv[1]

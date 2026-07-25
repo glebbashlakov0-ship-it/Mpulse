@@ -87,6 +87,7 @@ export type PolymarketPriceHistoryResponse = {
 export type NormalizedOutcome = {
   name: string;
   price: number | null;
+  priceDecimal?: string | null;
   probability: number | null;
   price_cents: number | null;
   clobTokenId: string | null;

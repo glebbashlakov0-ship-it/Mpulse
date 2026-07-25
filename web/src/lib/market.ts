@@ -1,6 +1,7 @@
 import { categoryFallbackImagePools, categoryFallbackImages } from "./constants";
+import { addDecimalValues } from "./format";
 import { formatMarketText } from "./marketText";
-import type { Market, LocalPosition, PortfolioSummary, RelatedMarket } from "./types";
+import type { Market, LocalPosition, RelatedMarket } from "./types";
 
 type MarketImageLike = Pick<Market, "id" | "slug" | "title" | "category"> & {
   image?: string | null;
@@ -262,7 +263,7 @@ export function getSidePrice(market: Market | null, side: "yes" | "no", fallback
 }
 
 export function getPositionShares(position: LocalPosition) {
-  return position.yesShares + position.noShares;
+  return addDecimalValues(position.yesShares, position.noShares) ?? "0";
 }
 
 export function getOutcomeActionLabel(outcomeName: string, isBinaryMarket: boolean) {
@@ -285,47 +286,5 @@ export function getOutcomeActionLabel(outcomeName: string, isBinaryMarket: boole
 }
 
 export function getAveragePositionPrice(position: LocalPosition) {
-  const shares = getPositionShares(position);
-
-  return shares > 0 ? position.totalCost / shares : 0;
-}
-
-export function getPositionValue(position: LocalPosition, market: Market | null) {
-  const fallbackPrice = getAveragePositionPrice(position);
-  const yesValue = position.yesShares * getSidePrice(market, "yes", fallbackPrice);
-  const noValue = position.noShares * getSidePrice(market, "no", fallbackPrice);
-
-  return yesValue + noValue;
-}
-
-export function getPositionPnl(position: LocalPosition, market: Market | null) {
-  return getPositionValue(position, market) - position.totalCost;
-}
-
-export function getPortfolioSummary(
-  portfolio: {
-    wallet: { balance: number; initialBalance: number };
-    positions: LocalPosition[];
-  },
-  markets: Market[],
-): PortfolioSummary {
-  const positionValue = portfolio.positions.reduce((total, position) => {
-    return total + getPositionValue(position, getPositionMarket(position, markets));
-  }, 0);
-  const invested = portfolio.positions.reduce(
-    (total, position) => total + position.totalCost,
-    0,
-  );
-  const equity = portfolio.wallet.balance + positionValue;
-  const pnl = equity - portfolio.wallet.initialBalance;
-
-  return {
-    cash: portfolio.wallet.balance,
-    positionValue,
-    invested,
-    equity,
-    pnl,
-    pnlPercent: portfolio.wallet.initialBalance > 0 ? pnl / portfolio.wallet.initialBalance : 0,
-    openPositions: portfolio.positions.length,
-  };
+  return position.averagePrice;
 }

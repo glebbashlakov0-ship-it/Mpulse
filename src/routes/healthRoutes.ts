@@ -79,9 +79,6 @@ function getConfigurationReadiness(config: AppConfig) {
   if (config.appMode !== "local") {
     failed.push("APP_MODE must be local");
   }
-  if (!config.walletDepositWebhookSecret) {
-    failed.push("WALLET_DEPOSIT_WEBHOOK_SECRET is not configured");
-  }
   if (config.nodeEnv === "production" && !config.sessionCookieSecure) {
     failed.push("SESSION_COOKIE_SECURE must be true in production");
   }

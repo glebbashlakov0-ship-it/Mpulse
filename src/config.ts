@@ -17,6 +17,7 @@ export type AppConfig = {
   marketSnapshotHistoryLimit: number;
   cacheEnabled: boolean;
   nodeEnv: string;
+  productionDeployment: boolean;
   sessionSecret: string;
   sessionCookieName: string;
   sessionCookieSecure: boolean;
@@ -28,6 +29,10 @@ export type AppConfig = {
   redisUrl: string | null;
   authRateLimitWindowMs: number;
   authRateLimitMax: number;
+  ledgerCreditApiEnabled: boolean;
+  walletDepositWebhookEnabled: boolean;
+  adminManualDepositApprovalEnabled: boolean;
+  adminActivitySeedApiEnabled: boolean;
   adminEmails: string[];
   supportEmails: string[];
   complianceAdminEmails: string[];
@@ -37,8 +42,13 @@ export type AppConfig = {
   adminPanelPassword: string | null;
   adminPanelCookieName: string;
   adminPanelTtlMs: number;
-  walletDepositWebhookSecret: string | null;
   walletDepositMinConfirmations: number;
+  realMoneyDepositProvider: string | null;
+  exchangeRateProvider: "disabled" | "coinbase";
+  exchangeRateTtlSeconds: number;
+  exchangeRateRequestTimeoutMs: number;
+  exchangeRateCoinbaseUrl: string;
+  usdtTronContract: string | null;
   databaseUrl: string | null;
   databaseSsl: boolean;
   resendApiKey: string;
@@ -146,12 +156,12 @@ export function getConfig(): AppConfig {
   const nodeEnv = process.env.NODE_ENV ?? "development";
   const appMode = process.env.APP_MODE ?? "local";
   const sessionSecret = stringFromEnv("SESSION_SECRET");
-  const walletDepositWebhookSecret = stringFromEnv("WALLET_DEPOSIT_WEBHOOK_SECRET");
   const corsAllowedOrigins = listFromEnv("CORS_ALLOWED_ORIGINS", []);
   const databaseUrl = stringFromEnv("DATABASE_URL");
   const redisUrl = stringFromEnv("REDIS_URL");
   const adminPanelUsername = stringFromEnv("ADMIN_PANEL_USERNAME");
   const adminPanelPassword = stringFromEnv("ADMIN_PANEL_PASSWORD");
+  const exchangeRateProvider = stringFromEnv("EXCHANGE_RATE_PROVIDER") ?? "disabled";
   const authRateLimitBackend = stringFromEnv("AUTH_RATE_LIMIT_BACKEND")
     ?? (nodeEnv === "production" ? (redisUrl ? "redis" : "external") : "memory");
 
@@ -163,6 +173,9 @@ export function getConfig(): AppConfig {
   }
   if (authRateLimitBackend === "redis" && !redisUrl) {
     throw new Error("REDIS_URL is required when AUTH_RATE_LIMIT_BACKEND=redis.");
+  }
+  if (!["disabled", "coinbase"].includes(exchangeRateProvider)) {
+    throw new Error("EXCHANGE_RATE_PROVIDER must be disabled or coinbase.");
   }
 
   const sessionCookieSecure = booleanFromEnv("SESSION_COOKIE_SECURE", nodeEnv === "production");
@@ -176,9 +189,6 @@ export function getConfig(): AppConfig {
     }
     if (corsAllowedOrigins.length === 0 || corsAllowedOrigins.includes("*")) {
       throw new Error("CORS_ALLOWED_ORIGINS must be an explicit allowlist in production.");
-    }
-    if (isPlaceholderSecret(walletDepositWebhookSecret)) {
-      throw new Error("WALLET_DEPOSIT_WEBHOOK_SECRET must be set to a non-placeholder value.");
     }
     if (!databaseUrl) {
       throw new Error("DATABASE_URL is required in production.");
@@ -217,6 +227,8 @@ export function getConfig(): AppConfig {
       integer: true,
     }),
     cacheEnabled: booleanFromEnv("CACHE_ENABLED", true),
+    productionDeployment:
+      nodeEnv === "production" || process.env.VERCEL_ENV === "production",
     sessionSecret: sessionSecret ?? "dev-only-change-this-session-secret-before-production",
     sessionCookieName: process.env.SESSION_COOKIE_NAME ?? "mp_session",
     sessionCookieSecure,
@@ -228,6 +240,13 @@ export function getConfig(): AppConfig {
     redisUrl,
     authRateLimitWindowMs: numberFromEnv("AUTH_RATE_LIMIT_WINDOW_MS", 60_000, { min: 1 }),
     authRateLimitMax: numberFromEnv("AUTH_RATE_LIMIT_MAX", 20, { min: 1, integer: true }),
+    ledgerCreditApiEnabled: booleanFromEnv("LEDGER_CREDIT_API_ENABLED", false),
+    walletDepositWebhookEnabled: booleanFromEnv("WALLET_DEPOSIT_WEBHOOK_ENABLED", false),
+    adminManualDepositApprovalEnabled: booleanFromEnv(
+      "ADMIN_MANUAL_DEPOSIT_APPROVAL_ENABLED",
+      false,
+    ),
+    adminActivitySeedApiEnabled: booleanFromEnv("ADMIN_ACTIVITY_SEED_API_ENABLED", false),
     adminEmails: listFromEnv("ADMIN_EMAILS", []),
     supportEmails: listFromEnv("SUPPORT_EMAILS", []),
     complianceAdminEmails: listFromEnv("COMPLIANCE_ADMIN_EMAILS", []),
@@ -237,11 +256,26 @@ export function getConfig(): AppConfig {
     adminPanelPassword: adminPanelPassword ?? (nodeEnv === "production" ? null : "admin"),
     adminPanelCookieName: process.env.ADMIN_PANEL_COOKIE_NAME ?? "pulse_admin_session",
     adminPanelTtlMs: numberFromEnv("ADMIN_PANEL_TTL_MS", 1000 * 60 * 60 * 12, { min: 60_000 }),
-    walletDepositWebhookSecret,
     walletDepositMinConfirmations: numberFromEnv("WALLET_DEPOSIT_MIN_CONFIRMATIONS", 20, {
       min: 0,
       integer: true,
     }),
+    realMoneyDepositProvider: stringFromEnv("REAL_MONEY_DEPOSIT_PROVIDER"),
+    exchangeRateProvider: exchangeRateProvider as "disabled" | "coinbase",
+    exchangeRateTtlSeconds: numberFromEnv("EXCHANGE_RATE_TTL_SECONDS", 30, {
+      min: 1,
+      integer: true,
+    }),
+    exchangeRateRequestTimeoutMs: numberFromEnv(
+      "EXCHANGE_RATE_REQUEST_TIMEOUT_MS",
+      5_000,
+      { min: 1, integer: true },
+    ),
+    exchangeRateCoinbaseUrl: urlFromEnv(
+      "EXCHANGE_RATE_COINBASE_URL",
+      "https://api.coinbase.com/v2/exchange-rates?currency=USDT",
+    ),
+    usdtTronContract: stringFromEnv("USDT_TRON_CONTRACT"),
     databaseUrl,
     databaseSsl: booleanFromEnv("DATABASE_SSL", nodeEnv === "production"),
     resendApiKey: stringFromEnv("RESEND_API_KEY") ?? "local",

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool } from "pg";
 import { getConfig } from "./config.js";
+import { migrations } from "./migrationPlan.js";
 
 const config = getConfig();
 
@@ -13,25 +14,6 @@ const pool = new Pool({
   connectionString: config.databaseUrl,
   ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
 });
-
-const migrations = [
-  "001_initial_schema.sql",
-  "002_ledger_core.sql",
-  "003_compliance_core.sql",
-  "004_wallets_usdt_core.sql",
-  "005_wallet_withdrawal_idempotency_fingerprint.sql",
-  "006_admin_core.sql",
-  "007_wallet_deposit_events.sql",
-  "008_wallet_deposit_event_fingerprint.sql",
-  "009_wallet_deposit_event_amount_check.sql",
-  "010_auth_verification_tokens.sql",
-  "011_account_security_and_watchlist.sql",
-  "012_wallet_provider_alignment.sql",
-  "013_market_activity_comments.sql",
-  "014_market_settlement_core.sql",
-  "015_market_price_history_points.sql",
-  "016_trade_metadata.sql",
-];
 
 try {
   await pool.query(`

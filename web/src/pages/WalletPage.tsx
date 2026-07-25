@@ -1,54 +1,97 @@
 import * as React from "react";
 import toast from "react-hot-toast";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { Link, useSearchParams } from "react-router";
+import {
+  Activity,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Check,
+  CircleDollarSign,
+  Copy,
+  RefreshCw,
+} from "lucide-react";
 import {
   createDepositIntent,
+  createWithdrawalQuote,
   createWithdrawalRequest,
-  loadComplianceEligibility,
-  loadLedgerBalance,
-  loadLedgerEntries,
+  loadCoinLedger,
   loadMyWallet,
   loadWalletDeposits,
   loadWithdrawalRequests,
 } from "../lib/api";
-import { formatRelativeTime, formatUsdt } from "../lib/format";
-import { formatEligibilityReason, isEligibleToTrade } from "../lib/eligibility";
+import {
+  formatAssetAmount,
+  formatCoinMicros,
+  formatRelativeTime,
+  formatSignedCoinMicros,
+  formatUsdReference,
+  parseAssetInputToAtomic,
+  parseCoinInputToMicros,
+} from "../lib/format";
 import type {
-  ComplianceEligibilityPayload,
-  LedgerBalancePayload,
-  LedgerEntriesPayload,
+  CoinLedgerPayload,
+  DepositIntent,
   MyWalletPayload,
   WalletDepositsPayload,
+  WithdrawalQuote,
   WithdrawalRequestsPayload,
 } from "../lib/types";
 import { useAuth } from "../hooks/useAuth";
+import { useCoinAccount } from "../hooks/useCoinAccount";
 
 const RAIL_LABEL = "USDT on TRON (TRC-20)";
-const WALLET_NOTICE =
-  "Withdrawals are reviewed before processing. Account features may vary by eligibility and region.";
-
+const DEPOSIT_QUICK_AMOUNTS = ["25", "50", "100", "500"] as const;
 export function WalletPage() {
   const { user, status: authStatus } = useAuth();
+  const userId = user?.id ?? null;
+  const {
+    balance,
+    error: coinAccountError,
+    refreshBalance,
+    supportedAssets,
+  } = useCoinAccount();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeAction: "deposit" | "withdraw" =
+    searchParams.get("action") === "withdraw" ? "withdraw" : "deposit";
   const [walletState, setWalletState] = React.useState<MyWalletPayload | null>(null);
-  const [balanceState, setBalanceState] = React.useState<LedgerBalancePayload | null>(null);
   const [depositsState, setDepositsState] = React.useState<WalletDepositsPayload | null>(null);
   const [withdrawalsState, setWithdrawalsState] =
     React.useState<WithdrawalRequestsPayload | null>(null);
-  const [ledgerState, setLedgerState] = React.useState<LedgerEntriesPayload | null>(null);
-  const [eligibilityState, setEligibilityState] =
-    React.useState<ComplianceEligibilityPayload | null>(null);
+  const [ledgerState, setLedgerState] = React.useState<CoinLedgerPayload | null>(null);
   const [status, setStatus] = React.useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = React.useState<string | null>(null);
   const [activeTab, setActiveTab] =
     React.useState<"deposits" | "withdrawals" | "ledger">("deposits");
   const [depositAmount, setDepositAmount] = React.useState("25");
+  const [depositReference, setDepositReference] = React.useState("");
+  const [depositStatus, setDepositStatus] = React.useState<string | null>(null);
+  const [createdDepositIntent, setCreatedDepositIntent] = React.useState<DepositIntent | null>(null);
   const [withdrawAmount, setWithdrawAmount] = React.useState("");
   const [withdrawAddress, setWithdrawAddress] = React.useState("");
+  const [withdrawalQuote, setWithdrawalQuote] = React.useState<WithdrawalQuote | null>(null);
+  const [addressCopied, setAddressCopied] = React.useState(false);
   const [isDepositCreating, setIsDepositCreating] = React.useState(false);
   const [isWithdrawSubmitting, setIsWithdrawSubmitting] = React.useState(false);
+  const isMountedRef = React.useRef(false);
+  const walletRequestIdRef = React.useRef(0);
+  const copyResetTimeoutRef = React.useRef<number | null>(null);
+
+  React.useEffect(() => {
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+      walletRequestIdRef.current += 1;
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+        copyResetTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const refreshWallet = React.useCallback(async () => {
-    if (!user) {
+    const requestId = ++walletRequestIdRef.current;
+    if (!userId) {
       return;
     }
 
@@ -56,85 +99,114 @@ export function WalletPage() {
     setError(null);
 
     try {
-      const [wallet, balance, deposits, withdrawals, ledger] = await Promise.all([
-        loadMyWallet(),
-        loadLedgerBalance(),
+      const [wallet, deposits, withdrawals, ledger] = await Promise.all([
+        loadMyWallet().catch(() => null),
         loadWalletDeposits(),
         loadWithdrawalRequests(),
-        loadLedgerEntries(50),
+        loadCoinLedger(50),
+        refreshBalance(),
       ]);
-      const eligibility = await loadComplianceEligibility().catch(() => null);
 
+      if (!isMountedRef.current || requestId !== walletRequestIdRef.current) {
+        return;
+      }
       setWalletState(wallet);
-      setBalanceState(balance);
       setDepositsState(deposits);
       setWithdrawalsState(withdrawals);
       setLedgerState(ledger);
-      setEligibilityState(eligibility);
       setStatus("ready");
     } catch (nextError) {
+      if (!isMountedRef.current || requestId !== walletRequestIdRef.current) {
+        return;
+      }
       const message = nextError instanceof Error ? nextError.message : "Could not load wallet";
       setError(message);
       setStatus("error");
       toast.error(message);
     }
-  }, [user]);
+  }, [refreshBalance, userId]);
 
   React.useEffect(() => {
-    if (user) {
+    if (userId) {
       void refreshWallet();
     } else {
+      walletRequestIdRef.current += 1;
       setStatus("idle");
     }
-  }, [refreshWallet, user]);
 
-  async function refreshLedger() {
-    const [balance, ledger] = await Promise.all([loadLedgerBalance(), loadLedgerEntries(50)]);
-    setBalanceState(balance);
-    setLedgerState(ledger);
-  }
+    return () => {
+      walletRequestIdRef.current += 1;
+    };
+  }, [refreshWallet, userId]);
+
+  const selectAction = React.useCallback(
+    (action: "deposit" | "withdraw") => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set("action", action);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   async function handleDepositIntent(event: React.FormEvent) {
     event.preventDefault();
-    const amount = Number(depositAmount);
+    const expectedUsdtAtomic = parseAssetInputToAtomic(depositAmount);
 
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!expectedUsdtAtomic) {
       toast.error("Enter a positive expected amount.");
       return;
     }
 
     setIsDepositCreating(true);
+    setDepositStatus(null);
 
     try {
-      await createDepositIntent({
-        expectedAmount: amount,
-        reference: `wallet-page-${Date.now()}`,
+      const created = await createDepositIntent({
+        expectedUsdtAtomic,
+        memo: depositReference.trim() || null,
       });
-      setDepositsState(await loadWalletDeposits());
-      toast.success("Deposit instruction created.");
+      const [deposits, ledger] = await Promise.all([
+        loadWalletDeposits(),
+        loadCoinLedger(50),
+        refreshBalance(),
+      ]);
+      if (!isMountedRef.current) {
+        return;
+      }
+      setDepositReference("");
+      setCreatedDepositIntent(created.depositIntent);
+      setDepositsState(deposits);
+      setLedgerState(ledger);
+      setDepositStatus(
+        `${formatAssetAmount(created.depositIntent.expectedUsdtAtomic, "USDT", {
+          atomic: true,
+        })} deposit instructions created · ${statusLabel(created.depositIntent.status)}`,
+      );
+      toast.success("Deposit request created.");
     } catch (nextError) {
+      if (!isMountedRef.current) {
+        return;
+      }
       toast.error(
-        nextError instanceof Error ? nextError.message : "Could not create deposit instruction",
+        nextError instanceof Error ? nextError.message : "Could not create deposit",
       );
     } finally {
-      setIsDepositCreating(false);
+      if (isMountedRef.current) {
+        setIsDepositCreating(false);
+      }
     }
   }
 
   async function handleWithdraw(event: React.FormEvent) {
     event.preventDefault();
-    const amount = Number(withdrawAmount);
-    const canRequestWithdrawal = isEligibleToTrade(eligibilityState);
+    const coinAmountMicros = parseCoinInputToMicros(withdrawAmount);
 
-    if (!canRequestWithdrawal) {
-      toast.error(
-        getWithdrawalEligibilityText(eligibilityState) ??
-          "Complete account verification before requesting a withdrawal.",
-      );
-      return;
-    }
-
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!coinAmountMicros) {
       toast.error("Enter a positive withdrawal amount.");
       return;
     }
@@ -142,36 +214,105 @@ export function WalletPage() {
     setIsWithdrawSubmitting(true);
 
     try {
-      await createWithdrawalRequest({
-        amount,
-        destinationAddress: withdrawAddress,
+      const result = await createWithdrawalQuote({
+        coinAmountMicros,
+        destinationAddress: withdrawAddress.trim(),
       });
-      setWithdrawalsState(await loadWithdrawalRequests());
+      if (!isMountedRef.current) {
+        return;
+      }
+      setWithdrawalQuote(result.quote);
+      toast.success("Withdrawal quote created. Review it before confirming.");
+    } catch (nextError) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      toast.error(
+        nextError instanceof Error ? nextError.message : "Could not create withdrawal quote",
+      );
+    } finally {
+      if (isMountedRef.current) {
+        setIsWithdrawSubmitting(false);
+      }
+    }
+  }
+
+  async function handleConfirmWithdrawal() {
+    if (!withdrawalQuote || withdrawalQuote.status !== "open") {
+      return;
+    }
+
+    setIsWithdrawSubmitting(true);
+    try {
+      await createWithdrawalRequest({ quoteId: withdrawalQuote.id });
+      const [withdrawals, ledger] = await Promise.all([
+        loadWithdrawalRequests(),
+        loadCoinLedger(50),
+        refreshBalance(),
+      ]);
+      if (!isMountedRef.current) {
+        return;
+      }
+      setWithdrawalsState(withdrawals);
+      setLedgerState(ledger);
       setWithdrawAmount("");
       setWithdrawAddress("");
-      toast.success("Withdrawal request submitted for review.");
+      setWithdrawalQuote(null);
+      toast.success("Withdrawal reserved and submitted for review.");
     } catch (nextError) {
+      if (!isMountedRef.current) {
+        return;
+      }
       toast.error(
         nextError instanceof Error ? nextError.message : "Could not create withdrawal request",
       );
     } finally {
-      setIsWithdrawSubmitting(false);
+      if (isMountedRef.current) {
+        setIsWithdrawSubmitting(false);
+      }
+    }
+  }
+
+  async function handleCopyAddress() {
+    if (!walletState?.wallet.address) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(walletState.wallet.address);
+      if (!isMountedRef.current) {
+        return;
+      }
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      setAddressCopied(true);
+      toast.success("Deposit address copied.");
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        copyResetTimeoutRef.current = null;
+        if (isMountedRef.current) {
+          setAddressCopied(false);
+        }
+      }, 1800);
+    } catch {
+      if (isMountedRef.current) {
+        toast.error("Could not copy the deposit address.");
+      }
     }
   }
 
   if (authStatus === "loading") {
-    return <WalletShell title="Wallet" body={<LoadingState />} />;
+    return <WalletShell body={<LoadingState />} />;
   }
 
   if (!user) {
     return (
       <WalletShell
-        title="Wallet"
         body={
           <section className="rounded-2xl border border-[#f7d022]/35 bg-[#f7d022]/10 p-5 text-[#f8da52]">
             <h2 className="text-lg font-semibold">Sign in required</h2>
             <p className="mt-1 text-sm">
-              Wallet and balance data are available after you sign in.
+              Coins and transaction history are available after you sign in.
             </p>
             <a
               href="/auth?mode=login&redirect=%2Fwallet"
@@ -185,17 +326,16 @@ export function WalletPage() {
     );
   }
 
-  if (status === "loading") {
-    return <WalletShell title="Wallet" body={<LoadingState />} />;
+  if (status === "idle" || status === "loading") {
+    return <WalletShell body={<LoadingState />} />;
   }
 
   if (status === "error") {
     return (
       <WalletShell
-        title="Wallet"
         body={
           <section className="rounded-2xl border border-[#cb3131]/35 bg-[#cb3131]/10 p-5 text-[#d78282]">
-            <h2 className="text-lg font-semibold">Wallet could not load</h2>
+            <h2 className="text-lg font-semibold">Coins could not load</h2>
             <p className="mt-1 text-sm">{error}</p>
             <button
               className="mt-4 inline-flex items-center gap-2 rounded-2xl bg-[#cb3131] px-4 py-2 text-sm font-semibold text-white hover:bg-[#951616]"
@@ -212,151 +352,409 @@ export function WalletPage() {
   }
 
   const wallet = walletState?.wallet ?? null;
-  const balance = balanceState?.balance ?? null;
-  const depositIntents = depositsState?.depositIntents ?? [];
-  const depositEvents = depositsState?.depositEvents ?? [];
+  const availableCoinMicros = balance?.availableCoinMicros ?? "0";
+  const reservedCoinMicros = balance?.reservedCoinMicros ?? "0";
+  const totalCoinMicros = balance?.totalCoinMicros ?? "0";
+  const deposits = depositsState?.deposits ?? [];
   const withdrawals = withdrawalsState?.withdrawalRequests ?? [];
   const ledgerEntries = ledgerState?.entries ?? [];
-  const canRequestWithdrawal = isEligibleToTrade(eligibilityState);
-  const withdrawalEligibilityText = getWithdrawalEligibilityText(eligibilityState);
+  const settlementRail = supportedAssets?.settlementAssets.find(
+    (rail) => rail.asset === "USDT" && rail.network === "TRON",
+  );
+  const depositEnabled = settlementRail?.depositEnabled ?? false;
+  const withdrawalEnabled = settlementRail?.withdrawalEnabled ?? false;
+  const transferNote = settlementRail
+    ? `${RAIL_LABEL} · ${
+        settlementRail.reviewOnly
+          ? "Requests are review-only; no automatic broadcast."
+          : "Transfers are processed on TRON."
+      }`
+    : "Money rail capabilities are unavailable.";
 
   return (
     <WalletShell
-      title="Wallet"
       body={
         <>
-          <section className="mb-6 rounded-2xl border border-[#f7d022]/35 bg-[#f7d022]/10 p-5 text-[#f8da52]">
-            <div className="flex gap-3">
-              <AlertTriangle className="mt-0.5 size-5 shrink-0" />
-              <div>
-                <h2 className="text-lg font-semibold">Wallet notice</h2>
-                <p className="mt-1 text-sm">{WALLET_NOTICE}</p>
+          <AccountViewTabs />
+
+          {coinAccountError ? (
+            <div className="mt-4 rounded-xl border border-[#cb3131]/35 bg-[#cb3131]/10 px-4 py-3 text-sm text-[#d78282]">
+              {coinAccountError}
+            </div>
+          ) : null}
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+            <section className="flex min-h-[268px] flex-col rounded-2xl border border-[#2e3841] bg-[#1e2428] p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[#7b8996]">
+                  <CircleDollarSign size={17} />
+                  Coins
+                </div>
+                <span className="text-xs font-medium text-[#697d91]">Available Coins</span>
               </div>
-            </div>
-          </section>
-
-          <section className="mb-6 rounded-2xl border border-[#242b32] bg-[#1e2428] p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-[#7b8996]">Available balance</p>
-                <h2 className="mt-1 text-3xl font-bold text-[#dee3e7]">
-                  {formatUsdt(balance?.availableBalance ?? 0)}
-                </h2>
-                <p className="mt-2 text-sm text-[#7b8996]">
-                  Rail: {RAIL_LABEL}. Withdrawal requests are reviewed before processing.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-4 sm:grid-cols-4">
-              <Metric label="Credited" value={formatUsdt(balance?.totalCredited ?? 0)} />
-              <Metric label="Debited" value={formatUsdt(balance?.totalDebited ?? 0)} />
-              <Metric label="Held" value={formatUsdt(balance?.totalHeld ?? 0)} />
-              <Metric label="Released" value={formatUsdt(balance?.totalReleased ?? 0)} />
-            </div>
-          </section>
-
-          <div className="mb-6 grid gap-6 lg:grid-cols-2">
-            <section className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-6">
-              <h2 className="text-xl font-semibold text-[#dee3e7]">Deposit instructions</h2>
-              <p className="mt-1 text-sm text-[#7b8996]">
-                Create an instruction for a USDT deposit on the selected network.
-              </p>
 
               <div className="mt-5">
-                <p className="text-sm font-medium text-[#afbac5]">Network</p>
-                <p className="mt-1 font-semibold text-[#dee3e7]">{RAIL_LABEL}</p>
+                <strong className="block text-4xl font-semibold tracking-tight text-[#dee3e7] sm:text-5xl">
+                  {formatCoinMicros(availableCoinMicros)}
+                </strong>
+                <p className="mt-2 text-sm font-medium text-[#7b8996]">
+                  {formatCoinMicros(reservedCoinMicros)} reserved
+                </p>
               </div>
 
-              <div className="mt-4">
-                <p className="text-sm font-medium text-[#afbac5]">Deposit address</p>
-                {wallet ? (
-                  <p className="mt-1 break-all rounded-2xl bg-[#181d21] p-3 font-mono text-sm text-[#dee3e7]">
-                    {wallet.address}
-                  </p>
-                ) : (
-                  <p className="mt-1 text-sm text-[#7b8996]">No wallet address yet.</p>
-                )}
+              <div className="mt-auto grid grid-cols-2 gap-2 pt-8">
+                <ActionButton
+                  active={activeAction === "deposit"}
+                  disabled={!depositEnabled}
+                  icon={<ArrowDownToLine size={17} />}
+                  label={depositEnabled ? "Deposit" : "Deposit unavailable"}
+                  onClick={() => selectAction("deposit")}
+                />
+                <ActionButton
+                  active={activeAction === "withdraw"}
+                  disabled={!withdrawalEnabled}
+                  icon={<ArrowUpFromLine size={17} />}
+                  label={withdrawalEnabled ? "Withdraw" : "Withdrawal unavailable"}
+                  onClick={() => selectAction("withdraw")}
+                />
               </div>
-
-              <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={handleDepositIntent}>
-                <label className="min-w-0 flex-1 text-sm font-medium text-[#afbac5]">
-                  Expected amount
-                  <input
-                    className="mt-1 w-full rounded-2xl border border-[#2e3841] px-3 py-2 text-sm focus:border-[#0093fd] focus:outline-none focus:ring-1 focus:ring-[#0093fd]"
-                    min="0.01"
-                    step="0.01"
-                    type="number"
-                    value={depositAmount}
-                    onChange={(event) => setDepositAmount(event.target.value)}
-                  />
-                </label>
-                <button
-                  className="self-end rounded-2xl border border-[#2e3841] px-4 py-2 text-sm font-semibold text-[#d2d8df] hover:bg-[#181d21] disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isDepositCreating}
-                  type="submit"
-                >
-                  {isDepositCreating ? "Creating..." : "Create instruction"}
-                </button>
-              </form>
             </section>
 
-            <section className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-6">
-              <h2 className="text-xl font-semibold text-[#dee3e7]">Withdrawal request</h2>
-              <p className="mt-1 text-sm text-[#7b8996]">
-                Withdrawal requests are reviewed before processing.
-              </p>
-              {!canRequestWithdrawal ? (
-                <div className="mt-4 rounded-2xl border border-[#f7d022]/35 bg-[#f7d022]/10 px-4 py-3 text-sm font-semibold text-[#f8da52]">
-                  {withdrawalEligibilityText ??
-                    "Complete account verification before requesting a withdrawal."}
+            <section className="min-h-[268px] overflow-hidden rounded-2xl border border-[#2e3841] bg-[#1e2428] p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[#7b8996]">
+                  <Activity size={17} />
+                  Coin activity
                 </div>
-              ) : null}
+                <span className="rounded-lg bg-[#18344f] px-2.5 py-1 text-xs font-bold text-[#26a3fd]">
+                  Recent
+                </span>
+              </div>
 
-              <form className="mt-5 space-y-4" onSubmit={handleWithdraw}>
-                <label className="block text-sm font-medium text-[#afbac5]">
-                  Amount
-                  <input
-                    className="mt-1 w-full rounded-2xl border border-[#2e3841] px-3 py-2 text-sm focus:border-[#0093fd] focus:outline-none focus:ring-1 focus:ring-[#0093fd]"
-                    min="0.01"
-                    required
-                    step="0.01"
-                    type="number"
-                    value={withdrawAmount}
-                    onChange={(event) => setWithdrawAmount(event.target.value)}
-                  />
-                </label>
-                <label className="block text-sm font-medium text-[#afbac5]">
-                  TRON destination address
-                  <input
-                    className="mt-1 w-full rounded-2xl border border-[#2e3841] px-3 py-2 font-mono text-sm focus:border-[#0093fd] focus:outline-none focus:ring-1 focus:ring-[#0093fd]"
-                    placeholder="T..."
-                    required
-                    type="text"
-                    value={withdrawAddress}
-                    onChange={(event) => setWithdrawAddress(event.target.value)}
-                  />
-                </label>
-                <button
-                  className="rounded-2xl bg-[#0093fd] px-4 py-2 text-sm font-semibold text-white hover:bg-[#26a3fd] disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isWithdrawSubmitting || !canRequestWithdrawal}
-                  type="submit"
-                >
-                  {!canRequestWithdrawal
-                    ? "Complete verification"
-                    : isWithdrawSubmitting
-                      ? "Saving..."
-                      : "Submit request"}
-                </button>
-              </form>
+              <strong className="mt-5 block text-3xl font-semibold tracking-tight text-[#dee3e7]">
+                {formatCoinMicros(totalCoinMicros)}
+              </strong>
+              <p className="mt-1 text-sm font-medium text-[#7b8996]">Total Coins</p>
+
+              <CashActivityChart entries={ledgerEntries} />
+
+              <div className="mt-3 grid grid-cols-3 gap-3 border-t border-[#2e3841] pt-3">
+                <CompactMetric label="Available" value={availableCoinMicros} />
+                <CompactMetric label="Reserved" value={reservedCoinMicros} />
+                <CompactMetric label="Total" value={totalCoinMicros} />
+              </div>
             </section>
           </div>
 
-          <section className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-6">
+          <section className="mt-5 rounded-2xl border border-[#2e3841] bg-[#1e2428]">
+            <div className="flex items-center gap-1 border-b border-[#2e3841] p-1.5">
+              <ActionTab
+                active={activeAction === "deposit"}
+                disabled={!depositEnabled}
+                label="Deposit"
+                onClick={() => selectAction("deposit")}
+              />
+              <ActionTab
+                active={activeAction === "withdraw"}
+                disabled={!withdrawalEnabled}
+                label="Withdraw"
+                onClick={() => selectAction("withdraw")}
+              />
+            </div>
+
+            <div className="p-5 sm:p-6">
+              {activeAction === "deposit" ? (
+                <>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-xl font-semibold text-[#dee3e7]">Deposit USDT</h2>
+                      <p className="mt-1 text-sm text-[#7b8996]">
+                        Send external USDT on TRON; confirmed funds are converted to Coins using a
+                        fresh saved rate.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <span className="rounded-lg border border-[#2e3841] bg-[#181d21] px-3 py-1.5 text-xs font-semibold text-[#d2d8df]">
+                        USDT
+                      </span>
+                      <span className="rounded-lg border border-[#2e3841] bg-[#181d21] px-3 py-1.5 text-xs font-semibold text-[#d2d8df]">
+                        TRC-20
+                      </span>
+                    </div>
+                  </div>
+
+                  {!depositEnabled ? (
+                    <RailUnavailableNotice
+                      text={
+                        settlementRail?.disabledReason ??
+                        "USDT deposits are unavailable. No active deposit operation is exposed."
+                      }
+                    />
+                  ) : null}
+
+                  <form
+                    className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.92fr)]"
+                    onSubmit={handleDepositIntent}
+                  >
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#7b8996]">
+                        Deposit address
+                      </p>
+                      {wallet ? (
+                        <div className="mt-2 flex items-center gap-2 rounded-xl border border-[#2e3841] bg-[#181d21] p-2 pl-3">
+                          <code className="min-w-0 flex-1 truncate text-sm text-[#dee3e7]">
+                            {wallet.address}
+                          </code>
+                          <button
+                            aria-label="Copy deposit address"
+                            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-[#2e3841] bg-[#242b32] px-3 py-2 text-xs font-semibold text-[#d2d8df] transition hover:bg-[#2e3841]"
+                            onClick={() => void handleCopyAddress()}
+                            type="button"
+                          >
+                            {addressCopied ? <Check size={15} /> : <Copy size={15} />}
+                            {addressCopied ? "Copied" : "Copy"}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-sm text-[#7b8996]">
+                          No deposit address available.
+                        </p>
+                      )}
+                      <p className="mt-2 text-xs leading-relaxed text-[#697d91]">
+                        Network: {RAIL_LABEL}. Only send USDT using TRC-20.
+                      </p>
+
+                      <label className="mt-5 block text-sm font-medium text-[#afbac5]">
+                        Payment reference{" "}
+                        <span className="font-normal text-[#697d91]">(optional)</span>
+                        <input
+                          className="mt-2 w-full rounded-xl border border-[#2e3841] bg-[#181d21] px-4 py-3 text-sm text-[#dee3e7] outline-none placeholder:text-[#697d91] focus:border-[#0093fd] focus:ring-1 focus:ring-[#0093fd]"
+                          disabled={!depositEnabled}
+                          placeholder="Optional note (not proof of payment)"
+                          type="text"
+                          value={depositReference}
+                          onChange={(event) => setDepositReference(event.target.value)}
+                        />
+                      </label>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-[#afbac5]">
+                        Amount
+                        <div className="mt-2 flex items-center rounded-xl border border-[#2e3841] bg-[#181d21] px-4 focus-within:border-[#0093fd] focus-within:ring-1 focus-within:ring-[#0093fd]">
+                          <input
+                            className="min-w-0 flex-1 bg-transparent py-3 pr-2 text-2xl font-semibold text-[#dee3e7] outline-none"
+                            disabled={!depositEnabled}
+                            inputMode="decimal"
+                            pattern="[0-9]+([.][0-9]{1,6})?"
+                            type="text"
+                            value={depositAmount}
+                            onChange={(event) => setDepositAmount(event.target.value)}
+                          />
+                          <span className="text-sm font-semibold text-[#7b8996]">USDT</span>
+                        </div>
+                      </label>
+
+                      <div className="mt-3 grid grid-cols-4 gap-2">
+                        {DEPOSIT_QUICK_AMOUNTS.map((amount) => (
+                          <button
+                            className={`rounded-lg border px-2 py-2 text-sm font-semibold transition ${
+                              depositAmount === amount
+                                ? "border-[#0093fd] bg-[#0093fd]/12 text-[#26a3fd]"
+                                : "border-[#2e3841] bg-[#181d21] text-[#afbac5] hover:bg-[#242b32]"
+                            }`}
+                            disabled={!depositEnabled}
+                            key={amount}
+                            onClick={() => setDepositAmount(amount)}
+                            type="button"
+                          >
+                            {amount} USDT
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        className="mt-5 w-full rounded-xl bg-[#0093fd] px-4 py-3 text-sm font-bold text-white shadow-[0_4px_0_#006fbe] transition hover:bg-[#26a3fd] active:translate-y-1 active:shadow-none disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={isDepositCreating || !wallet || !depositEnabled}
+                        type="submit"
+                      >
+                        {isDepositCreating
+                          ? "Creating deposit..."
+                          : depositEnabled
+                            ? "Create deposit instructions"
+                            : "Deposits unavailable"}
+                      </button>
+                    </div>
+                  </form>
+
+                  {depositStatus ? (
+                    <div className="mt-4 flex items-center gap-2 rounded-xl bg-[#3db468]/12 px-3 py-2.5 text-sm text-[#5fbe82]">
+                      <Check size={16} />
+                      {depositStatus}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div>
+                    <h2 className="text-xl font-semibold text-[#dee3e7]">Withdraw USDT</h2>
+                    <p className="mt-1 text-sm text-[#7b8996]">
+                      Quote Coins to external USDT, reserve the Coin amount, and submit for manual
+                      review.
+                    </p>
+                  </div>
+
+                  {!withdrawalEnabled ? (
+                    <RailUnavailableNotice
+                      text={
+                        settlementRail?.disabledReason ??
+                        "USDT withdrawals are unavailable. No active withdrawal operation is exposed."
+                      }
+                    />
+                  ) : null}
+
+                  <form
+                    className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end"
+                    onSubmit={handleWithdraw}
+                  >
+                    <label className="block text-sm font-medium text-[#afbac5]">
+                      Amount
+                      <div className="mt-2 flex items-center rounded-xl border border-[#2e3841] bg-[#181d21] px-4 focus-within:border-[#0093fd] focus-within:ring-1 focus-within:ring-[#0093fd]">
+                        <input
+                          className="min-w-0 flex-1 bg-transparent py-3 pr-2 text-2xl font-semibold text-[#dee3e7] outline-none"
+                          disabled={!withdrawalEnabled}
+                          inputMode="decimal"
+                          pattern="[0-9]+([.][0-9]{1,6})?"
+                          required
+                          type="text"
+                          value={withdrawAmount}
+                          onChange={(event) => {
+                            setWithdrawAmount(event.target.value);
+                            setWithdrawalQuote(null);
+                          }}
+                        />
+                        <span className="text-sm font-semibold text-[#7b8996]">Coins</span>
+                      </div>
+                    </label>
+
+                    <label className="block text-sm font-medium text-[#afbac5]">
+                      Destination address
+                      <input
+                        className="mt-2 w-full rounded-xl border border-[#2e3841] bg-[#181d21] px-4 py-4 font-mono text-sm text-[#dee3e7] outline-none placeholder:text-[#697d91] focus:border-[#0093fd] focus:ring-1 focus:ring-[#0093fd]"
+                        placeholder="TRON address (T...)"
+                        disabled={!withdrawalEnabled}
+                        required
+                        type="text"
+                        value={withdrawAddress}
+                        onChange={(event) => {
+                          setWithdrawAddress(event.target.value);
+                          setWithdrawalQuote(null);
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      className="h-[54px] rounded-xl bg-[#0093fd] px-7 text-sm font-bold text-white shadow-[0_4px_0_#006fbe] transition hover:bg-[#26a3fd] active:translate-y-1 active:shadow-none disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isWithdrawSubmitting || !withdrawalEnabled}
+                      type="submit"
+                    >
+                      {isWithdrawSubmitting
+                        ? "Submitting..."
+                        : withdrawalEnabled
+                          ? "Request quote"
+                          : "Withdrawals unavailable"}
+                    </button>
+                  </form>
+
+                  {withdrawalQuote ? (
+                    <section
+                      aria-label="Withdrawal quote"
+                      className="mt-5 rounded-xl border border-[#2e3841] bg-[#181d21] p-4"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-[#dee3e7]">
+                            Withdrawal quote
+                          </p>
+                          <p className="mt-1 text-xs text-[#7b8996]">
+                            Expires {formatRelativeTime(withdrawalQuote.expiresAt)}
+                          </p>
+                        </div>
+                        <span className="rounded-full bg-[#f7d022]/14 px-3 py-1 text-xs font-semibold text-[#f8da52]">
+                          Under review after confirmation
+                        </span>
+                      </div>
+                      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                        <QuoteMetric
+                          label="Coins reserved"
+                          value={formatCoinMicros(withdrawalQuote.coinToDebitMicros)}
+                        />
+                        <QuoteMetric
+                          label="External USDT"
+                          value={formatAssetAmount(
+                            withdrawalQuote.estimatedUsdtAtomic,
+                            "USDT",
+                            { atomic: true },
+                          )}
+                        />
+                        <QuoteMetric
+                          label="Rate"
+                          value={`${formatUsdReference(
+                            withdrawalQuote.rateSnapshot.rateDecimal,
+                          )} / USDT`}
+                        />
+                        <QuoteMetric
+                          label="Fees"
+                          value={`${formatAssetAmount(
+                            withdrawalQuote.networkFeeUsdtAtomic,
+                            "USDT",
+                            { atomic: true },
+                          )} network · ${formatAssetAmount(
+                            withdrawalQuote.providerFeeUsdtAtomic,
+                            "USDT",
+                            { atomic: true },
+                          )} provider`}
+                        />
+                      </dl>
+                      <p className="mt-3 text-xs text-[#697d91]">
+                        Rate from {withdrawalQuote.rateSnapshot.source} at{" "}
+                        {formatRelativeTime(withdrawalQuote.rateSnapshot.quotedAt)}.
+                      </p>
+                      <button
+                        className="mt-4 h-11 rounded-xl bg-[#0093fd] px-5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={
+                          isWithdrawSubmitting ||
+                          withdrawalQuote.status !== "open" ||
+                          Date.parse(withdrawalQuote.expiresAt) <= Date.now()
+                        }
+                        onClick={() => void handleConfirmWithdrawal()}
+                        type="button"
+                      >
+                        {isWithdrawSubmitting
+                          ? "Confirming..."
+                          : "Confirm and reserve Coins"}
+                      </button>
+                    </section>
+                  ) : null}
+                </>
+              )}
+
+              <p className="mt-5 border-t border-[#242b32] pt-4 text-xs text-[#697d91]">
+                {transferNote}
+              </p>
+            </div>
+          </section>
+
+          <section className="mt-5 rounded-2xl border border-[#242b32] bg-[#1e2428] p-5 sm:p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-semibold text-[#dee3e7]">Wallet history</h2>
+              <div>
+                <h2 className="text-xl font-semibold text-[#dee3e7]">Transactions</h2>
+                <p className="mt-1 text-sm text-[#7b8996]">
+                  External deposits, reviewed withdrawals, and Coin ledger activity.
+                </p>
+              </div>
               <button
-                className="inline-flex items-center gap-2 rounded-2xl border border-[#2e3841] px-3 py-2 text-sm font-semibold text-[#d2d8df] hover:bg-[#181d21]"
+                className="inline-flex items-center gap-2 rounded-xl border border-[#2e3841] px-3 py-2 text-sm font-semibold text-[#d2d8df] transition hover:bg-[#181d21]"
                 onClick={() => void refreshWallet()}
                 type="button"
               >
@@ -378,13 +776,13 @@ export function WalletPage() {
               />
               <HistoryTab
                 active={activeTab === "ledger"}
-                label="Ledger"
+                label="Activity"
                 onClick={() => setActiveTab("ledger")}
               />
             </div>
 
             {activeTab === "deposits" ? (
-              <DepositHistory intents={depositIntents} events={depositEvents} />
+              <DepositHistory latestIntent={createdDepositIntent} deposits={deposits} />
             ) : null}
             {activeTab === "withdrawals" ? (
               <WithdrawalHistory withdrawals={withdrawals} />
@@ -397,13 +795,33 @@ export function WalletPage() {
   );
 }
 
-function WalletShell({ title, body }: { title: string; body: React.ReactNode }) {
+function AccountViewTabs() {
   return (
-    <div className="min-h-screen bg-[#181d21]">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <h1 className="mb-8 text-3xl font-bold text-[#dee3e7]">{title}</h1>
-        {body}
-      </div>
+    <nav
+      aria-label="Account views"
+      className="inline-flex rounded-xl border border-[#2e3841] bg-[#15191d] p-1"
+    >
+      <Link
+        className="rounded-lg px-5 py-2 text-sm font-semibold text-[#7b8996] transition hover:bg-[#1e2428] hover:text-[#dee3e7]"
+        to="/portfolio"
+      >
+        Portfolio
+      </Link>
+      <Link
+        aria-current="page"
+        className="rounded-lg bg-[#2e3841] px-5 py-2 text-sm font-semibold text-[#dee3e7]"
+        to="/wallet"
+      >
+        Coins
+      </Link>
+    </nav>
+  );
+}
+
+function WalletShell({ body }: { body: React.ReactNode }) {
+  return (
+    <div className="min-h-screen overflow-x-hidden bg-[#181d21]">
+      <div className="mx-auto max-w-[1160px] px-4 py-6 sm:px-6 sm:py-8">{body}</div>
     </div>
   );
 }
@@ -411,17 +829,119 @@ function WalletShell({ title, body }: { title: string; body: React.ReactNode }) 
 function LoadingState() {
   return (
     <section className="rounded-2xl border border-[#242b32] bg-[#1e2428] p-12 text-center">
-      <p className="text-[#7b8996]">Loading wallet...</p>
+      <p className="text-[#7b8996]">Loading Coins...</p>
     </section>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function CashActivityChart({ entries }: { entries: CoinLedgerPayload["entries"] }) {
+  const recentEntries = entries.slice(0, 18).reverse();
+  const maxAmount = recentEntries.reduce((largest, entry) => {
+    const magnitude = getCoinEntryMagnitude(entry);
+    return magnitude > largest ? magnitude : largest;
+  }, 1n);
+
+  if (recentEntries.length === 0) {
+    return (
+      <div className="mt-6 flex h-[70px] items-end">
+        <div className="h-px w-full bg-[#0093fd]/55" />
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-2xl border border-[#242b32] bg-[#181d21] p-4">
-      <p className="text-sm text-[#7b8996]">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-[#dee3e7]">{value}</p>
+    <div
+      aria-label="Recent Coin activity"
+      className="mt-5 flex h-[70px] items-end gap-1.5 overflow-hidden border-b border-[#0093fd]/35"
+    >
+      {recentEntries.map((entry) => {
+        const magnitude = getCoinEntryMagnitude(entry);
+        const height = magnitude === 0n ? 8n : 8n + (magnitude * 92n) / maxAmount;
+
+        return (
+          <span
+            className={`min-w-1 flex-1 rounded-t-sm ${
+              isPositiveCoinEntry(entry.operationType)
+                ? "bg-gradient-to-t from-[#006fbe] to-[#26a3fd]"
+                : "bg-gradient-to-t from-[#254865] to-[#7b8996]"
+            }`}
+            key={entry.id}
+            style={{ height: `${height.toString()}%` }}
+            title={`${ledgerReasonLabel(entry.reason)}: ${formatCoinEntryMovement(entry)}`}
+          />
+        );
+      })}
     </div>
+  );
+}
+
+function CompactMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-[11px] font-medium text-[#697d91]">{label}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-[#dee3e7]">
+        {formatCoinMicros(value)}
+      </p>
+    </div>
+  );
+}
+
+function ActionButton({
+  active,
+  disabled = false,
+  icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition ${
+        active
+          ? "bg-[#0093fd] text-white shadow-[0_3px_0_#006fbe]"
+          : "border border-[#2e3841] bg-[#181d21] text-[#d2d8df] hover:bg-[#242b32]"
+      } disabled:cursor-not-allowed disabled:border-[#2e3841] disabled:bg-[#181d21] disabled:text-[#697d91] disabled:shadow-none`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function ActionTab({
+  active,
+  disabled = false,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={`rounded-lg px-5 py-2 text-sm font-semibold transition ${
+        active
+          ? "bg-[#2e3841] text-[#dee3e7]"
+          : "text-[#7b8996] hover:bg-[#181d21] hover:text-[#dee3e7]"
+      } disabled:cursor-not-allowed disabled:text-[#697d91]`}
+      disabled={disabled}
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -451,34 +971,43 @@ function HistoryTab({
 }
 
 function DepositHistory({
-  intents,
-  events,
+  latestIntent,
+  deposits,
 }: {
-  intents: WalletDepositsPayload["depositIntents"];
-  events: WalletDepositsPayload["depositEvents"];
+  latestIntent: DepositIntent | null;
+  deposits: WalletDepositsPayload["deposits"];
 }) {
-  if (intents.length === 0 && events.length === 0) {
-    return <EmptyState text="No deposit instructions or deposit events yet." />;
+  if (!latestIntent && deposits.length === 0) {
+    return <EmptyState text="No deposits yet." />;
   }
 
   return (
     <div className="space-y-3">
-      {intents.map((intent) => (
+      {latestIntent ? (
         <HistoryRow
-          key={intent.id}
-          title={`${formatUsdt(intent.expectedAmount)} expected`}
-          meta={`Instruction · ${intent.network} · expires ${formatRelativeTime(intent.expiresAt)}`}
-          status={intent.status}
-          detail={intent.address}
+          title={`${formatAssetAmount(latestIntent.expectedUsdtAtomic, "USDT", {
+            atomic: true,
+          })} expected`}
+          meta={`Pending deposit intent · ${latestIntent.network} · ${formatRelativeTime(
+            latestIntent.createdAt,
+          )}`}
+          status={latestIntent.status}
+          detail="Pending deposits never count toward Available Coins."
         />
-      ))}
-      {events.map((event) => (
+      ) : null}
+      {deposits.map((deposit) => (
         <HistoryRow
-          key={event.id}
-          title={`${formatUsdt(event.amount)} event`}
-          meta={`Detected by ${event.provider} · ${event.confirmations} confirmations`}
-          status={event.status}
-          detail={event.txHash}
+          key={deposit.id}
+          title={
+            deposit.creditedCoinMicros
+              ? formatCoinMicros(deposit.creditedCoinMicros)
+              : formatAssetAmount(deposit.netUsdtAtomic, "USDT", { atomic: true })
+          }
+          meta={`${formatAssetAmount(deposit.grossUsdtAtomic, "USDT", {
+            atomic: true,
+          })} external · ${deposit.actualConfirmations}/${deposit.requiredConfirmations} confirmations`}
+          status={deposit.status}
+          detail={depositDetail(deposit)}
         />
       ))}
     </div>
@@ -499,17 +1028,21 @@ function WithdrawalHistory({
       {withdrawals.map((withdrawal) => (
         <HistoryRow
           key={withdrawal.id}
-          title={formatUsdt(withdrawal.amount)}
+          title={formatCoinMicros(withdrawal.coinReservedMicros)}
           meta={`${withdrawal.network} request · ${formatRelativeTime(withdrawal.createdAt)}`}
           status={withdrawal.status}
-          detail={`To ${withdrawal.destinationAddress} · Pending review`}
+          detail={`${formatAssetAmount(withdrawal.estimatedUsdtAtomic, "USDT", {
+            atomic: true,
+          })} external · ${formatAssetAmount(withdrawal.networkFeeUsdtAtomic, "USDT", {
+            atomic: true,
+          })} network fee · To ${withdrawal.destinationAddress}`}
         />
       ))}
     </div>
   );
 }
 
-function LedgerHistory({ entries }: { entries: LedgerEntriesPayload["entries"] }) {
+function LedgerHistory({ entries }: { entries: CoinLedgerPayload["entries"] }) {
   if (entries.length === 0) {
     return <EmptyState text="No balance history yet." />;
   }
@@ -519,10 +1052,10 @@ function LedgerHistory({ entries }: { entries: LedgerEntriesPayload["entries"] }
       {entries.map((entry) => (
         <HistoryRow
           key={entry.id}
-          title={`${isPositiveLedgerEntry(entry.entryType) ? "+" : "-"}${formatUsdt(entry.amount)}`}
+          title={formatCoinEntryMovement(entry)}
           meta={`${ledgerReasonLabel(entry.reason)} · ${formatRelativeTime(entry.createdAt)}`}
-          status={entry.entryType}
-          detail={entry.referenceType ? ledgerReferenceLabel(entry.referenceType) : "Balance history"}
+          status={entry.operationType}
+          detail={ledgerEntryDetail(entry)}
         />
       ))}
     </div>
@@ -562,21 +1095,29 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
-function getWithdrawalEligibilityText(eligibility: ComplianceEligibilityPayload | null) {
-  if (!eligibility) {
-    return "Complete account verification before requesting a withdrawal.";
-  }
-
-  if (isEligibleToTrade(eligibility)) {
-    return null;
-  }
-
-  const reason = eligibility.reasons.find((nextReason) => nextReason !== "TRANSFERS_UNAVAILABLE");
-  return reason ? formatEligibilityReason(reason) : "Complete account verification before requesting a withdrawal.";
+function RailUnavailableNotice({ text }: { text: string }) {
+  return (
+    <div className="mt-4 rounded-xl border border-[#f7d022]/30 bg-[#f7d022]/10 px-4 py-3 text-sm font-medium text-[#f8da52]">
+      {text}
+    </div>
+  );
 }
 
-function isPositiveLedgerEntry(entryType: string) {
-  return entryType === "credit" || entryType === "release" || entryType === "trade_credit";
+function QuoteMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-xs font-semibold uppercase tracking-wide text-[#697d91]">{label}</dt>
+      <dd className="mt-1 font-semibold text-[#dee3e7]">{value}</dd>
+    </div>
+  );
+}
+
+function isPositiveCoinEntry(operationType: string) {
+  return (
+    operationType.endsWith("_credit") ||
+    operationType.endsWith("_release") ||
+    operationType === "migration_credit"
+  );
 }
 
 function ledgerReasonLabel(reason: string) {
@@ -591,6 +1132,13 @@ function ledgerReasonLabel(reason: string) {
   return reason.replace(/_/g, " ");
 }
 
+function ledgerEntryDetail(entry: CoinLedgerPayload["entries"][number]) {
+  const balance = `${formatCoinMicros(entry.availableAfterCoinMicros)} available · ${formatCoinMicros(
+    entry.reservedAfterCoinMicros,
+  )} reserved`;
+  return entry.sourceId ? `${ledgerReferenceLabel(entry.sourceType)} · ${balance}` : balance;
+}
+
 function ledgerReferenceLabel(referenceType: string) {
   if (referenceType.includes("credit")) {
     return "Balance adjustment";
@@ -603,9 +1151,46 @@ function ledgerReferenceLabel(referenceType: string) {
   return "Balance history";
 }
 
+function getCoinEntryMagnitude(entry: CoinLedgerPayload["entries"][number]) {
+  const available = BigInt(entry.availableDeltaCoinMicros);
+  const reserved = BigInt(entry.reservedDeltaCoinMicros);
+  const availableMagnitude = available < 0n ? -available : available;
+  const reservedMagnitude = reserved < 0n ? -reserved : reserved;
+  return availableMagnitude > reservedMagnitude ? availableMagnitude : reservedMagnitude;
+}
+
+function formatCoinEntryMovement(entry: CoinLedgerPayload["entries"][number]) {
+  const available = BigInt(entry.availableDeltaCoinMicros);
+  const reserved = BigInt(entry.reservedDeltaCoinMicros);
+  if (available !== 0n) {
+    return `${formatSignedCoinMicros(available)} available`;
+  }
+  return `${formatSignedCoinMicros(reserved)} reserved`;
+}
+
+function depositDetail(deposit: WalletDepositsPayload["deposits"][number]) {
+  if (deposit.status === "pending_rate" || deposit.status === "confirmed_unpriced") {
+    return "Awaiting rate; no Coins are available yet.";
+  }
+  if (deposit.status === "manual_review") {
+    return deposit.manualReviewReason
+      ? `Manual review: ${deposit.manualReviewReason}`
+      : "Manual review required.";
+  }
+  return `${deposit.blockchainTxHash}:${deposit.eventIndex} · ${deposit.tokenContract}`;
+}
+
 function statusLabel(status: string) {
   if (status === "pending_review") {
-    return "Pending review";
+    return "Under review";
+  }
+
+  if (status === "waiting") {
+    return "Pending deposit";
+  }
+
+  if (status === "pending_rate" || status === "confirmed_unpriced") {
+    return "Awaiting rate";
   }
 
   if (status === "trade_credit") {
@@ -624,7 +1209,11 @@ function statusClass(status: string) {
     return "bg-[#3db468]/14 text-[#5fbe82]";
   }
 
-  if (["waiting", "detected", "pending_review", "hold"].includes(status)) {
+  if (
+    ["waiting", "detected", "confirming", "pending_rate", "confirmed_unpriced", "pending_review", "hold"].includes(
+      status,
+    )
+  ) {
     return "bg-[#f7d022]/14 text-[#f8da52]";
   }
 

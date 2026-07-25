@@ -1,5 +1,5 @@
 import { ArrowLeft, BookmarkX } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { MarketCard } from "../components/MarketCard";
 import type { AuthUser, Market } from "../lib/types";
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
   Bell,
@@ -24,8 +24,14 @@ import { MarketSkeleton } from "../components/MarketSkeleton";
 import { useMarkets } from "../hooks/useMarkets";
 import { useCategories } from "../hooks/useCategories";
 import { useMarketTags } from "../hooks/useMarketTags";
+import { usePortfolio } from "../hooks/usePortfolio";
 import { loadPlatformActivity } from "../lib/api";
-import { formatMoney, formatPercent, formatShortDate, formatUsdt } from "../lib/format";
+import {
+  formatCoinMicros,
+  formatMoney,
+  formatPercent,
+  formatShortDate,
+} from "../lib/format";
 import {
   buildTopicTabsFromTags,
   defaultMarketFilters,
@@ -801,7 +807,9 @@ function LiveActivityRail({ activity }: { activity: PlatformActivityItem[] }) {
           >
             <span className="text-[#dee3e7]">{item.displayName}</span>
             <span>{getActivityVerb(item)}</span>
-            <span className="text-[#30a159]">{formatUsdt(item.amount)}</span>
+            <span className="text-[#30a159]">
+              {formatCoinMicros(item.amountCoinMicros)}
+            </span>
             {item.marketTitle ? (
               <span className="max-w-[220px] truncate text-[#97a5b4]">{item.marketTitle}</span>
             ) : null}
@@ -1187,6 +1195,8 @@ function SportsbookButtons({
 }
 
 function TradeTicket({ esport, market }: { esport: boolean; market?: Market }) {
+  const [portfolio] = usePortfolio();
+
   if (!market) {
     return null;
   }
@@ -1235,9 +1245,11 @@ function TradeTicket({ esport, market }: { esport: boolean; market?: Market }) {
         <div className="mt-8 flex items-end justify-between">
           <div>
             <p className="text-lg font-bold text-[#d2d8df]">Amount</p>
-            <p className="text-sm font-semibold text-[#7b8996]">$0.00 cash</p>
+            <p className="text-sm font-semibold text-[#7b8996]">
+              {formatCoinMicros(portfolio.summary.availableCoinMicros)} available
+            </p>
           </div>
-          <p className="text-5xl font-bold text-[#697d91]">$0</p>
+          <p className="text-4xl font-bold text-[#697d91]">0 Coins</p>
         </div>
         <button className="home-soft-button mt-6 h-12 w-full rounded-xl bg-[#1e2428] text-sm font-bold text-[#586879]" type="button">
           Restricted region
@@ -1380,6 +1392,8 @@ function GroupedWeatherCards({
 }
 
 function WeatherTicket({ market }: { market?: Market }) {
+  const [portfolio] = usePortfolio();
+
   if (!market) {
     return null;
   }
@@ -1417,9 +1431,11 @@ function WeatherTicket({ market }: { market?: Market }) {
       <div className="mt-8 flex items-end justify-between">
         <div>
           <p className="text-lg font-bold text-[#d2d8df]">Amount</p>
-          <p className="text-sm font-semibold text-[#7b8996]">$0.00 cash</p>
+          <p className="text-sm font-semibold text-[#7b8996]">
+            {formatCoinMicros(portfolio.summary.availableCoinMicros)} available
+          </p>
         </div>
-        <p className="text-5xl font-bold text-[#697d91]">$0</p>
+        <p className="text-4xl font-bold text-[#697d91]">0 Coins</p>
       </div>
       <button className="home-soft-button mt-8 h-12 w-full rounded-xl bg-[#1e2428] text-sm font-bold text-[#586879]" type="button">
         Restricted region

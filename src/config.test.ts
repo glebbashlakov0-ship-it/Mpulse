@@ -25,7 +25,6 @@ const managedEnvKeys = [
   "ADMIN_PANEL_PASSWORD",
   "ADMIN_PANEL_COOKIE_NAME",
   "ADMIN_PANEL_TTL_MS",
-  "WALLET_DEPOSIT_WEBHOOK_SECRET",
   "DATABASE_URL",
   "APP_BASE_URL",
   "VERCEL_PROJECT_PRODUCTION_URL",
@@ -99,7 +98,6 @@ test("production config requires explicit secure guardrails", () => {
     SESSION_SECRET: "prod-session-secret-32-characters-long",
     SESSION_COOKIE_SECURE: "true",
     CORS_ALLOWED_ORIGINS: "https://market.example",
-    WALLET_DEPOSIT_WEBHOOK_SECRET: "prod-webhook-secret-32-characters-long",
     DATABASE_URL: "postgres://market:market@localhost:5432/market_pulse",
     ADMIN_PANEL_USERNAME: "ops",
     ADMIN_PANEL_PASSWORD: "prod-admin-password-32-characters",
@@ -140,10 +138,6 @@ test("production config requires explicit secure guardrails", () => {
 
   withEnv({ ...productionEnv, CORS_ALLOWED_ORIGINS: "" }, () => {
     assert.throws(() => getConfig(), /CORS_ALLOWED_ORIGINS must be an explicit allowlist/);
-  });
-
-  withEnv({ ...productionEnv, WALLET_DEPOSIT_WEBHOOK_SECRET: "change-this" }, () => {
-    assert.throws(() => getConfig(), /WALLET_DEPOSIT_WEBHOOK_SECRET must be set/);
   });
 
   withEnv({ ...productionEnv, DATABASE_URL: "" }, () => {

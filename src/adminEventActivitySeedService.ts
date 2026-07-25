@@ -259,7 +259,7 @@ export function buildAdminEventActivitySeedService({
           displayName: bet.user.displayName,
           result,
         });
-        const tradeActivityRecord = activityTrade ?? buildTradeActivityRecord({
+        const tradeActivityRecord = activityTrade.trade ?? buildTradeActivityRecord({
           displayName: bet.user.displayName,
           result,
         });

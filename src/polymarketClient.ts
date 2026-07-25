@@ -1,5 +1,11 @@
 import type { AppConfig } from "./config.js";
 import type { PolymarketPriceHistoryResponse, PolymarketTag } from "./types.js";
+import {
+  coinMicros,
+  formatAtomic,
+  parseDecimalToAtomic,
+  type CoinMicros,
+} from "./money.js";
 
 export class UpstreamError extends Error {
   constructor(
@@ -34,6 +40,63 @@ const allowedQueryParams = new Set([
 ]);
 
 const allowedClobQueryParams = new Set(["market", "interval", "fidelity"]);
+
+export const CLOB_QUOTE_DECIMALS = 6;
+export const CLOB_SHARE_DECIMALS = 6;
+export const CLOB_PRICE_DECIMALS = 9;
+
+export function coinMicrosToClobQuoteAmount(value: CoinMicros): string {
+  return formatAtomic(value, CLOB_QUOTE_DECIMALS);
+}
+
+export function clobQuoteAmountToCoinMicros(value: string): CoinMicros {
+  return coinMicros(
+    parseDecimalToAtomic(value, CLOB_QUOTE_DECIMALS, { allowZero: false }),
+    false,
+  );
+}
+
+export function normalizeClobShares(value: string): string {
+  const atomic = parseDecimalToAtomic(value, CLOB_SHARE_DECIMALS, {
+    allowZero: false,
+  });
+  return formatAtomic(atomic, CLOB_SHARE_DECIMALS);
+}
+
+export function normalizeClobPrice(value: string): string {
+  const atomic = parseDecimalToAtomic(value, CLOB_PRICE_DECIMALS, {
+    allowZero: false,
+  });
+  if (atomic > 10n ** BigInt(CLOB_PRICE_DECIMALS)) {
+    throw new UpstreamError("Polymarket CLOB price must be between 0 and 1.", 400);
+  }
+  return formatAtomic(atomic, CLOB_PRICE_DECIMALS);
+}
+
+export function clobDecimalToSdkNumber(value: string, decimals: number): number {
+  const atomic = parseDecimalToAtomic(value, decimals, { allowZero: false });
+  const normalized = formatAtomic(atomic, decimals);
+  const sdkValue = Number(normalized);
+  if (!Number.isFinite(sdkValue) || sdkValue <= 0) {
+    throw new UpstreamError("Polymarket CLOB amount is outside the SDK range.", 400);
+  }
+  return sdkValue;
+}
+
+export function clobSdkNumberToDecimal(value: number, decimals: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new UpstreamError("Polymarket CLOB returned an invalid decimal value.", 502);
+  }
+  const raw = value.toString();
+  if (/e/i.test(raw)) {
+    throw new UpstreamError(
+      "Polymarket CLOB returned an unsupported exponential decimal.",
+      502,
+    );
+  }
+  const atomic = parseDecimalToAtomic(raw, decimals, { allowZero: false });
+  return formatAtomic(atomic, decimals);
+}
 
 export function buildPolymarketClient(config: AppConfig) {
   async function requestPolymarketHomepageTags(): Promise<PolymarketTag[]> {

@@ -2717,6 +2717,7 @@ export function buildMarketDataService({
       : point.outcomes.map((outcome) => ({
           name: outcome.name,
           price: outcome.price,
+          priceDecimal: null,
           probability: outcome.price,
           price_cents: outcome.price === null ? null : Math.round(outcome.price * 100),
           clobTokenId: null,
@@ -2732,6 +2733,10 @@ export function buildMarketDataService({
       return {
         ...outcome,
         price,
+        priceDecimal:
+          pulseOutcome?.price === undefined || pulseOutcome.price === null
+            ? outcome.priceDecimal ?? null
+            : null,
         probability: price,
         price_cents: price === null ? null : Math.round(price * 100),
       };
@@ -2784,6 +2789,7 @@ export function buildMarketDataService({
       return {
         ...outcome,
         price,
+        priceDecimal: null,
         probability: price,
         price_cents: price === null ? null : Math.round(price * 100),
       };

@@ -4,9 +4,6 @@ import {
   getFallbackImage,
   getMarketEyebrowParts,
   getOutcomeActionLabel,
-  getPortfolioSummary,
-  getPositionPnl,
-  getPositionValue,
   getRelatedMarketDisplayImage,
   withUniqueImages,
 } from "./market";
@@ -18,7 +15,7 @@ import {
   getMarketProbabilityGaugeVariant,
   getProbabilityGaugeDisplay,
 } from "../components/MarketCard";
-import type { Market, LocalPosition, RelatedMarket } from "./types";
+import type { Market, RelatedMarket } from "./types";
 
 function market(overrides: Partial<Market>): Market {
   return {
@@ -321,59 +318,4 @@ describe("market helpers", () => {
     });
   });
 
-  it("calculates position value and pnl from market prices", () => {
-    const position: LocalPosition = {
-      id: "p1",
-      userId: "u1",
-      marketId: "m1",
-      marketTitle: "BTC Up or Down",
-      yesShares: 100,
-      noShares: 50,
-      yesCost: 55,
-      noCost: 15,
-      totalCost: 70,
-      lastYesPrice: 0.55,
-      lastNoPrice: 0.45,
-      currentValue: 80,
-      pnl: 10,
-      lastTradeAt: new Date().toISOString(),
-    };
-    const currentMarket = market({ id: "m1" });
-
-    assert.equal(getPositionValue(position, currentMarket), 80);
-    assert.equal(getPositionPnl(position, currentMarket), 10);
-  });
-
-  it("summarizes portfolio equity and pnl", () => {
-    const position: LocalPosition = {
-      id: "p1",
-      userId: "u1",
-      marketId: "m1",
-      marketTitle: "BTC Up or Down",
-      yesShares: 100,
-      noShares: 0,
-      yesCost: 50,
-      noCost: 0,
-      totalCost: 50,
-      lastYesPrice: 0.5,
-      lastNoPrice: 0.5,
-      currentValue: 50,
-      pnl: 0,
-      lastTradeAt: new Date().toISOString(),
-    };
-
-    const summary = getPortfolioSummary(
-      {
-        wallet: { balance: 9900, initialBalance: 10000 },
-        positions: [position],
-      },
-      [market({ id: "m1" })],
-    );
-
-    assert.equal(summary.cash, 9900);
-    assert.equal(summary.positionValue, 60);
-    assert.equal(summary.equity, 9960);
-    assert.equal(summary.pnl, -40);
-    assert.equal(summary.openPositions, 1);
-  });
 });

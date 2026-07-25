@@ -275,7 +275,7 @@ export function ProfilePage({
 
           <div className="mt-5 grid gap-3 text-sm font-semibold text-[#7b8996]">
             <ProfileStat label="Email" value={user?.emailVerified ? "Verified" : "Unverified"} />
-            <ProfileStat label="Currency" value={user?.settings.currency ?? "USDT"} />
+            <ProfileStat label="Internal currency" value="Coins" />
             <ProfileStat
               label="Session"
               value={authStatus === "loading" ? "Checking" : user ? "Active" : "Guest"}

@@ -44,7 +44,12 @@ import {
   applyMigration,
   inspectMigration,
 } from "./coinsMigration.js";
-import { runCoinReconciliation } from "./reconcileCoins.js";
+import {
+  OUTBOX_DELIVERY_RECONCILIATION_SQL,
+  OUTBOX_PENDING_FAILED_STALE_AFTER_MS,
+  OUTBOX_PROCESSING_STALE_AFTER_MS,
+  runCoinReconciliation,
+} from "./reconcileCoins.js";
 import { migrations } from "../src/migrationPlan.js";
 import { auditPostgresTestDatabaseSafety } from "../src/postgresTestDatabaseSafety.js";
 import { PostgresMoneyOutboxRepository } from "../src/moneyOutbox.js";
@@ -165,6 +170,69 @@ test(
       );
       assert.equal(deadLetter.rows[0]?.status, "dead_letter");
       assert.ok(deadLetter.rows[0]?.dead_lettered_at);
+    });
+  },
+);
+
+test(
+  "money outbox reconciliation allows the daily Cron window and flags stale or dead-letter events",
+  { skip: skipReason },
+  async () => {
+    await withIsolatedCoinSchema(async (client) => {
+      assert.equal(
+        OUTBOX_PENDING_FAILED_STALE_AFTER_MS,
+        26 * 60 * 60 * 1_000,
+      );
+      const eventIds = {
+        freshPending: randomUUID(),
+        freshFailed: randomUUID(),
+        stalePending: randomUUID(),
+        staleFailed: randomUUID(),
+        deadLetter: randomUUID(),
+      };
+      const rows = [
+        [eventIds.freshPending, "pending", 23],
+        [eventIds.freshFailed, "failed", 23],
+        [eventIds.stalePending, "pending", 27],
+        [eventIds.staleFailed, "failed", 27],
+        [eventIds.deadLetter, "dead_letter", 0],
+      ] as const;
+
+      for (const [id, status, ageHours] of rows) {
+        await client.query(
+          `insert into money_outbox_events (
+             id, aggregate_type, aggregate_id, event_type, idempotency_key,
+             payload, status, attempts, available_at, dead_lettered_at
+           ) values (
+             $1, 'reconciliation_test', $2, 'test.event', $3, '{}'::jsonb,
+             $4, case when $4 = 'failed' then 1 else 0 end,
+             now() - ($5::integer * interval '1 hour'),
+             case when $4 = 'dead_letter' then now() else null end
+           )`,
+          [id, id, `outbox-reconciliation-${id}`, status, ageHours],
+        );
+      }
+
+      const discrepancies = await client.query<{
+        entity_id: string;
+        detail: { status: string };
+      }>(OUTBOX_DELIVERY_RECONCILIATION_SQL, [
+        OUTBOX_PENDING_FAILED_STALE_AFTER_MS,
+        OUTBOX_PROCESSING_STALE_AFTER_MS,
+      ]);
+      const discrepancyIds = new Set(
+        discrepancies.rows.map((row) => row.entity_id),
+      );
+
+      assert.equal(discrepancyIds.has(eventIds.freshPending), false);
+      assert.equal(discrepancyIds.has(eventIds.freshFailed), false);
+      assert.equal(discrepancyIds.has(eventIds.stalePending), true);
+      assert.equal(discrepancyIds.has(eventIds.staleFailed), true);
+      assert.equal(discrepancyIds.has(eventIds.deadLetter), true);
+      assert.deepEqual(
+        new Set(discrepancies.rows.map((row) => row.detail.status)),
+        new Set(["pending", "failed", "dead_letter"]),
+      );
     });
   },
 );

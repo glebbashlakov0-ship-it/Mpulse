@@ -306,7 +306,9 @@ Migration `032_money_outbox_worker.sql` adds bounded `SKIP LOCKED` claims, expir
 fencing tokens, capped exponential retry with jitter, and terminal `dead_letter` state. Delivery
 is at-least-once. The current explicit `structured_log` delivery mode is a monitoring sink and
 omits payload and idempotency key; future downstream handlers must deduplicate with the persisted
-idempotency key.
+idempotency key. With the daily Vercel Hobby drain, pending/retryable events have a 26-hour
+reconciliation SLA (including a two-hour scheduling margin); dead letters are discrepancies
+immediately.
 
 Operational recovery uses new idempotent or compensating entries:
 

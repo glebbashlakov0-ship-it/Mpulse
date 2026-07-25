@@ -455,7 +455,10 @@ event type, aggregate coordinates, and attempt, never payload or idempotency key
 `GET /api/cron/money-outbox` requires
 `Authorization: Bearer <CRON_SECRET>` and drains one batch. Startup fails when a runtime is enabled
 without the explicit delivery mode. Alert on dead letters, lost leases, drain failures, and
-reconciliation findings.
+reconciliation findings. The Hobby schedule runs daily at 00:00 UTC. Pending or retryable failed
+events become reconciliation discrepancies after 26 hours, allowing two hours beyond the normal
+24-hour drain interval for scheduler/startup jitter. `dead_letter` is always an immediate
+discrepancy; a processing lease remains stale after 15 minutes.
 
 ## External blockers
 

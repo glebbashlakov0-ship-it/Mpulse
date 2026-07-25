@@ -218,7 +218,9 @@ npm run migration:plan-check
 The durable outbox supports an always-on loop and a bounded Vercel Cron drain. Enabling either
 requires `MONEY_OUTBOX_DELIVERY_MODE=structured_log`; the built-in sink records only safe event
 metadata and never the payload or idempotency key. Cron draining additionally requires a 32+
-character `CRON_SECRET` and `Authorization: Bearer <CRON_SECRET>`.
+character `CRON_SECRET` and `Authorization: Bearer <CRON_SECRET>`. The Hobby-compatible schedule
+runs once per day; reconciliation allows a 26-hour pending/failed delivery window (24 hours plus
+two hours of scheduler/startup margin). Dead-letter events remain immediate discrepancies.
 
 The data migration is test-only and requires a dedicated test-scoped target:
 

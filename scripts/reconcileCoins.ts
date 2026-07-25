@@ -16,6 +16,7 @@ type ReconciliationDiscrepancy = {
 type ReconciliationCheck = {
   category: string;
   sql: string;
+  values?: readonly unknown[];
 };
 
 type ReconciliationRow = {
@@ -34,6 +35,44 @@ export type CoinReconciliationReport = {
   totals: Record<string, string>;
   discrepancies: ReconciliationDiscrepancy[];
 };
+
+// Vercel Hobby Cron can invoke the bounded drain only once per day. The extra
+// two hours prevent normal scheduler/startup jitter from becoming a false
+// reconciliation incident.
+export const OUTBOX_PENDING_FAILED_STALE_AFTER_MS = 26 * 60 * 60 * 1_000;
+export const OUTBOX_PROCESSING_STALE_AFTER_MS = 15 * 60 * 1_000;
+
+export const OUTBOX_DELIVERY_RECONCILIATION_SQL = `select
+        'money_outbox_event'::text as entity_type,
+        events.id::text as entity_id,
+        null::text as user_id,
+        jsonb_build_object(
+          'aggregateType', events.aggregate_type,
+          'aggregateId', events.aggregate_id,
+          'eventType', events.event_type,
+          'status', events.status,
+          'attempts', events.attempts,
+          'lastError', events.last_error,
+          'availableAt', events.available_at,
+          'lockedAt', events.locked_at,
+          'lockedBy', events.locked_by,
+          'deadLetteredAt', events.dead_lettered_at
+        ) as detail
+      from money_outbox_events events
+      where events.status = 'dead_letter'
+         or (
+           events.status in ('pending', 'failed')
+           and events.available_at
+             < now() - ($1::bigint * interval '1 millisecond')
+         )
+         or (
+           events.status = 'processing'
+           and (
+             events.locked_at is null
+             or events.locked_at
+               < now() - ($2::bigint * interval '1 millisecond')
+           )
+         )`;
 
 const checks: ReconciliationCheck[] = [
   {
@@ -693,35 +732,11 @@ const checks: ReconciliationCheck[] = [
   },
   {
     category: "outbox_delivery",
-    sql: `select
-            'money_outbox_event'::text as entity_type,
-            events.id::text as entity_id,
-            null::text as user_id,
-            jsonb_build_object(
-              'aggregateType', events.aggregate_type,
-              'aggregateId', events.aggregate_id,
-              'eventType', events.event_type,
-              'status', events.status,
-              'attempts', events.attempts,
-              'lastError', events.last_error,
-              'availableAt', events.available_at,
-              'lockedAt', events.locked_at,
-              'lockedBy', events.locked_by,
-              'deadLetteredAt', events.dead_lettered_at
-            ) as detail
-          from money_outbox_events events
-          where events.status = 'dead_letter'
-             or (
-               events.status in ('pending', 'failed')
-               and events.available_at < now() - interval '15 minutes'
-             )
-             or (
-               events.status = 'processing'
-               and (
-                 events.locked_at is null
-                 or events.locked_at < now() - interval '15 minutes'
-               )
-             )`,
+    sql: OUTBOX_DELIVERY_RECONCILIATION_SQL,
+    values: [
+      OUTBOX_PENDING_FAILED_STALE_AFTER_MS,
+      OUTBOX_PROCESSING_STALE_AFTER_MS,
+    ],
   },
 ];
 
@@ -733,7 +748,7 @@ export async function runCoinReconciliation(
   const categoryCounts: Record<string, number> = {};
 
   for (const check of checks) {
-    const result = await db.query<ReconciliationRow>(check.sql);
+    const result = await db.query<ReconciliationRow>(check.sql, check.values);
     categoryCounts[check.category] = result.rows.length;
     for (const row of result.rows) {
       discrepancies.push({

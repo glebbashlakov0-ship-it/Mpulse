@@ -99,7 +99,8 @@ approvers. Do not change this decision merely because technical checks pass. At 
 - [ ] CLOB credentials, funded collateral proof, execution evidence, and provider reconciliation approved
 - [ ] Winner-redemption receipt, funded payout amount, and idempotent settlement linkage persisted and verified
 - [ ] Market resolve/cancel payout and refund accounting independently reconciled
-- [ ] Durable outbox delivery, retries, dead-letter handling, monitoring, and ownership implemented
+- [ ] Durable outbox lease/retry/dead-letter code is implemented; downstream handlers, alerting,
+      replay procedure, monitoring, and named ownership are approved
 - [ ] Admin corrections have permissions, limits, four-eyes review, and an incident procedure
 - [ ] AML, sanctions, region/account-risk, legal disclosure, and incident ownership approved
 - [ ] Alerts cover cutover state, discrepancies, provider conflicts, stale rates, reversals,

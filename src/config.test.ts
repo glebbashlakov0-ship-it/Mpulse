@@ -33,6 +33,18 @@ const managedEnvKeys = [
   "REAL_MONEY_DEPOSIT_PROVIDER",
   "EXCHANGE_RATE_PROVIDER",
   "USDT_TRON_CONTRACT",
+  "MONEY_OUTBOX_WORKER_ENABLED",
+  "MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED",
+  "MONEY_OUTBOX_DELIVERY_MODE",
+  "CRON_SECRET",
+  "MONEY_OUTBOX_POLL_INTERVAL_MS",
+  "MONEY_OUTBOX_BATCH_SIZE",
+  "MONEY_OUTBOX_CONCURRENCY",
+  "MONEY_OUTBOX_LEASE_DURATION_MS",
+  "MONEY_OUTBOX_MAX_ATTEMPTS",
+  "MONEY_OUTBOX_BACKOFF_BASE_MS",
+  "MONEY_OUTBOX_BACKOFF_MAX_MS",
+  "MONEY_OUTBOX_BACKOFF_JITTER_RATIO",
   "APP_BASE_URL",
   "VERCEL_PROJECT_PRODUCTION_URL",
   "VERCEL_URL",
@@ -76,6 +88,31 @@ test("config defaults to local development mode", () => {
     assert.equal(config.coinDepositCreditsEnabled, false);
     assert.equal(config.coinWithdrawalRequestsEnabled, false);
     assert.equal(config.coinInternalTradingEnabled, false);
+    assert.equal(config.moneyOutboxWorkerEnabled, false);
+    assert.equal(config.moneyOutboxDrainEndpointEnabled, false);
+  });
+});
+
+test("money outbox runtimes fail closed without database and cron secret", () => {
+  withEnv({ MONEY_OUTBOX_WORKER_ENABLED: "true" }, () => {
+    assert.throws(() => getConfig(), /DATABASE_URL is required/);
+  });
+
+  withEnv({
+    DATABASE_URL: "postgres://test:test@localhost:5432/test",
+    MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED: "true",
+    MONEY_OUTBOX_DELIVERY_MODE: "structured_log",
+  }, () => {
+    assert.throws(() => getConfig(), /CRON_SECRET must contain at least 32 characters/);
+  });
+
+  withEnv({
+    DATABASE_URL: "postgres://test:test@localhost:5432/test",
+    MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED: "true",
+    MONEY_OUTBOX_DELIVERY_MODE: "structured_log",
+    CRON_SECRET: "test-cron-secret-with-at-least-32-characters",
+  }, () => {
+    assert.equal(getConfig().moneyOutboxDrainEndpointEnabled, true);
   });
 });
 

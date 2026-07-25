@@ -201,15 +201,21 @@ vault, or broadcast configuration belongs in this app.
 ## Sparse migration plan and cutover rehearsal
 
 The checked migration plan is intentionally sparse: existing migrations `001` through `016`, then
-`031_coins_ledger_cutover.sql`. Migration `031` creates the Coin schema, immutable guards, global
+`031_coins_ledger_cutover.sql` and `032_money_outbox_worker.sql`. Migration `031` creates the Coin schema, immutable guards, global
 fences, provider evidence, withdrawals, trading, settlement, outbox, cutover, and reconciliation
-tables. It does not copy balances.
+tables. Migration `032` adds durable leases, fencing tokens, retry/dead-letter state, and claim
+indexes. Neither migration copies balances.
 
 Validate the explicit plan:
 
 ```bash
 npm run migration:plan-check
 ```
+
+The durable outbox supports an always-on loop and a bounded Vercel Cron drain. Enabling either
+requires `MONEY_OUTBOX_DELIVERY_MODE=structured_log`; the built-in sink records only safe event
+metadata and never the payload or idempotency key. Cron draining additionally requires a 32+
+character `CRON_SECRET` and `Authorization: Bearer <CRON_SECRET>`.
 
 The data migration is test-only and requires a dedicated test-scoped target:
 

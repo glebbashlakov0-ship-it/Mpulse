@@ -411,6 +411,20 @@ Also run `npm run coins:reconcile` against the migrated disposable test database
 discrepancies. A green suite does not authorize Fireblocks calls, production migration,
 deployment, or real-money launch.
 
+### Outbox worker operations
+
+Apply `032_money_outbox_worker.sql` before enabling the runtime. Claims are bounded and concurrent
+safe (`SKIP LOCKED` plus a per-claim fencing token); delivery is at-least-once, so the injected
+handler must deduplicate on `idempotencyKey`. Set
+`MONEY_OUTBOX_DELIVERY_MODE=structured_log`; the built-in monitoring sink writes only event ID,
+event type, aggregate coordinates, and attempt, never payload or idempotency key. Use
+`MONEY_OUTBOX_WORKER_ENABLED=true` only in an always-on process. For Vercel Cron set
+`MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED=true` and a random 32+ character `CRON_SECRET`;
+`GET /api/cron/money-outbox` requires
+`Authorization: Bearer <CRON_SECRET>` and drains one batch. Startup fails when a runtime is enabled
+without the explicit delivery mode. Alert on dead letters, lost leases, drain failures, and
+reconciliation findings.
+
 ## External blockers
 
 Before any future launch decision, separately close at least:
@@ -423,7 +437,7 @@ Before any future launch decision, separately close at least:
   and reconciliation;
 - authoritative Polymarket CLOB fill receipts, funded collateral proof, and provider
   reconciliation;
-- durable outbox delivery, retries, dead-letter handling, monitoring, and incident ownership;
+- downstream outbox handlers, dead-letter alerting, monitoring, replay controls, and ownership;
 - reviewed non-zero withdrawal fee policy where applicable.
 
 Until then, leave launch approval false, deposit crediting disabled, withdrawal broadcast absent,

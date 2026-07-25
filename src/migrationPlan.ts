@@ -25,6 +25,7 @@ export const migrations = [
   "015_market_price_history_points.sql",
   "016_trade_metadata.sql",
   "031_coins_ledger_cutover.sql",
+  "032_money_outbox_worker.sql",
 ] as const;
 
 export type MigrationReadinessReport = {

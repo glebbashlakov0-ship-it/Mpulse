@@ -703,13 +703,24 @@ const checks: ReconciliationCheck[] = [
               'eventType', events.event_type,
               'status', events.status,
               'attempts', events.attempts,
-              'lastError', events.last_error
+              'lastError', events.last_error,
+              'availableAt', events.available_at,
+              'lockedAt', events.locked_at,
+              'lockedBy', events.locked_by,
+              'deadLetteredAt', events.dead_lettered_at
             ) as detail
           from money_outbox_events events
-          where events.status = 'failed'
+          where events.status = 'dead_letter'
              or (
-               events.status in ('pending', 'processing')
+               events.status in ('pending', 'failed')
                and events.available_at < now() - interval '15 minutes'
+             )
+             or (
+               events.status = 'processing'
+               and (
+                 events.locked_at is null
+                 or events.locked_at < now() - interval '15 minutes'
+               )
              )`,
   },
 ];

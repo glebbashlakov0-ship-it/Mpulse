@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
-import { buildApp } from "./server.js";
+import { buildApp, hasValidCronAuthorization } from "./server.js";
 import { marketFixture, testConfig } from "./testUtils.js";
+
+test("money outbox cron authorization fails closed and matches the exact bearer token", () => {
+  const secret = "test-cron-secret-with-at-least-32-characters";
+  assert.equal(hasValidCronAuthorization(undefined, secret), false);
+  assert.equal(hasValidCronAuthorization(`Bearer ${secret}`, null), false);
+  assert.equal(hasValidCronAuthorization(`Bearer wrong-${secret}`, secret), false);
+  assert.equal(hasValidCronAuthorization(`Bearer ${secret}`, secret), true);
+});
 
 function getSetCookie(response: {
   headers: Record<string, string | number | string[] | undefined>;

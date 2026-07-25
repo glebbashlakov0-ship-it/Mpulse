@@ -55,6 +55,18 @@ export type AppConfig = {
   usdtTronContract: string | null;
   databaseUrl: string | null;
   databaseSsl: boolean;
+  moneyOutboxWorkerEnabled: boolean;
+  moneyOutboxDrainEndpointEnabled: boolean;
+  moneyOutboxDeliveryMode: "disabled" | "structured_log";
+  cronSecret: string | null;
+  moneyOutboxPollIntervalMs: number;
+  moneyOutboxBatchSize: number;
+  moneyOutboxConcurrency: number;
+  moneyOutboxLeaseDurationMs: number;
+  moneyOutboxMaxAttempts: number;
+  moneyOutboxBackoffBaseMs: number;
+  moneyOutboxBackoffMaxMs: number;
+  moneyOutboxBackoffJitterRatio: number;
   resendApiKey: string;
   emailFromAddress: string;
   appBaseUrl: string;
@@ -184,6 +196,42 @@ export function getConfig(): AppConfig {
   );
   const realMoneyDepositProvider = stringFromEnv("REAL_MONEY_DEPOSIT_PROVIDER");
   const usdtTronContract = stringFromEnv("USDT_TRON_CONTRACT");
+  const moneyOutboxWorkerEnabled = booleanFromEnv("MONEY_OUTBOX_WORKER_ENABLED", false);
+  const moneyOutboxDrainEndpointEnabled = booleanFromEnv(
+    "MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED",
+    false,
+  );
+  const moneyOutboxDeliveryMode =
+    stringFromEnv("MONEY_OUTBOX_DELIVERY_MODE") ?? "disabled";
+  const cronSecret = stringFromEnv("CRON_SECRET");
+  const moneyOutboxBatchSize = numberFromEnv("MONEY_OUTBOX_BATCH_SIZE", 50, {
+    min: 1,
+    integer: true,
+  });
+  const moneyOutboxConcurrency = numberFromEnv("MONEY_OUTBOX_CONCURRENCY", 5, {
+    min: 1,
+    integer: true,
+  });
+  const moneyOutboxLeaseDurationMs = numberFromEnv(
+    "MONEY_OUTBOX_LEASE_DURATION_MS",
+    120_000,
+    { min: 1_000, integer: true },
+  );
+  const moneyOutboxBackoffBaseMs = numberFromEnv(
+    "MONEY_OUTBOX_BACKOFF_BASE_MS",
+    1_000,
+    { min: 1, integer: true },
+  );
+  const moneyOutboxBackoffMaxMs = numberFromEnv(
+    "MONEY_OUTBOX_BACKOFF_MAX_MS",
+    15 * 60_000,
+    { min: 1, integer: true },
+  );
+  const moneyOutboxBackoffJitterRatio = numberFromEnv(
+    "MONEY_OUTBOX_BACKOFF_JITTER_RATIO",
+    0.2,
+    { min: 0 },
+  );
   const authRateLimitBackend = stringFromEnv("AUTH_RATE_LIMIT_BACKEND")
     ?? (nodeEnv === "production" ? (redisUrl ? "redis" : "external") : "memory");
 
@@ -208,6 +256,33 @@ export function getConfig(): AppConfig {
     exchangeRateProvider,
     usdtTronContract,
   });
+  if (moneyOutboxConcurrency > moneyOutboxBatchSize) {
+    throw new Error("MONEY_OUTBOX_CONCURRENCY must not exceed MONEY_OUTBOX_BATCH_SIZE.");
+  }
+  if (moneyOutboxBackoffMaxMs < moneyOutboxBackoffBaseMs) {
+    throw new Error("MONEY_OUTBOX_BACKOFF_MAX_MS must be >= MONEY_OUTBOX_BACKOFF_BASE_MS.");
+  }
+  if (moneyOutboxBackoffJitterRatio > 1) {
+    throw new Error("MONEY_OUTBOX_BACKOFF_JITTER_RATIO must be <= 1.");
+  }
+  if (!["disabled", "structured_log"].includes(moneyOutboxDeliveryMode)) {
+    throw new Error("MONEY_OUTBOX_DELIVERY_MODE must be disabled or structured_log.");
+  }
+  if (moneyOutboxWorkerEnabled || moneyOutboxDrainEndpointEnabled) {
+    if (!databaseUrl) {
+      throw new Error("DATABASE_URL is required when a money outbox worker is enabled.");
+    }
+    if (moneyOutboxDeliveryMode !== "structured_log") {
+      throw new Error(
+        "MONEY_OUTBOX_DELIVERY_MODE must be structured_log when a money outbox runtime is enabled.",
+      );
+    }
+  }
+  if (moneyOutboxDrainEndpointEnabled && (!cronSecret || cronSecret.length < 32)) {
+    throw new Error(
+      "CRON_SECRET must contain at least 32 characters when MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED=true.",
+    );
+  }
 
   const sessionCookieSecure = booleanFromEnv("SESSION_COOKIE_SECURE", nodeEnv === "production");
 
@@ -312,6 +387,24 @@ export function getConfig(): AppConfig {
     usdtTronContract,
     databaseUrl,
     databaseSsl: booleanFromEnv("DATABASE_SSL", nodeEnv === "production"),
+    moneyOutboxWorkerEnabled,
+    moneyOutboxDrainEndpointEnabled,
+    moneyOutboxDeliveryMode: moneyOutboxDeliveryMode as "disabled" | "structured_log",
+    cronSecret,
+    moneyOutboxPollIntervalMs: numberFromEnv("MONEY_OUTBOX_POLL_INTERVAL_MS", 1_000, {
+      min: 100,
+      integer: true,
+    }),
+    moneyOutboxBatchSize,
+    moneyOutboxConcurrency,
+    moneyOutboxLeaseDurationMs,
+    moneyOutboxMaxAttempts: numberFromEnv("MONEY_OUTBOX_MAX_ATTEMPTS", 10, {
+      min: 1,
+      integer: true,
+    }),
+    moneyOutboxBackoffBaseMs,
+    moneyOutboxBackoffMaxMs,
+    moneyOutboxBackoffJitterRatio,
     resendApiKey: stringFromEnv("RESEND_API_KEY") ?? "local",
     emailFromAddress: stringFromEnv("EMAIL_FROM_ADDRESS") ?? "Pulse Market <noreply@pulsemarket.app>",
     appBaseUrl: urlFromEnv(

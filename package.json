@@ -15,6 +15,7 @@
     "secrets:audit": "tsx scripts/checkSecretHygiene.ts",
     "security:audit": "npm audit --audit-level=low",
     "test:postgres": "tsx --test scripts/coinsPostgres.test.ts",
+    "test:outbox": "tsx --test src/moneyOutbox.test.ts",
     "build:api": "rm -rf dist && tsc -p tsconfig.json",
     "build": "npm run build:api && npm run build:web",
     "vercel-build": "npm run build",

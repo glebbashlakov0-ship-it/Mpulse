@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { createReadStream } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -85,10 +86,20 @@ import { registerPlatformActivityRoutes } from "./routes/platformActivityRoutes.
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerWatchlistRoutes } from "./routes/watchlistRoutes.js";
 import { MemoryWatchlistRepository, PostgresWatchlistRepository } from "./watchlistRepository.js";
+import {
+  MoneyOutboxLoop,
+  MoneyOutboxWorker,
+  PostgresMoneyOutboxRepository,
+  type MoneyOutboxHandler,
+  type MoneyOutboxLogger,
+} from "./moneyOutbox.js";
 
 let appPromise: Promise<Fastify.FastifyInstance> | null = null;
 
-export function buildApp(config: AppConfig = getConfig()) {
+export function buildApp(
+  config: AppConfig = getConfig(),
+  dependencies: { moneyOutboxHandler?: MoneyOutboxHandler } = {},
+) {
   assertNoProductionMemoryFallback(config);
 
   const app = Fastify({
@@ -192,6 +203,55 @@ export function buildApp(config: AppConfig = getConfig()) {
   });
   const platformActivity = buildPlatformActivityService(platformActivityRepository);
   let snapshotCollectorTimer: ReturnType<typeof setInterval> | null = null;
+  let moneyOutboxLoop: MoneyOutboxLoop | null = null;
+  let moneyOutboxWorker: MoneyOutboxWorker | null = null;
+
+  if (config.moneyOutboxWorkerEnabled || config.moneyOutboxDrainEndpointEnabled) {
+    if (config.moneyOutboxDeliveryMode !== "structured_log") {
+      throw new Error(
+        "moneyOutboxDeliveryMode must be structured_log when a money outbox runtime is enabled.",
+      );
+    }
+    const outboxLogger: MoneyOutboxLogger = {
+      info: (fields, message) => app.log.info(fields, message),
+      warn: (fields, message) => app.log.warn(fields, message),
+      error: (fields, message) => app.log.error(fields, message),
+    };
+    const outboxHandler =
+      dependencies.moneyOutboxHandler ??
+      (async (event) => {
+        outboxLogger.info(
+          {
+            event: "money_outbox.structured_log_delivered",
+            outboxEventId: event.id,
+            eventType: event.eventType,
+            aggregateType: event.aggregateType,
+            aggregateId: event.aggregateId,
+            attempt: event.attempt,
+          },
+          "Money outbox event delivered to the structured-log sink.",
+        );
+      });
+    moneyOutboxWorker = new MoneyOutboxWorker({
+      repository: new PostgresMoneyOutboxRepository(db),
+      handler: outboxHandler,
+      logger: outboxLogger,
+      batchSize: config.moneyOutboxBatchSize,
+      concurrency: config.moneyOutboxConcurrency,
+      leaseDurationMs: config.moneyOutboxLeaseDurationMs,
+      maxAttempts: config.moneyOutboxMaxAttempts,
+      backoffBaseMs: config.moneyOutboxBackoffBaseMs,
+      backoffMaxMs: config.moneyOutboxBackoffMaxMs,
+      backoffJitterRatio: config.moneyOutboxBackoffJitterRatio,
+    });
+    if (config.moneyOutboxWorkerEnabled) {
+      moneyOutboxLoop = new MoneyOutboxLoop(
+        moneyOutboxWorker,
+        config.moneyOutboxPollIntervalMs,
+        outboxLogger,
+      );
+    }
+  }
 
   if (!db.enabled) {
     app.log.warn("Database disabled. Set DATABASE_URL to enable Postgres repositories.");
@@ -202,6 +262,7 @@ export function buildApp(config: AppConfig = getConfig()) {
       clearInterval(snapshotCollectorTimer);
     }
 
+    await moneyOutboxLoop?.stop();
     await authRateLimiter.close?.();
     await db.close();
   });
@@ -408,6 +469,28 @@ export function buildApp(config: AppConfig = getConfig()) {
   );
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
 
+  if (config.moneyOutboxDrainEndpointEnabled && moneyOutboxWorker) {
+    app.get("/api/cron/money-outbox", async (request, reply) => {
+      if (!hasValidCronAuthorization(request.headers.authorization, config.cronSecret)) {
+        return reply.status(401).send({
+          data: null,
+          error: { code: "UNAUTHORIZED", message: "Unauthorized" },
+        });
+      }
+
+      return reply.send({
+        data: await moneyOutboxWorker.runOnce(),
+        error: null,
+      });
+    });
+  }
+
+  if (moneyOutboxLoop) {
+    app.addHook("onReady", async () => {
+      moneyOutboxLoop?.start();
+    });
+  }
+
   if (config.marketSnapshotCollectorEnabled && config.marketSnapshotCollectorMarketIds.length > 0) {
     const collectConfiguredSnapshots = async () => {
       const result = await marketData.collectMarketSnapshots(config.marketSnapshotCollectorMarketIds);
@@ -428,6 +511,18 @@ export function buildApp(config: AppConfig = getConfig()) {
   }
 
   return app;
+}
+
+export function hasValidCronAuthorization(
+  authorization: string | undefined,
+  secret: string | null,
+) {
+  if (!authorization || !secret) {
+    return false;
+  }
+  const provided = Buffer.from(authorization);
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
 function assertNoProductionMemoryFallback(config: AppConfig) {

@@ -142,7 +142,7 @@ exist:
   ownership;
 - production KYC/AML/sanctions/region decisions and incident ownership;
 - authoritative venue order/fill receipts and proof/reconciliation of funded collateral;
-- durable outbox delivery, retry, dead-letter, alerting, and operational ownership;
+- downstream outbox handlers, dead-letter alerting, replay controls, and operational ownership;
 - rate limits;
 - request validation schemas;
 - audit logs;

@@ -47,6 +47,7 @@ import {
 import { runCoinReconciliation } from "./reconcileCoins.js";
 import { migrations } from "../src/migrationPlan.js";
 import { auditPostgresTestDatabaseSafety } from "../src/postgresTestDatabaseSafety.js";
+import { PostgresMoneyOutboxRepository } from "../src/moneyOutbox.js";
 
 const { Pool } = pg;
 const VALID_TRON_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -60,6 +61,113 @@ const skipReason = postgresTestUrl
         .map((issue) => issue.code)
         .join(", ")}`
   : "Set TEST_DATABASE_URL to run Coin Postgres tests.";
+
+test(
+  "money outbox claims concurrently, fences stale owners, retries, and dead-letters",
+  { skip: skipReason },
+  async () => {
+    await withIsolatedCoinSchema(async (client, schemaName, pool) => {
+      const ids = Array.from({ length: 4 }, () => randomUUID());
+      for (const [index, id] of ids.entries()) {
+        await client.query(
+          `insert into money_outbox_events (
+             id, aggregate_type, aggregate_id, event_type, idempotency_key, payload
+           ) values ($1, 'test', $1, 'test.event', $2, '{}'::jsonb)`,
+          [id, `outbox-postgres-${index}-${id}`],
+        );
+      }
+
+      const database = databaseForSchema(pool, schemaName);
+      const first = new PostgresMoneyOutboxRepository(database);
+      const second = new PostgresMoneyOutboxRepository(database);
+      const [firstClaim, secondClaim] = await Promise.all([
+        first.claimBatch({
+          workerId: "worker-a",
+          batchSize: 3,
+          leaseDurationMs: 30_000,
+          maxAttempts: 2,
+        }),
+        second.claimBatch({
+          workerId: "worker-b",
+          batchSize: 3,
+          leaseDurationMs: 30_000,
+          maxAttempts: 2,
+        }),
+      ]);
+      const claimed = [...firstClaim, ...secondClaim];
+      assert.equal(claimed.length, 4);
+      assert.equal(new Set(claimed.map((event) => event.id)).size, 4);
+
+      const sent = claimed[0];
+      assert.ok(sent);
+      assert.equal(
+        await first.markSent({
+          id: sent.id,
+          lockToken: "00000000-0000-4000-8000-000000000000",
+        }),
+        false,
+      );
+      assert.equal(await first.markSent(sent), true);
+
+      const retry = claimed[1];
+      assert.ok(retry);
+      assert.equal(
+        await first.recordFailure({
+          event: retry,
+          error: "temporary failure",
+          retryAt: new Date(Date.now() - 1_000),
+          maxAttempts: 2,
+        }),
+        "retry",
+      );
+      const retryClaim = await second.claimBatch({
+        workerId: "worker-b",
+        batchSize: 1,
+        leaseDurationMs: 30_000,
+        maxAttempts: 2,
+      });
+      assert.equal(retryClaim[0]?.id, retry.id);
+      assert.equal(retryClaim[0]?.attempt, 2);
+      assert.equal(
+        await second.recordFailure({
+          event: retryClaim[0]!,
+          error: "permanent failure",
+          retryAt: new Date(),
+          maxAttempts: 2,
+        }),
+        "dead_letter",
+      );
+
+      const stale = claimed[2];
+      assert.ok(stale);
+      await client.query(
+        `update money_outbox_events
+         set locked_at = now() - interval '2 minutes'
+         where id = $1`,
+        [stale.id],
+      );
+      const reclaimed = await second.claimBatch({
+        workerId: "worker-b",
+        batchSize: 1,
+        leaseDurationMs: 1_000,
+        maxAttempts: 3,
+      });
+      assert.equal(reclaimed[0]?.id, stale.id);
+      assert.notEqual(reclaimed[0]?.lockToken, stale.lockToken);
+      assert.equal(await first.markSent(stale), false);
+      assert.equal(await second.markSent(reclaimed[0]!), true);
+
+      const deadLetter = await client.query<{ status: string; dead_lettered_at: Date | null }>(
+        `select status, dead_lettered_at
+         from money_outbox_events
+         where id = $1`,
+        [retry.id],
+      );
+      assert.equal(deadLetter.rows[0]?.status, "dead_letter");
+      assert.ok(deadLetter.rows[0]?.dead_lettered_at);
+    });
+  },
+);
 
 test(
   "Coin ledger serializes concurrent debits, protects cached balances, and is immutable",
@@ -2160,6 +2268,48 @@ async function setSearchPath(client: PoolClient, schemaName: string) {
 function quoteIdentifier(value: string) {
   assert.match(value, /^[a-z][a-z0-9_]+$/);
   return `"${value}"`;
+}
+
+function databaseForSchema(pool: PgPool, schemaName: string): Database {
+  return {
+    enabled: true,
+    async query<T>(text: string, values?: readonly unknown[]) {
+      const client = await pool.connect();
+      try {
+        await setSearchPath(client, schemaName);
+        const result = await client.query(text, values ? [...values] : undefined);
+        return { rows: result.rows as T[] };
+      } finally {
+        client.release();
+      }
+    },
+    async transaction<T>(callback: (client: Queryable) => Promise<T>) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await setSearchPath(client, schemaName);
+        const result = await callback({
+          async query<TClient>(text: string, values?: readonly unknown[]) {
+            const queryResult = await client.query(
+              text,
+              values ? [...values] : undefined,
+            );
+            return { rows: queryResult.rows as TClient[] };
+          },
+        });
+        await client.query("commit");
+        return result;
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+    async close() {
+      // The isolated-schema harness owns the pool.
+    },
+  };
 }
 
 async function insertTestUser(client: PoolClient, userId: string, email: string) {

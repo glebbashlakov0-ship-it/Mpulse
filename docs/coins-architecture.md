@@ -298,7 +298,13 @@ does not repair balances, and exits with code 2 when discrepancies exist. It che
 - settlement payouts, totals, ledger links, and historical projection conversion;
 - migration markers/cutover totals;
 - post-cutover legacy writes; and
-- failed or stale pending/processing outbox events.
+- dead-lettered or stale pending/failed/processing outbox events.
+
+Migration `032_money_outbox_worker.sql` adds bounded `SKIP LOCKED` claims, expiring leases with
+fencing tokens, capped exponential retry with jitter, and terminal `dead_letter` state. Delivery
+is at-least-once. The current explicit `structured_log` delivery mode is a monitoring sink and
+omits payload and idempotency key; future downstream handlers must deduplicate with the persisted
+idempotency key.
 
 Operational recovery uses new idempotent or compensating entries:
 

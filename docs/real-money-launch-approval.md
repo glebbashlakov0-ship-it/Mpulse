@@ -6,7 +6,7 @@
 - Runtime posture: **review-only**
 - Deposit Coin credit: **disabled by default and requires guarded explicit opt-in**
 - Fireblocks withdrawal broadcast: **not implemented in public/admin routes**
-- Production Coin migration: **not implemented**
+- Production Coin migration: **implemented for one committed release marker; not deployed here**
 - Deployment in this change: **none**
 - Updated: 2026-07-25
 
@@ -82,7 +82,7 @@ A future approval requires a new dated artifact with named legal, security, fina
 approvers. Do not change this decision merely because technical checks pass. At minimum:
 
 - [ ] Coin migration dry-run reviewed with exact available/reserved totals
-- [ ] Production-specific cutover workflow implemented; the current test-only CLI is insufficient
+- [x] Production-specific cutover workflow implemented; the test-only CLI remains isolated
 - [ ] Backup/restore rehearsal, maintenance window, observation, abort, and forward recovery approved
 - [ ] Legacy-to-Coin fence and no-dual-write behavior independently reviewed
 - [ ] Coin ledger concurrency, idempotency, negative-balance, and immutable-history tests passed

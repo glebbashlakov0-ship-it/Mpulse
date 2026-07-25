@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -67,6 +68,22 @@ type PublicCoinTotals = {
   totalCoinMicros: string;
 };
 
+export type CoinCutoverDatabaseTarget = {
+  urlHostname: string;
+  urlPort: number;
+  urlDatabaseName: string;
+  connectedDatabaseName: string;
+  serverAddress: string | null;
+  serverPort: number | null;
+  ssl: boolean;
+  fingerprint: string;
+};
+
+export type CoinCutoverSnapshotOptions = {
+  releaseMarker: string;
+  databaseTarget: CoinCutoverDatabaseTarget;
+};
+
 export async function inspectMigration(
   client: PoolClient,
 ): Promise<MigrationReport> {
@@ -95,6 +112,7 @@ export async function inspectMigration(
 
 export async function applyMigration(
   client: PoolClient,
+  snapshot?: CoinCutoverSnapshotOptions,
 ): Promise<MigrationReport> {
   await client.query("begin isolation level serializable");
   try {
@@ -146,7 +164,11 @@ export async function applyMigration(
       );
     }
 
-    if (initialState === "coin" && preliminary.accountsToMigrate === 0) {
+    if (initialState === "coin") {
+      await assertCompletedCutoverRun(client);
+      if (snapshot) {
+        await assertProductionSnapshot(client, snapshot);
+      }
       await client.query("commit");
       return {
         ...preliminary,
@@ -156,6 +178,10 @@ export async function applyMigration(
     }
     if (initialState !== "legacy" && initialState !== "migrating") {
       throw new Error(`Migration blocked: unexpected cutover state ${initialState}.`);
+    }
+
+    if (snapshot) {
+      await persistProductionSnapshot(client, snapshot, rows, preliminary);
     }
 
     await client.query(
@@ -231,6 +257,129 @@ export async function applyMigration(
   } catch (error) {
     await client.query("rollback");
     throw error;
+  }
+}
+
+async function assertCompletedCutoverRun(client: PoolClient) {
+  const completed = await client.query<{ exists: boolean }>(
+    `select exists (
+       select 1
+       from coin_cutover_runs
+       where migration_version = $1 and status = 'completed'
+     ) as exists`,
+    [COIN_MIGRATION_VERSION],
+  );
+  if (completed.rows[0]?.exists !== true) {
+    throw new Error(
+      "Migration blocked: Coin state has no completed cutover run for this migration version.",
+    );
+  }
+}
+
+async function assertProductionSnapshot(
+  client: PoolClient,
+  snapshot: CoinCutoverSnapshotOptions,
+) {
+  const existing = await client.query<{ matches: boolean }>(
+    `select
+       migration_version = $2
+       and database_target = $3::jsonb as matches
+     from coin_cutover_snapshots
+     where release_marker = $1`,
+    [
+      snapshot.releaseMarker,
+      COIN_MIGRATION_VERSION,
+      JSON.stringify(snapshot.databaseTarget),
+    ],
+  );
+  if (existing.rows[0]?.matches !== true) {
+    throw new Error(
+      "Migration blocked: completed Coin state lacks matching pre-cutover production snapshot evidence.",
+    );
+  }
+}
+
+async function persistProductionSnapshot(
+  client: PoolClient,
+  snapshot: CoinCutoverSnapshotOptions,
+  rows: LegacyBalanceRow[],
+  report: MigrationReport,
+) {
+  const existing = await client.query<{ release_marker: string }>(
+    `select release_marker
+     from coin_cutover_snapshots
+     where release_marker = $1`,
+    [snapshot.releaseMarker],
+  );
+  if (existing.rows.length > 0) {
+    throw new Error(
+      "Migration blocked: production snapshot marker already exists before cutover completion.",
+    );
+  }
+
+  const snapshotRows = rows.map((row) => ({
+    userId: row.user_id,
+    legacyAvailableAmount: row.available_amount,
+    legacyReservedAmount: row.reserved_amount,
+    availableCoinMicros: row.available_coin_micros,
+    reservedCoinMicros: row.reserved_coin_micros,
+    pendingDepositAmount: row.pending_deposit_amount,
+    pendingWithdrawalAmount: row.pending_withdrawal_amount,
+    pendingDepositCount: row.pending_deposit_count,
+    pendingWithdrawalCount: row.pending_withdrawal_count,
+  }));
+  const balanceSnapshotSha256 = createHash("sha256")
+    .update(JSON.stringify(snapshotRows))
+    .digest("hex");
+
+  await client.query(
+    `insert into coin_cutover_snapshots (
+       release_marker, migration_version, database_target,
+       balance_snapshot_sha256, legacy_account_count,
+       legacy_available_coin_micros, legacy_reserved_coin_micros,
+       pending_deposit_count, pending_withdrawal_count, inspection_report
+     ) values (
+       $1, $2, $3::jsonb, $4, $5, $6::bigint, $7::bigint,
+       $8::bigint, $9::bigint, $10::jsonb
+     )`,
+    [
+      snapshot.releaseMarker,
+      COIN_MIGRATION_VERSION,
+      JSON.stringify(snapshot.databaseTarget),
+      balanceSnapshotSha256,
+      rows.length,
+      report.legacyAvailableCoinMicros,
+      report.legacyReservedCoinMicros,
+      report.pendingDepositCount,
+      report.pendingWithdrawalCount,
+      JSON.stringify(report),
+    ],
+  );
+
+  for (const row of snapshotRows) {
+    await client.query(
+      `insert into coin_cutover_balance_snapshots (
+         release_marker, user_id, legacy_available_amount,
+         legacy_reserved_amount, available_coin_micros, reserved_coin_micros,
+         pending_deposit_amount, pending_withdrawal_amount,
+         pending_deposit_count, pending_withdrawal_count
+       ) values (
+         $1, $2, $3::numeric, $4::numeric, $5::bigint, $6::bigint,
+         $7::numeric, $8::numeric, $9::bigint, $10::bigint
+       )`,
+      [
+        snapshot.releaseMarker,
+        row.userId,
+        row.legacyAvailableAmount,
+        row.legacyReservedAmount,
+        row.availableCoinMicros,
+        row.reservedCoinMicros,
+        row.pendingDepositAmount,
+        row.pendingWithdrawalAmount,
+        row.pendingDepositCount,
+        row.pendingWithdrawalCount,
+      ],
+    );
   }
 }
 

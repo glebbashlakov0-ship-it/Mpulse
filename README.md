@@ -17,7 +17,8 @@ Real-money launch is **not approved**. The implemented posture is review-only:
 - there is no public or admin Fireblocks withdrawal-broadcast route;
 - internal Coin trading never enables or calls a Polymarket CLOB execution runtime;
 - the balance-migration CLI accepts only a dedicated test database;
-- this change does not deploy anything and does not apply a production migration.
+- the authorized production balance cutover is release-marker gated; this change itself does not
+  deploy anything.
 
 The Coin ledger, Fireblocks custody, and Polymarket CLOB execution are separate trust domains.
 Provider configuration, a green test run, or a successful rehearsal does not enable real money.
@@ -201,10 +202,12 @@ vault, or broadcast configuration belongs in this app.
 ## Sparse migration plan and cutover rehearsal
 
 The checked migration plan is intentionally sparse: existing migrations `001` through `016`, then
-`031_coins_ledger_cutover.sql` and `032_money_outbox_worker.sql`. Migration `031` creates the Coin schema, immutable guards, global
-fences, provider evidence, withdrawals, trading, settlement, outbox, cutover, and reconciliation
-tables. Migration `032` adds durable leases, fencing tokens, retry/dead-letter state, and claim
-indexes. Neither migration copies balances.
+`031_coins_ledger_cutover.sql`, `032_money_outbox_worker.sql`, and
+`033_production_coin_cutover_evidence.sql`. Migration `031` creates the Coin schema, immutable
+guards, global fences, provider evidence, withdrawals, trading, settlement, outbox, cutover, and
+reconciliation tables. Migration `032` adds durable leases, fencing tokens, retry/dead-letter
+state, and claim indexes. Migration `033` adds immutable pre-cutover snapshots and completion
+evidence. None of the schema migrations copies balances.
 
 Validate the explicit plan:
 
@@ -250,7 +253,22 @@ DATABASE_URL= \
 
 The CLI rejects production context, maintenance databases, non-test-scoped targets, and a target
 matching `DATABASE_URL`. It checks pending legacy operations and exact totals before changing the
-fence. There is no production apply command.
+fence.
+
+For the single authorized release,
+`releases/2026-07-25-coins-v1-production-cutover.json` gates a separate production command:
+
+```bash
+npm run coins:production-cutover
+```
+
+`npm run vercel-build` invokes it before compilation. It is a no-op unless
+`VERCEL_ENV=production`; in production it requires the marked `mpulse.vercel.app` project, SSL,
+and exactly `DATABASE_URL`, and rejects `TEST_DATABASE_URL`. Under a global advisory lock it applies
+the schema plan, inspects legacy state, atomically stores an in-database per-user balance snapshot,
+applies the Coin migration, reconciles, and records immutable completion evidence. Pending or
+invalid legacy data and any reconciliation discrepancy fail the build. Repeating the same marked
+release verifies the evidence and performs no second migration.
 
 The detailed operator sequence, expected output, reconciliation categories, and incident handling
 are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
@@ -277,5 +295,4 @@ npm run build
 ```
 
 The PostgreSQL test target must be dedicated and test-scoped. A green result is merge evidence
-only. It does not authorize deployment, Fireblocks operations, production migration, or real-money
-launch.
+only. It does not authorize deployment, Fireblocks operations, or real-money launch.

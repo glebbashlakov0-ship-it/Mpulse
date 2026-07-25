@@ -792,7 +792,10 @@ export async function runCoinReconciliation(
   return report;
 }
 
-async function persistReport(client: PoolClient, report: CoinReconciliationReport) {
+export async function persistCoinReconciliationReport(
+  client: PoolClient,
+  report: CoinReconciliationReport,
+) {
   await client.query("begin");
   try {
     const run = await client.query<{ id: string }>(
@@ -817,6 +820,7 @@ async function persistReport(client: PoolClient, report: CoinReconciliationRepor
       ],
     );
     await client.query("commit");
+    return run.rows[0]?.id ?? null;
   } catch (error) {
     await client.query("rollback");
     throw error;
@@ -843,7 +847,7 @@ async function main() {
     const report = await runCoinReconciliation(pool);
     const client = await pool.connect();
     try {
-      await persistReport(client, report);
+      await persistCoinReconciliationReport(client, report);
     } finally {
       client.release();
     }

@@ -281,10 +281,12 @@ micros; apply is atomically blocked until all legacy pending operations are drai
 share projections must fit signed `BIGINT` micros and have no more than six decimals. A second
 apply is a no-op.
 
-There is currently no production-balance apply command. Production cutover remains blocked until a
-separately reviewed operator workflow covers backup/restore, exact target selection, approvals,
-maintenance mode, observation, and abort criteria. Never put Coin data migration in an automatic
-deployment hook.
+The 2026-07-25 authorized release adds a production-only Vercel build wrapper guarded by a committed
+one-time marker. It uses exactly the SSL `DATABASE_URL` target, rejects `TEST_DATABASE_URL`, holds a
+release advisory lock, applies the locked schema plan, inspects, snapshots, applies, reconciles, and
+records completion. Preview/local builds skip it, pending or invalid data fails closed, and a repeat
+is a verified no-op. The in-database snapshot preserves computed per-user legacy balances and
+credential-free target metadata; legacy history itself remains intact and fenced.
 
 ## Reconciliation and recovery
 

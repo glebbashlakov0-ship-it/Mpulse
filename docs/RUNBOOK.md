@@ -9,8 +9,9 @@ Production money movement is **review-only and not approved**.
   credit Coins while the deposit feature gate is disabled.
 - No public or admin route broadcasts a Fireblocks withdrawal.
 - Internal Coin trading never enables a Polymarket CLOB runtime.
-- Coin balance apply is restricted to a dedicated `TEST_DATABASE_URL`.
-- This runbook does not authorize deployment or a production migration.
+- The general Coin rehearsal CLI remains restricted to a dedicated `TEST_DATABASE_URL`.
+- One production balance cutover is explicitly gated by the committed 2026-07-25 release marker;
+  this runbook does not authorize a deploy or any other migration.
 
 Keep `APP_MODE=local`. See [real-money-launch-approval.md](real-money-launch-approval.md) for the
 denial record and [coins-architecture.md](coins-architecture.md) for units and invariants.
@@ -78,6 +79,8 @@ The repository uses an explicit sparse migration plan:
 - `001` through `016` are the existing application migrations;
 - `017` through `030` are not part of this focused cutover change;
 - `031_coins_ledger_cutover.sql` is the structural Coin migration.
+- `032_money_outbox_worker.sql` adds durable outbox leasing, retries, and dead-letter state.
+- `033_production_coin_cutover_evidence.sql` stores immutable release snapshot/completion evidence.
 
 The gap is intentional and is validated against the explicit plan rather than inferred as a
 contiguous sequence:
@@ -89,6 +92,35 @@ npm run migration:plan-check
 Migration `031` creates Coin accounts, immutable ledger entries, exchange-rate snapshots, provider
 events, crypto deposits, withdrawal quotes/requests, execution orders, outbox events, migration
 markers, cutover runs, reconciliation reports, and global write fences. It does not copy balances.
+The schema runner holds `market_pulse:schema_migrations` on one PostgreSQL session while applying
+the checked plan, so concurrent production builds serialize safely.
+
+## Authorized production build cutover
+
+The only production trigger is the committed marker
+`releases/2026-07-25-coins-v1-production-cutover.json`, invoked by `npm run vercel-build`. Do not
+run the test CLI against production and do not set `TEST_DATABASE_URL` in the production build.
+
+The wrapper runs only when all of these are true:
+
+- `VERCEL_ENV=production`;
+- `VERCEL_PROJECT_PRODUCTION_URL` resolves to the host recorded in the marker;
+- `DATABASE_URL` names one non-local, non-test PostgreSQL database;
+- `DATABASE_SSL=true`;
+- the connected database name exactly matches the database named by `DATABASE_URL`.
+
+It takes a release-scoped advisory lock, applies schema migrations, runs
+`inspectMigration -> applyMigration -> reconciliation`, and stops on pending deposits,
+withdrawals, invalid precision/range, negative balances, projection errors, or reconciliation
+discrepancies. The apply transaction writes a header manifest, SHA-256 balance digest, and exact
+per-user legacy balance rows before moving the fence. Credentials are never stored; target evidence
+contains only host/port/database, connected server identity, SSL state, and a credential-free
+fingerprint.
+
+After a passing reconciliation it records immutable completion evidence. A repeated build for the
+same marker/target checks the snapshot, migration run, and reconciliation but does not add a second
+balance credit, snapshot, or completion. A failed production build is an incident: preserve the
+reports and database, keep money movement disabled, and use a reviewed forward fix.
 
 ## Dedicated test database
 

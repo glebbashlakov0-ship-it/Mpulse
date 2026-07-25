@@ -565,7 +565,20 @@ test(
       assert.equal(drainedDryRun.pendingDepositCoinMicros, "0");
       assert.equal(drainedDryRun.pendingWithdrawalCoinMicros, "0");
 
-      const applied = await applyMigration(client);
+      const snapshotOptions = {
+        releaseMarker: `postgres-test-cutover-${userId}`,
+        databaseTarget: {
+          urlHostname: "postgres-test.example",
+          urlPort: 5432,
+          urlDatabaseName: "mpulse_coins_test",
+          connectedDatabaseName: "mpulse_coins_test",
+          serverAddress: "127.0.0.1",
+          serverPort: 5432,
+          ssl: false,
+          fingerprint: "a".repeat(64),
+        },
+      };
+      const applied = await applyMigration(client, snapshotOptions);
       assert.equal(applied.noOp, false);
       assert.deepEqual(applied.afterCoinTotals, {
         accounts: "1",
@@ -600,10 +613,76 @@ test(
         payout_coin_micros: "9000000",
       });
 
-      const secondRun = await applyMigration(client);
+      const snapshotEvidence = await client.query<{
+        snapshot_count: string;
+        balance_row_count: string;
+        balance_snapshot_sha256: string;
+        legacy_account_count: number;
+      }>(
+        `select
+           (select count(*) from coin_cutover_snapshots
+             where release_marker = $1)::text as snapshot_count,
+           (select count(*) from coin_cutover_balance_snapshots
+             where release_marker = $1)::text as balance_row_count,
+           snapshots.balance_snapshot_sha256,
+           snapshots.legacy_account_count
+         from coin_cutover_snapshots snapshots
+         where snapshots.release_marker = $1`,
+        [snapshotOptions.releaseMarker],
+      );
+      assert.equal(snapshotEvidence.rows[0]?.snapshot_count, "1");
+      assert.equal(snapshotEvidence.rows[0]?.balance_row_count, "1");
+      assert.equal(snapshotEvidence.rows[0]?.legacy_account_count, 1);
+      assert.match(
+        snapshotEvidence.rows[0]?.balance_snapshot_sha256 ?? "",
+        /^[a-f0-9]{64}$/,
+      );
+
+      const postCutoverUserId = randomUUID();
+      await insertTestUser(
+        client,
+        postCutoverUserId,
+        `coin-post-cutover-${postCutoverUserId}@example.com`,
+      );
+      const secondRun = await applyMigration(client, snapshotOptions);
       assert.equal(secondRun.noOp, true);
-      assert.equal(secondRun.accountsToMigrate, 0);
       assert.deepEqual(secondRun.afterCoinTotals, applied.afterCoinTotals);
+      const repeatedEvidence = await client.query<{
+        snapshot_count: string;
+        balance_row_count: string;
+      }>(
+        `select
+           (select count(*) from coin_cutover_snapshots
+             where release_marker = $1)::text as snapshot_count,
+           (select count(*) from coin_cutover_balance_snapshots
+             where release_marker = $1)::text as balance_row_count`,
+        [snapshotOptions.releaseMarker],
+      );
+      assert.deepEqual(repeatedEvidence.rows[0], {
+        snapshot_count: "1",
+        balance_row_count: "1",
+      });
+      await assert.rejects(
+        () =>
+          applyMigration(client, {
+            ...snapshotOptions,
+            databaseTarget: {
+              ...snapshotOptions.databaseTarget,
+              fingerprint: "b".repeat(64),
+            },
+          }),
+        /lacks matching pre-cutover production snapshot evidence/,
+      );
+      await assert.rejects(
+        () =>
+          client.query(
+            `update coin_cutover_snapshots
+             set legacy_account_count = legacy_account_count + 1
+             where release_marker = $1`,
+            [snapshotOptions.releaseMarker],
+          ),
+        /immutable/,
+      );
 
       await client.query(
         `update wallets

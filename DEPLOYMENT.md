@@ -10,7 +10,7 @@ functions are separately production-gated and default fail-closed.
 - Framework preset: Vite
 - Build command: `npm run vercel-build`
 - Output directory: `dist-web`
-- API runtime: Vercel Node.js functions from `api/[...path].ts`
+- API runtime: Vercel Node.js function rooted at `src/server.ts`
 
 ## Required Environment Variables
 
@@ -63,8 +63,8 @@ EMAIL_FROM_ADDRESS=Pulse Market <noreply@your-domain.com>
 
 - `/api/*` is served by the serverless Fastify handler.
 - `/api/ops/production-coin-cutover/identity` and `/api/ops/production-coin-cutover` are
-  authenticated ops routes dispatched before the Fastify catch-all in the single Vercel API
-  function. They remain unavailable while
+  authenticated ops routes registered in the single Vercel Fastify function. They remain
+  unavailable while
   `PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=false`.
 - `/health` is rewritten to `/api/health`.
 - All other paths fall back to `dist-web/index.html` for the React SPA.

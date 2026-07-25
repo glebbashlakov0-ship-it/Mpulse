@@ -22,7 +22,7 @@
     "build": "npm run build:api && npm run build:web",
     "vercel-build": "npm run runtime:preflight && npm run build",
     "build:web": "vite build --config web/vite.config.ts",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "test:web": "tsx --test \"web/src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { auditPostgresTestDatabaseSafety } from "../src/postgresTestDatabaseSafety.js";
 
 export const COIN_MIGRATION_VERSION = "coins-v1-legacy-usdt-parity";
@@ -1016,6 +1016,9 @@ function booleanFromEnv(name: string) {
 
 const isMain =
   process.argv[1] !== undefined &&
+  ["coinsMigration.ts", "coinsMigration.js"].includes(
+    basename(process.argv[1]),
+  ) &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   await main();

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
 import type { Queryable } from "../src/db.js";
@@ -900,6 +900,9 @@ function booleanFromEnv(name: string) {
 
 const isMain =
   process.argv[1] !== undefined &&
+  ["reconcileCoins.ts", "reconcileCoins.js"].includes(
+    basename(process.argv[1]),
+  ) &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   await main();

@@ -93,6 +93,14 @@ import {
   type MoneyOutboxHandler,
   type MoneyOutboxLogger,
 } from "./moneyOutbox.js";
+import {
+  authorizeProductionCoinCutoverEndpoint,
+  toSafeProductionCoinCutoverError,
+  toSafeProductionCoinCutoverResult,
+  toSafeProductionDatabaseIdentity,
+} from "./productionCoinCutoverOps.js";
+import { resolveProductionDatabaseTarget } from "./productionCoinCutover.js";
+import { runProductionCoinCutover } from "../scripts/productionCoinCutover.js";
 
 let appPromise: Promise<Fastify.FastifyInstance> | null = null;
 
@@ -276,11 +284,16 @@ export function buildApp(
     const isSignedDepositWebhook =
       request.method === "POST" &&
       request.routeOptions.url === "/api/wallets/webhooks/deposits";
+    const isBearerProtectedProductionCoinCutover =
+      config.productionCoinCutoverEndpointEnabled &&
+      request.method === "POST" &&
+      request.routeOptions.url === "/api/ops/production-coin-cutover";
 
     if (
       !config.csrfProtectionEnabled ||
       !isStateChangingMethod(request.method) ||
-      isSignedDepositWebhook
+      isSignedDepositWebhook ||
+      isBearerProtectedProductionCoinCutover
     ) {
       return;
     }
@@ -468,6 +481,97 @@ export function buildApp(
     coinWallets,
   );
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
+
+  if (config.productionCoinCutoverEndpointEnabled) {
+    app.get(
+      "/api/ops/production-coin-cutover/identity",
+      async (request, reply) => {
+        const access = authorizeProductionCoinCutoverEndpoint({
+          config,
+          vercelEnvironment: process.env.VERCEL_ENV,
+          authorization: request.headers.authorization,
+        });
+        if (!access.ok) {
+          return reply.status(access.statusCode).send({
+            data: null,
+            error: { code: access.code, message: access.message },
+          });
+        }
+
+        try {
+          const resolved = resolveProductionDatabaseTarget(process.env);
+          return reply
+            .header("cache-control", "no-store")
+            .send({
+              data: {
+                database: toSafeProductionDatabaseIdentity(resolved.target),
+              },
+              error: null,
+            });
+        } catch (error) {
+          app.log.error(
+            {
+              error: toSafeProductionCoinCutoverError(error),
+            },
+            "Production Coin cutover identity resolution failed.",
+          );
+          return reply
+            .header("cache-control", "no-store")
+            .status(503)
+            .send({
+              data: null,
+              error: {
+                code: "CUTOVER_IDENTITY_UNAVAILABLE",
+                message:
+                  "The production database identity could not be verified.",
+              },
+            });
+        }
+      },
+    );
+
+    app.post("/api/ops/production-coin-cutover", async (request, reply) => {
+      const access = authorizeProductionCoinCutoverEndpoint({
+        config,
+        vercelEnvironment: process.env.VERCEL_ENV,
+        authorization: request.headers.authorization,
+      });
+      if (!access.ok) {
+        return reply.status(access.statusCode).send({
+          data: null,
+          error: { code: access.code, message: access.message },
+        });
+      }
+
+      try {
+        const result = await runProductionCoinCutover(process.env);
+        return reply
+          .header("cache-control", "no-store")
+          .send({
+            data: toSafeProductionCoinCutoverResult(result),
+            error: null,
+          });
+      } catch (error) {
+        app.log.error(
+          {
+            error: toSafeProductionCoinCutoverError(error),
+          },
+          "Production Coin cutover failed.",
+        );
+        return reply
+          .header("cache-control", "no-store")
+          .status(409)
+          .send({
+            data: null,
+            error: {
+              code: "PRODUCTION_COIN_CUTOVER_FAILED",
+              message:
+                "The production Coin cutover did not complete. Inspect restricted runtime logs and retained database evidence.",
+            },
+          });
+      }
+    });
+  }
 
   if (config.moneyOutboxDrainEndpointEnabled && moneyOutboxWorker) {
     app.get("/api/cron/money-outbox", async (request, reply) => {

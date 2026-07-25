@@ -12,6 +12,36 @@ test("money outbox cron authorization fails closed and matches the exact bearer 
   assert.equal(hasValidCronAuthorization(`Bearer ${secret}`, secret), true);
 });
 
+test("production cutover POST bypasses browser CSRF but still requires bearer auth", async () => {
+  const originalVercelEnvironment = process.env.VERCEL_ENV;
+  process.env.VERCEL_ENV = "production";
+  const app = buildApp(
+    testConfig({
+      csrfProtectionEnabled: true,
+      productionCoinCutoverEndpointEnabled: true,
+      cronSecret: "test-cutover-secret-with-at-least-32-characters",
+    }),
+  );
+
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ops/production-coin-cutover",
+    });
+    const body = JSON.parse(response.body) as { error: { code: string } };
+
+    assert.equal(response.statusCode, 401);
+    assert.equal(body.error.code, "UNAUTHORIZED");
+  } finally {
+    await app.close();
+    if (originalVercelEnvironment === undefined) {
+      delete process.env.VERCEL_ENV;
+    } else {
+      process.env.VERCEL_ENV = originalVercelEnvironment;
+    }
+  }
+});
+
 function getSetCookie(response: {
   headers: Record<string, string | number | string[] | undefined>;
 }) {

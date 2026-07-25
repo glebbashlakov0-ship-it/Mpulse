@@ -3,7 +3,7 @@
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist-web",
   "functions": {
-    "api/[...path].ts": {
+    "src/server.ts": {
       "includeFiles": "{migrations/**,releases/**}",
       "maxDuration": "max"
     }

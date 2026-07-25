@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { Pool, type PoolClient } from "pg";
 import {
   COIN_MIGRATION_VERSION,
@@ -469,6 +469,9 @@ async function main() {
 
 const isMain =
   process.argv[1] !== undefined &&
+  ["productionCoinCutover.ts", "productionCoinCutover.js"].includes(
+    basename(process.argv[1]),
+  ) &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
   await main();

@@ -8,8 +8,22 @@ on:
 
 jobs:
   checks:
-    name: Typecheck, Test, Build
+    name: Coin cutover checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: mpulse_coins_ci_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mpulse_coins_ci_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout
@@ -27,8 +41,14 @@ jobs:
       - name: Typecheck backend
         run: npm run typecheck
 
+      - name: Typecheck Vercel entrypoint
+        run: npm run typecheck:vercel
+
       - name: Typecheck web
         run: npm run typecheck:web
+
+      - name: Typecheck Coin scripts
+        run: npm run typecheck:scripts
 
       - name: Backend tests
         run: npm run test
@@ -36,5 +56,28 @@ jobs:
       - name: Frontend tests
         run: npm run test:web
 
-      - name: Build web
-        run: npm run build:web
+      - name: Check migration plan
+        run: npm run migration:plan-check
+
+      - name: Audit repository secrets
+        run: npm run secrets:audit
+
+      - name: Audit dependencies
+        run: npm run security:audit
+
+      - name: Apply sparse Coin migration chain
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mpulse_coins_ci_test
+          DATABASE_SSL: "false"
+          NODE_ENV: test
+
+      - name: PostgreSQL Coin integration tests
+        run: npm run test:postgres
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mpulse_coins_ci_test
+          TEST_DATABASE_SSL: "false"
+          NODE_ENV: test
+
+      - name: Build API and web
+        run: npm run build

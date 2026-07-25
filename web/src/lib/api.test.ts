@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   acceptLegalAcknowledgements,
-  createLedgerCreditApi,
   createDepositIntent,
   createTradingQuoteApi,
+  createWithdrawalQuote,
   createWithdrawalRequest,
+  loadCoinBalance,
+  loadCoinLedger,
   loadCurrentUser,
   loadComplianceEligibility,
-  loadLedgerEntries,
+  loadAdminMoneyDepositDetail,
+  loadPlatformActivity,
+  loadSupportedMoneyAssets,
   revokeAllAuthSessions,
   updateComplianceProfile,
 } from "./api";
@@ -57,36 +61,159 @@ async function withLocalFetch<T>(
 }
 
 describe("wallet api helpers", () => {
+  it("loads public activity as Coin micros without a USDT balance shape", async () => {
+    await withLocalFetch(
+      () =>
+        Response.json({
+          data: {
+            activity: [
+              {
+                id: "activity-1",
+                type: "trade",
+                displayName: "Ma***",
+                amountCoinMicros: "12500000",
+                currency: "COIN",
+                marketTitle: "Will this test pass?",
+                createdAt: "2026-05-20T12:00:00.000Z",
+                relativeTime: "just now",
+              },
+            ],
+          },
+        }),
+      async (calls) => {
+        const payload = await loadPlatformActivity(10);
+
+        assert.equal(calls[0]?.input, "/api/platform/activity?limit=10");
+        assert.equal(payload.activity[0]?.amountCoinMicros, "12500000");
+        assert.equal(payload.activity[0]?.currency, "COIN");
+      },
+    );
+  });
+
+  it("loads immutable admin deposit evidence from the detail endpoint", async () => {
+    await withLocalFetch(
+      () =>
+        Response.json({
+          data: {
+            deposit: {
+              id: "deposit/one",
+              provider: "fireblocks",
+              providerEventId: "event-1",
+              providerTransactionId: "provider-tx-1",
+              blockchainTxHash: "0xabc",
+              eventIndex: "7",
+              network: "TRON",
+              tokenContract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+              destinationAddress: "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK",
+              depositIntentId: "intent-1",
+              userId: "user-1",
+              grossUsdtAtomic: "10000000",
+              networkFeeUsdtAtomic: "100000",
+              providerFeeUsdtAtomic: "50000",
+              netUsdtAtomic: "9850000",
+              rateSnapshotId: "rate-1",
+              usdValueMicros: "9850000",
+              creditedCoinMicros: "9850000",
+              ledgerEntryId: "ledger-1",
+              reversalLedgerEntryId: null,
+              requiredConfirmations: "20",
+              actualConfirmations: "20",
+              status: "credited",
+              manualReviewReason: null,
+              detectedAt: "2026-05-06T00:00:00.000Z",
+              confirmedAt: "2026-05-06T00:01:00.000Z",
+              creditedAt: "2026-05-06T00:01:01.000Z",
+              createdAt: "2026-05-06T00:00:00.000Z",
+              updatedAt: "2026-05-06T00:01:01.000Z",
+            },
+            providerEvent: {
+              id: "provider-record-1",
+              provider: "fireblocks",
+              providerEventId: "event-1",
+              eventType: "TRANSACTION_STATUS_UPDATED",
+              providerTransactionId: "provider-tx-1",
+              payload: { id: "event-1" },
+              payloadHash: "sha256-evidence",
+              receivedAt: "2026-05-06T00:00:00.000Z",
+            },
+            rateSnapshot: {
+              id: "rate-1",
+              asset: "USDT",
+              network: "TRON",
+              quoteCurrency: "USD",
+              rateNanos: "1000000000",
+              rateDecimal: "1",
+              source: "coinbase",
+              kind: "final",
+              purpose: "deposit_final",
+              quotedAt: "2026-05-06T00:01:00.000Z",
+              expiresAt: "2026-05-06T00:02:00.000Z",
+              providerReference: null,
+              createdAt: "2026-05-06T00:01:00.000Z",
+            },
+            ledgerEntry: { id: "ledger-1" },
+            reversalLedgerEntry: null,
+          },
+        }),
+      async (calls) => {
+        const detail = await loadAdminMoneyDepositDetail("deposit/one");
+
+        assert.equal(calls[0]?.input, "/api/admin/money/deposits/deposit%2Fone");
+        assert.equal(calls[0]?.init?.credentials, "same-origin");
+        assert.equal(detail.providerEvent?.payloadHash, "sha256-evidence");
+        assert.equal(detail.rateSnapshot?.purpose, "deposit_final");
+        assert.equal(detail.ledgerEntry?.id, "ledger-1");
+      },
+    );
+  });
+
   it("creates backend trading quotes without an idempotency header", async () => {
     await withLocalFetch(
       () =>
         Response.json({
           data: {
+            tradingMode: {
+              mode: "local_simulated",
+              warning: "Coin trading is review-only.",
+              realMoneyEnabled: false,
+              simulated: true,
+              localSimulationEnabled: true,
+              localSimulationBlockReason: null,
+              balance: {
+                asset: "COIN",
+                initialCoinMicros: "10000000000",
+                simulatedCreditEnabled: false,
+              },
+              orders: {
+                simulatedExecutionEnabled: true,
+                realExecutionEnabled: false,
+                blockReason: null,
+              },
+            },
             id: "quote-1",
             marketId: "market-1",
             marketTitle: "Will this test pass?",
             side: "yes",
             action: "buy",
-            price: 0.5,
-            currentOdds: 0.5,
-            shares: 122,
-            amount: 61,
-            stakeAmount: 61,
-            platformFee: 1.22,
-            fee: 1.22,
-            estimatedCost: 61,
-            estimatedProceeds: 0,
-            estimatedPayout: 59.78,
-            estimatedProfit: -1.22,
-            availableCash: 10000,
-            balanceAfterBet: 9939,
-            availableShares: 0,
-            poolBefore: 0,
-            poolAfter: 61,
-            outcomePoolBefore: 0,
-            outcomePoolAfter: 61,
-            priceImpact: 0.5,
-            nextOdds: 1,
+            price: "0.5",
+            currentOdds: "0.5",
+            shares: "122",
+            amountCoinMicros: "61000000",
+            stakeCoinMicros: "61000000",
+            feeCoinMicros: "1220000",
+            estimatedCostCoinMicros: "61000000",
+            estimatedProceedsCoinMicros: "0",
+            estimatedPayoutCoinMicros: "59780000",
+            estimatedProfitCoinMicros: "-1220000",
+            availableCoinMicros: "10000000000",
+            balanceAfterCoinMicros: "9939000000",
+            availableShares: "0",
+            poolBeforeCoinMicros: "0",
+            poolAfterCoinMicros: "61000000",
+            outcomePoolBeforeCoinMicros: "0",
+            outcomePoolAfterCoinMicros: "61000000",
+            priceImpact: "0.5",
+            nextOdds: "1",
             status: "quoted",
             createdAt: "2026-05-20T12:00:00.000Z",
           },
@@ -96,7 +223,7 @@ describe("wallet api helpers", () => {
           marketId: "market-1",
           side: "yes",
           action: "buy",
-          amount: 61,
+          amountCoinMicros: "61000000",
         });
         const call = calls[0];
         const body = JSON.parse(String(call?.init?.body)) as Record<string, unknown>;
@@ -107,25 +234,47 @@ describe("wallet api helpers", () => {
         assert.equal(body.marketId, "market-1");
         assert.equal(body.side, "yes");
         assert.equal(body.action, "buy");
-        assert.equal(body.amount, 61);
-        assert.equal(quote.estimatedPayout, 59.78);
-        assert.equal(quote.balanceAfterBet, 9939);
+        assert.equal(body.amountCoinMicros, "61000000");
+        assert.equal(body.amount, undefined);
+        assert.equal(quote.tradingMode.mode, "local_simulated");
+        assert.equal(quote.tradingMode.realMoneyEnabled, false);
+        assert.equal(quote.estimatedPayoutCoinMicros, "59780000");
+        assert.equal(quote.balanceAfterCoinMicros, "9939000000");
       },
     );
   });
 
-  it("creates TRON withdrawal requests with an idempotency header", async () => {
+  it("creates withdrawal quotes and confirms requests with string money", async () => {
     await withLocalFetch(
-      () =>
-        Response.json({
+      (input) =>
+        Response.json(input.endsWith("/withdrawal-quotes") ? {
           data: {
-            mode: "wallet_review_only",
-            warning: "Wallet requests are reviewed before processing.",
+            quote: {
+              id: "quote-1",
+              coinToDebitMicros: "15000000",
+              grossUsdtAtomic: "14990000",
+              estimatedUsdtAtomic: "14790000",
+              networkFeeUsdtAtomic: "100000",
+              providerFeeUsdtAtomic: "100000",
+              rateSnapshot: {
+                rateNanos: "1000667111",
+                rateDecimal: "1.000667111",
+                source: "test",
+                quotedAt: "2026-05-06T00:00:00.000Z",
+                expiresAt: "2026-05-06T00:01:00.000Z",
+              },
+              status: "open",
+              expiresAt: "2026-05-06T00:01:00.000Z",
+            },
+          },
+        } : {
+          data: {
             idempotent: false,
-            compliance: {
-              canUseRealMoney: false,
-              realTransferBlocked: true,
-              reason: "TRANSFERS_UNAVAILABLE",
+            balance: {
+              userId: "user-1",
+              availableCoinMicros: "85000000",
+              reservedCoinMicros: "15000000",
+              totalCoinMicros: "100000000",
             },
             withdrawalRequest: {
               id: "withdrawal-1",
@@ -133,138 +282,132 @@ describe("wallet api helpers", () => {
               asset: "USDT",
               network: "TRON",
               destinationAddress: "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK",
-              amount: 15,
+              withdrawalQuoteId: "quote-1",
+              coinReservedMicros: "15000000",
+              coinDebitedMicros: null,
+              estimatedUsdtAtomic: "14790000",
+              finalUsdtAtomic: null,
+              networkFeeUsdtAtomic: "100000",
+              providerFeeUsdtAtomic: "100000",
               status: "pending_review",
               idempotencyKey: "withdrawal-test-key",
               provider: "internal_wallet",
+              fireblocksReference: null,
               realTransferBlocked: true,
               blockReason: "TRANSFERS_UNAVAILABLE",
+              metadata: {},
               createdAt: "2026-05-06T00:00:00.000Z",
               updatedAt: "2026-05-06T00:00:00.000Z",
             },
           },
         }),
       async (calls) => {
-        await createWithdrawalRequest({
-          amount: 15,
+        const quote = await createWithdrawalQuote({
+          coinAmountMicros: "15000000",
           destinationAddress: "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK",
+          idempotencyKey: "withdrawal-quote-test-key",
+        });
+        await createWithdrawalRequest({
+          quoteId: quote.quote.id,
           idempotencyKey: "withdrawal-test-key",
         });
 
-        const call = calls[0];
-        const body = JSON.parse(String(call?.init?.body)) as Record<string, unknown>;
+        const quoteCall = calls[0];
+        const quoteBody = JSON.parse(String(quoteCall?.init?.body)) as Record<string, unknown>;
+        const requestCall = calls[1];
+        const requestBody = JSON.parse(String(requestCall?.init?.body)) as Record<string, unknown>;
 
-        assert.equal(call?.input, "/api/wallets/withdrawal-requests");
-        assert.equal(call?.init?.method, "POST");
-        assert.equal(getHeader(call?.init, "Idempotency-Key"), "withdrawal-test-key");
-        assert.equal(body.asset, "USDT");
-        assert.equal(body.network, "TRON");
-        assert.equal(body.manualReview, true);
-        assert.equal(body.destinationAddress, "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK");
+        assert.equal(quoteCall?.input, "/api/wallets/withdrawal-quotes");
+        assert.equal(quoteBody.coinAmountMicros, "15000000");
+        assert.equal(getHeader(quoteCall?.init, "Idempotency-Key"), "withdrawal-quote-test-key");
+        assert.equal(requestCall?.input, "/api/wallets/withdrawal-requests");
+        assert.equal(getHeader(requestCall?.init, "Idempotency-Key"), "withdrawal-test-key");
+        assert.equal(requestBody.quoteId, "quote-1");
+        assert.equal(requestBody.amount, undefined);
       },
     );
   });
 
-  it("creates ledger credits with backend idempotency expectations", async () => {
-    await withLocalFetch(
-      () =>
-        Response.json({
-          data: {
-            mode: "ledger",
-            complianceMode: "ledger_restricted",
-            idempotent: false,
-            entry: {
-              id: "entry-1",
-              userId: "user-1",
-              walletId: null,
-              asset: "USDT",
-              entryType: "credit",
-              amount: 1000,
-              reason: "ledger_credit",
-              referenceType: "ledger_credit",
-              referenceId: "ledger-credit-test-key",
-              idempotencyKey: "ledger-credit-test-key",
-              metadata: {},
-              createdAt: "2026-05-06T00:00:00.000Z",
-            },
-            balance: {
-              userId: "user-1",
-              walletId: null,
-              asset: "USDT",
-              availableBalance: 1000,
-              totalCredited: 1000,
-              totalDebited: 0,
-              totalHeld: 0,
-              totalReleased: 0,
-            },
-          },
-        }),
-      async (calls) => {
-        await createLedgerCreditApi(1000, "ledger-credit-test-key");
-
-        const call = calls[0];
-        const body = JSON.parse(String(call?.init?.body)) as Record<string, unknown>;
-
-        assert.equal(call?.input, "/api/ledger/credits");
-        assert.equal(call?.init?.method, "POST");
-        assert.equal(getHeader(call?.init, "Idempotency-Key"), "ledger-credit-test-key");
-        assert.equal(body.amount, 1000);
-        assert.deepEqual(body.metadata, { source: "wallet_page" });
-      },
-    );
-  });
-
-  it("uses typed helpers for deposit instructions and ledger pagination", async () => {
+  it("uses Coin endpoints and string micros for deposits and balances", async () => {
     await withLocalFetch(
       (input) => {
-        if (input.startsWith("/api/ledger/entries")) {
-          return Response.json({ data: { mode: "ledger", entries: [] } });
+        if (input.startsWith("/api/coins/ledger")) {
+          return Response.json({ data: { entries: [] } });
+        }
+        if (input === "/api/coins/balance") {
+          return Response.json({
+            data: {
+              userId: "user-1",
+              availableCoinMicros: "25000000",
+              reservedCoinMicros: "0",
+              totalCoinMicros: "25000000",
+            },
+          });
+        }
+        if (input === "/api/money/supported-assets") {
+          return Response.json({
+            data: {
+              internalCurrency: {
+                code: "COIN",
+                name: "Coins",
+                microsPerCoin: "1000000",
+                usdParity: "1",
+                blockchainAsset: false,
+              },
+              settlementAssets: [
+                {
+                  asset: "USDT",
+                  network: "TRON",
+                  rail: "TRC-20",
+                  decimals: 6,
+                  depositEnabled: false,
+                  withdrawalEnabled: false,
+                  reviewOnly: true,
+                },
+              ],
+            },
+          });
         }
 
         return Response.json({
           data: {
-            mode: "wallet_review_only",
-            warning: "Wallet requests are reviewed before processing.",
-            walletCreated: false,
-            wallet: {
-              id: "wallet-1",
-              userId: "user-1",
-              asset: "USDT",
-              network: "TRON",
-              address: "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK",
-              status: "active",
-              provider: "internal_wallet",
-              createdAt: "2026-05-06T00:00:00.000Z",
-              updatedAt: "2026-05-06T00:00:00.000Z",
-            },
             depositIntent: {
               id: "intent-1",
               userId: "user-1",
-              walletId: "wallet-1",
               asset: "USDT",
               network: "TRON",
               address: "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK",
-              expectedAmount: 25,
+              expectedUsdtAtomic: "25000000",
               status: "waiting",
-              memo: null,
-              reference: "test",
               expiresAt: "2026-05-06T00:30:00.000Z",
               createdAt: "2026-05-06T00:00:00.000Z",
-              updatedAt: "2026-05-06T00:00:00.000Z",
             },
+            instructions: {
+              rail: "TRC-20",
+              tokenContract: "TXYZ",
+              address: "TQ7mYw3xFv8pLk2nR6sD4hJ9aBcEfGhijK",
+              requiredConfirmations: "20",
+              doNotSubmitTransactionHash: true,
+            },
+            reviewOnly: true,
           },
         });
       },
       async (calls) => {
-        await createDepositIntent({ expectedAmount: 25, reference: "test" });
-        await loadLedgerEntries(25);
+        await createDepositIntent({ expectedUsdtAtomic: "25000000", memo: "test" });
+        await loadCoinLedger(25);
+        const balance = await loadCoinBalance();
+        const assets = await loadSupportedMoneyAssets();
 
         const depositBody = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>;
 
         assert.equal(calls[0]?.input, "/api/wallets/deposit-intents");
-        assert.equal(depositBody.expectedAmount, 25);
-        assert.equal(depositBody.reference, "test");
-        assert.equal(calls[1]?.input, "/api/ledger/entries?asset=USDT&limit=25");
+        assert.equal(depositBody.expectedUsdtAtomic, "25000000");
+        assert.equal(depositBody.memo, "test");
+        assert.equal(depositBody.expectedAmount, undefined);
+        assert.equal(calls[1]?.input, "/api/coins/ledger?limit=25");
+        assert.equal(balance.availableCoinMicros, "25000000");
+        assert.equal(assets.settlementAssets[0]?.depositEnabled, false);
       },
     );
   });

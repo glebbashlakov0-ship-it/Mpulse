@@ -19,7 +19,7 @@ type UserRow = {
   password_hash: string;
   password_salt: string;
   language: "en" | "ar" | null;
-  currency: "USDT" | null;
+  currency: "COIN" | null;
   country: string | null;
   email_notifications: boolean | null;
   market_notifications: boolean | null;

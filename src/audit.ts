@@ -21,6 +21,8 @@ export type AuditEventType =
   | "trading.quote"
   | "trading.buy_local"
   | "trading.sell_local"
+  | "trading.buy_real"
+  | "trading.sell_real"
   | "trading.rejected"
   | "market.comment_created"
   | "market.settled"
@@ -37,12 +39,16 @@ export type AuditEventType =
   | "wallet.deposit_credited"
   | "wallet.deposit_rejected"
   | "wallet.withdrawal_request_created"
+  | "wallet.withdrawal_broadcasted"
   | "wallet.webhook_local_received"
   | "wallet.rejected"
   | "admin.user_view"
   | "admin.audit_view"
   | "admin.login"
   | "admin.logout"
+  | "admin.deposit_request_view"
+  | "admin.deposit_request_approved"
+  | "admin.deposit_request_rejected"
   | "admin.withdrawal_review"
   | "admin.market_hide"
   | "admin.market_unhide"
@@ -50,6 +56,7 @@ export type AuditEventType =
   | "admin.market_odds_override"
   | "admin.ledger_seed_activity"
   | "admin.event_activity_seed"
+  | "admin.event_activity_history_repair"
   | "admin.rejected";
 
 export type AuditEvent = {

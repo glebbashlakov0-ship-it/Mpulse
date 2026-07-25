@@ -16,7 +16,9 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { HowItWorksModal } from "./HowItWorksModal";
+import { useCoinAccount } from "../hooks/useCoinAccount";
 import { primaryNav, type PrimaryNavItem } from "../lib/constants";
+import { formatCoinMicros } from "../lib/format";
 import type { AuthUser, MarketFilters } from "../lib/types";
 
 const headerIconButton =
@@ -52,6 +54,7 @@ export function SiteHeader({
   onMenuNavigate: (to: string) => void;
   onPrimaryNavSelect: (item: PrimaryNavItem) => void;
 }) {
+  const { balance, status: coinAccountStatus, supportedAssets } = useCoinAccount();
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [isDarkMode, setIsDarkMode] = React.useState(() => {
     if (typeof window === "undefined") {
@@ -63,6 +66,18 @@ export function SiteHeader({
   const [isHowItWorksOpen, setIsHowItWorksOpen] = React.useState(false);
   const menuPanelRef = React.useRef<HTMLDivElement | null>(null);
   const menuTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const hasCurrentBalance =
+    coinAccountStatus === "ready" && Boolean(user) && balance?.userId === user?.id;
+  const totalCoins = hasCurrentBalance && balance
+    ? formatCoinMicros(balance.totalCoinMicros)
+    : "— Coins";
+  const availableCoins = hasCurrentBalance && balance
+    ? formatCoinMicros(balance.availableCoinMicros)
+    : "— Coins";
+  const depositEnabled =
+    supportedAssets?.settlementAssets.some(
+      (rail) => rail.asset === "USDT" && rail.network === "TRON" && rail.depositEnabled,
+    ) ?? false;
 
   React.useLayoutEffect(() => {
     const theme = isDarkMode ? "dark" : "light";
@@ -182,19 +197,37 @@ export function SiteHeader({
                 onClick={onPortfolioOpen}
                 type="button"
               >
-                <span className="whitespace-nowrap text-xs font-medium text-[#7b8996]">Portfolio</span>
-                <span className="text-[17px] font-semibold leading-5 text-[#5fbe82]">$0.00</span>
+                <span className="whitespace-nowrap text-xs font-medium text-[#7b8996]">
+                  Total Coins
+                </span>
+                <span className="text-[17px] font-semibold leading-5 text-[#5fbe82]">
+                  {totalCoins}
+                </span>
               </button>
-              <div className="hidden h-11 flex-col items-center justify-center rounded-xl px-2.5 py-1 leading-[1.2] transition hover:bg-[#1e2428] md:flex">
-                <span className="whitespace-nowrap text-xs font-medium text-[#7b8996]">Cash</span>
-                <span className="text-[17px] font-semibold leading-5 text-[#5fbe82]">$0.00</span>
-              </div>
               <button
-                className="home-soft-button hidden h-9 items-center justify-center rounded-xl bg-[#0093fd] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#26a3fd] md:inline-flex"
+                className="hidden h-11 flex-col items-center justify-center rounded-xl px-2.5 py-1 leading-[1.2] transition hover:bg-[#1e2428] md:flex"
                 onClick={() => onMenuNavigate("/wallet")}
                 type="button"
               >
-                Deposit
+                <span className="whitespace-nowrap text-xs font-medium text-[#7b8996]">
+                  Available Coins
+                </span>
+                <span className="text-[17px] font-semibold leading-5 text-[#5fbe82]">
+                  {availableCoins}
+                </span>
+              </button>
+              <button
+                className="home-soft-button hidden h-9 items-center justify-center rounded-xl bg-[#0093fd] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#26a3fd] disabled:cursor-not-allowed disabled:bg-[#2e3841] disabled:text-[#7b8996] md:inline-flex"
+                disabled={!depositEnabled}
+                onClick={() => {
+                  if (depositEnabled) {
+                    onMenuNavigate("/wallet?action=deposit");
+                  }
+                }}
+                title={depositEnabled ? "Deposit USDT to receive Coins" : "Deposits unavailable"}
+                type="button"
+              >
+                {depositEnabled ? "Deposit" : "Unavailable"}
               </button>
               {user.role !== "user" ? (
                 <button
@@ -294,6 +327,44 @@ export function SiteHeader({
                   </span>
                   <Settings className="shrink-0 text-[#7b8996]" size={19} />
                 </button>
+                <div className="mt-2 grid grid-cols-2 gap-2 md:hidden">
+                  <button
+                    className="rounded-xl bg-[#15191d] px-3 py-2 text-left"
+                    onClick={() => goFromMenu("/portfolio")}
+                    type="button"
+                  >
+                    <span className="block text-[11px] font-semibold text-[#7b8996]">
+                      Total Coins
+                    </span>
+                    <strong className="mt-1 block truncate text-sm text-[#5fbe82]">
+                      {totalCoins}
+                    </strong>
+                  </button>
+                  <button
+                    className="rounded-xl bg-[#15191d] px-3 py-2 text-left"
+                    onClick={() => goFromMenu("/wallet")}
+                    type="button"
+                  >
+                    <span className="block text-[11px] font-semibold text-[#7b8996]">
+                      Available Coins
+                    </span>
+                    <strong className="mt-1 block truncate text-sm text-[#5fbe82]">
+                      {availableCoins}
+                    </strong>
+                  </button>
+                  <button
+                    className="col-span-2 h-10 rounded-xl bg-[#0093fd] px-4 text-sm font-bold text-white disabled:bg-[#2e3841] disabled:text-[#7b8996]"
+                    disabled={!depositEnabled}
+                    onClick={() => {
+                      if (depositEnabled) {
+                        goFromMenu("/wallet?action=deposit");
+                      }
+                    }}
+                    type="button"
+                  >
+                    {depositEnabled ? "Deposit USDT" : "Deposits unavailable"}
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="grid grid-cols-[1fr_1fr] gap-2 border-b border-[#242b32] p-2.5">

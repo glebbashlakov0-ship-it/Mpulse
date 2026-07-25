@@ -8,14 +8,13 @@ import {
   TrendingUp,
   Wallet,
 } from "lucide-react";
-import { resetPortfolioApi } from "../lib/api";
 import {
   formatCents,
+  formatCoinMicros,
   formatRelativeTime,
   formatShares,
+  formatSignedCoinMicros,
   formatSignedPercent,
-  formatSignedUsdt,
-  formatUsdt,
 } from "../lib/format";
 import {
   getAveragePositionPrice,
@@ -40,33 +39,8 @@ export function PortfolioPage({
   onBack: () => void;
   onOpenMarketId: (marketId: string) => void;
 }) {
-  const [portfolio, setPortfolio, , portfolioState] = usePortfolio();
-  const [isResetting, setIsResetting] = React.useState(false);
-  const [message, setMessage] = React.useState<{
-    tone: "success" | "error";
-    text: string;
-  } | null>(null);
+  const [portfolio, , , portfolioState] = usePortfolio();
   const summary = portfolio.summary;
-
-  async function resetPortfolio() {
-    if (!window.confirm("Reset your portfolio to 10,000 USDT and clear trade history?")) {
-      return;
-    }
-
-    setIsResetting(true);
-    setMessage(null);
-    try {
-      setPortfolio(await resetPortfolioApi());
-      setMessage({ tone: "success", text: "Portfolio reset to 10,000 USDT." });
-    } catch (error) {
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Could not reset portfolio.",
-      });
-    } finally {
-      setIsResetting(false);
-    }
-  }
 
   return (
     <section className="mx-auto w-full max-w-[1500px] overflow-x-hidden px-4 py-8 md:px-6 xl:px-8">
@@ -91,13 +65,6 @@ export function PortfolioPage({
               Balance, open positions, performance, and trade history.
             </p>
           </div>
-          <button
-            className="rounded-2xl border border-[#242b32] px-4 py-3 text-sm font-semibold text-[#dee3e7] transition hover:border-[#cb3131]/60 hover:text-[#d78282] disabled:opacity-50"
-            onClick={resetPortfolio}
-            disabled={isResetting}
-          >
-            {isResetting ? "Resetting..." : "Reset portfolio"}
-          </button>
         </div>
       </div>
 
@@ -117,17 +84,22 @@ export function PortfolioPage({
             text="Live market prices are unavailable, so portfolio values use the last known prices."
           />
         ) : null}
-        {message ? <InlineState tone={message.tone} text={message.text} /> : null}
       </div>
 
       <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <PortfolioMetric label="Equity" value={formatUsdt(summary.equity)} />
-        <PortfolioMetric label="Cash balance" value={formatUsdt(summary.cash)} />
-        <PortfolioMetric label="Positions value" value={formatUsdt(summary.positionValue)} />
+        <PortfolioMetric label="Equity" value={formatCoinMicros(summary.equityCoinMicros)} />
+        <PortfolioMetric
+          label="Available Coins"
+          value={formatCoinMicros(summary.availableCoinMicros)}
+        />
+        <PortfolioMetric
+          label="Positions value"
+          value={formatCoinMicros(summary.positionValueCoinMicros)}
+        />
         <PortfolioMetric
           label="Total PnL"
-          value={`${formatSignedUsdt(summary.pnl)} (${formatSignedPercent(summary.pnlPercent)})`}
-          tone={summary.pnl >= 0 ? "positive" : "negative"}
+          value={`${formatSignedCoinMicros(summary.pnlCoinMicros)} (${formatSignedPercent(summary.pnlPercent ?? "0")})`}
+          tone={BigInt(summary.pnlCoinMicros) >= 0n ? "positive" : "negative"}
         />
       </div>
 
@@ -147,8 +119,8 @@ export function PortfolioPage({
             <div className="mt-4 grid gap-3">
               {portfolio.positions.map((position) => {
                 const market = getPositionMarket(position, markets);
-                const positionValue = position.currentValue;
-                const pnl = position.pnl;
+                const positionValue = position.currentValueCoinMicros;
+                const pnl = position.pnlCoinMicros;
                 const shares = getPositionShares(position);
 
                 return (
@@ -175,11 +147,11 @@ export function PortfolioPage({
                       </div>
                     </div>
                     <PositionStat label="Yes / No" value={`${formatShares(position.yesShares)} / ${formatShares(position.noShares)}`} />
-                    <PositionStat label="Value" value={formatUsdt(positionValue)} />
+                    <PositionStat label="Value" value={formatCoinMicros(positionValue)} />
                     <PositionStat
                       label="PnL"
-                      value={formatSignedUsdt(pnl)}
-                      tone={pnl >= 0 ? "positive" : "negative"}
+                      value={formatSignedCoinMicros(pnl)}
+                      tone={BigInt(pnl) >= 0n ? "positive" : "negative"}
                     />
                     <button
                       className="rounded-2xl bg-[#2e3841] px-4 py-2 text-sm font-semibold text-[#dee3e7] transition hover:bg-[#242b32]"
@@ -201,18 +173,18 @@ export function PortfolioPage({
             icon={<TrendingUp size={22} />}
           />
           <div className="mt-4 grid gap-4">
-            <PositionStat label="Invested" value={formatUsdt(summary.invested)} />
-            <PositionStat label="Available" value={formatUsdt(summary.cash)} />
-            <PositionStat label="Held" value={formatUsdt(summary.heldBalance ?? 0)} />
+            <PositionStat label="Invested" value={formatCoinMicros(summary.investedCoinMicros)} />
+            <PositionStat label="Available" value={formatCoinMicros(summary.availableCoinMicros)} />
+            <PositionStat label="Reserved" value={formatCoinMicros(summary.reservedCoinMicros)} />
             <PositionStat
               label="Unrealized PnL"
-              value={formatSignedUsdt(summary.unrealizedPnl ?? summary.pnl)}
-              tone={(summary.unrealizedPnl ?? summary.pnl) >= 0 ? "positive" : "negative"}
+              value={formatSignedCoinMicros(summary.unrealizedPnlCoinMicros)}
+              tone={BigInt(summary.unrealizedPnlCoinMicros) >= 0n ? "positive" : "negative"}
             />
             <PositionStat
               label="Realized PnL"
-              value={formatSignedUsdt(summary.realizedPnl ?? 0)}
-              tone={(summary.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}
+              value={formatSignedCoinMicros(summary.realizedPnlCoinMicros)}
+              tone={BigInt(summary.realizedPnlCoinMicros) >= 0n ? "positive" : "negative"}
             />
             <PositionStat label="Total trades" value={String(portfolio.trades.length)} />
           </div>
@@ -243,12 +215,18 @@ export function PortfolioPage({
                     {settlement.kind ?? "settlement"} · {settlement.side ?? "n/a"}
                   </span>
                 </div>
-                <PositionStat label="Stake" value={formatUsdt(settlement.originalStake)} />
-                <PositionStat label="Payout" value={formatUsdt(settlement.payout)} />
+                <PositionStat
+                  label="Stake"
+                  value={formatCoinMicros(settlement.originalStakeCoinMicros)}
+                />
+                <PositionStat
+                  label="Payout"
+                  value={formatCoinMicros(settlement.payoutCoinMicros)}
+                />
                 <PositionStat
                   label="Realized"
-                  value={formatSignedUsdt(settlement.profit)}
-                  tone={settlement.profit >= 0 ? "positive" : "negative"}
+                  value={formatSignedCoinMicros(settlement.profitCoinMicros)}
+                  tone={BigInt(settlement.profitCoinMicros) >= 0n ? "positive" : "negative"}
                 />
                 <time className="text-sm font-semibold text-[#7b8996]">
                   {formatRelativeTime(settlement.createdAt)}
@@ -288,7 +266,7 @@ export function PortfolioPage({
                 </div>
                 <PositionStat
                   label={trade.action === "sell" ? "Proceeds" : "Amount"}
-                  value={formatUsdt(trade.amount)}
+                  value={formatCoinMicros(trade.amountCoinMicros)}
                 />
                 <PositionStat label="Shares" value={formatShares(trade.shares)} />
                 <PositionStat label="Price" value={formatCents(trade.price)} />

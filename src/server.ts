@@ -1,6 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { createReadStream } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -35,12 +36,7 @@ import {
 import { type AppConfig, getConfig } from "./config.js";
 import { isStateChangingMethod, validateCsrfRequest } from "./csrf.js";
 import { buildDatabase } from "./db.js";
-import {
-  buildLedgerService,
-  LedgerError,
-  MemoryLedgerRepository,
-  PostgresLedgerRepository,
-} from "./ledger.js";
+import { CoinLedgerError, PostgresCoinLedgerRepository } from "./coins.js";
 import {
   buildSettlementService,
   MemorySettlementRepository,
@@ -60,12 +56,6 @@ import {
 } from "./marketPriceHistoryRepository.js";
 import { buildMarketSeedService } from "./marketSeedService.js";
 import {
-  buildAdminLedgerActivityService,
-} from "./adminLedgerActivityService.js";
-import {
-  buildAdminEventActivitySeedService,
-} from "./adminEventActivitySeedService.js";
-import {
   buildPlatformActivityService,
   MemoryPlatformActivityRepository,
   PostgresPlatformActivityRepository,
@@ -73,33 +63,64 @@ import {
 import { buildPolymarketClient, UpstreamError } from "./polymarketClient.js";
 import { buildAuthRateLimiter } from "./rateLimit.js";
 import {
-  buildWalletService,
   MemoryWalletRepository,
-  WalletProviderAdapter,
   PostgresWalletRepository,
   WalletError,
 } from "./wallets.js";
+import { buildCoinWalletService, CoinWalletError } from "./coinWallets.js";
+import { buildCoinFeatureCapabilities } from "./coinFeatureGates.js";
+import {
+  buildExchangeRateProvider,
+  ExchangeRateError,
+} from "./exchangeRates.js";
 import { registerHealthRoutes } from "./routes/healthRoutes.js";
 import { registerMarketRoutes } from "./routes/marketRoutes.js";
 import { registerEventRoutes } from "./routes/eventRoutes.js";
 import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerComplianceRoutes } from "./routes/complianceRoutes.js";
 import { registerWalletRoutes } from "./routes/walletRoutes.js";
-import { registerLedgerRoutes } from "./routes/ledgerRoutes.js";
+import { registerCoinRoutes } from "./routes/coinRoutes.js";
 import { registerTradingRoutes } from "./routes/tradingRoutes.js";
 import { registerMarketActivityRoutes } from "./routes/marketActivityRoutes.js";
 import { registerPlatformActivityRoutes } from "./routes/platformActivityRoutes.js";
 import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerWatchlistRoutes } from "./routes/watchlistRoutes.js";
 import { MemoryWatchlistRepository, PostgresWatchlistRepository } from "./watchlistRepository.js";
+import {
+  MoneyOutboxLoop,
+  MoneyOutboxWorker,
+  PostgresMoneyOutboxRepository,
+  type MoneyOutboxHandler,
+  type MoneyOutboxLogger,
+} from "./moneyOutbox.js";
+import {
+  authorizeProductionCoinCutoverEndpoint,
+  toSafeProductionCoinCutoverError,
+  toSafeProductionCoinCutoverResult,
+  toSafeProductionDatabaseIdentity,
+} from "./productionCoinCutoverOps.js";
+import { resolveProductionDatabaseTarget } from "./productionCoinCutover.js";
+import { runProductionCoinCutover } from "../scripts/productionCoinCutover.js";
 
 let appPromise: Promise<Fastify.FastifyInstance> | null = null;
 
-export function buildApp(config: AppConfig = getConfig()) {
+export function buildApp(
+  config: AppConfig = getConfig(),
+  dependencies: { moneyOutboxHandler?: MoneyOutboxHandler } = {},
+) {
   assertNoProductionMemoryFallback(config);
 
   const app = Fastify({
     logger: true,
+  });
+  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (request, body, done) => {
+    const rawBody = Buffer.isBuffer(body) ? body : Buffer.from(String(body));
+    (request as typeof request & { rawBody?: Buffer }).rawBody = rawBody;
+    try {
+      done(null, rawBody.length ? JSON.parse(rawBody.toString("utf8")) : null);
+    } catch (error) {
+      done(error as Error);
+    }
   });
   const db = buildDatabase(config);
   const polymarket = buildPolymarketClient(config);
@@ -133,9 +154,19 @@ export function buildApp(config: AppConfig = getConfig()) {
       : new MemoryComplianceRepository(),
     audit,
   });
-  const ledger = buildLedgerService(
-    db.enabled ? new PostgresLedgerRepository(db) : new MemoryLedgerRepository(),
-  );
+  const coins = db.enabled ? new PostgresCoinLedgerRepository(db) : null;
+  const exchangeRates = buildExchangeRateProvider(config);
+  const coinFeatures = buildCoinFeatureCapabilities(config);
+  const coinWallets = db.enabled
+    ? buildCoinWalletService({
+        db,
+        rateProvider: exchangeRates,
+        rateTtlSeconds: config.exchangeRateTtlSeconds,
+        requiredConfirmations: config.walletDepositMinConfirmations,
+        usdtTronContract: config.usdtTronContract,
+        allowDepositCredits: coinFeatures.deposits.creditsEnabled,
+      })
+    : null;
   const portfolioRepository = db.enabled
     ? new PostgresPortfolioRepository(db)
     : new MemoryPortfolioRepository();
@@ -148,16 +179,12 @@ export function buildApp(config: AppConfig = getConfig()) {
   const watchlistRepository = db.enabled
     ? new PostgresWatchlistRepository(db)
     : new MemoryWatchlistRepository();
-  const wallets = buildWalletService({
-    repository: db.enabled ? new PostgresWalletRepository(db) : new MemoryWalletRepository(),
-    provider: new WalletProviderAdapter(),
-    ledger,
-    depositMinConfirmations: config.walletDepositMinConfirmations,
-    getComplianceEligibility: (userId) => compliance.getEligibility({ userId }),
-  });
+  const walletRepository = db.enabled
+    ? new PostgresWalletRepository(db)
+    : new MemoryWalletRepository();
   const admin = buildAdminService({
     repository: db.enabled ? new PostgresAdminRepository(db) : new MemoryAdminRepository(),
-    walletRepository: wallets.repository,
+    walletRepository,
   });
   const adminPanelAuth = buildAdminPanelAuthService(config);
   const settlement = buildSettlementService({
@@ -165,8 +192,9 @@ export function buildApp(config: AppConfig = getConfig()) {
       ? new PostgresSettlementRepository(db)
       : new MemorySettlementRepository(),
     portfolioRepository,
-    ledger,
+    coinLedger: coins,
     audit,
+    requireAtomicSettlementCommits: true,
   });
   const authRateLimiter = buildAuthRateLimiter(config);
   const marketData = buildMarketDataService({
@@ -182,23 +210,56 @@ export function buildApp(config: AppConfig = getConfig()) {
     priceHistoryRepository: marketPriceHistoryRepository,
   });
   const platformActivity = buildPlatformActivityService(platformActivityRepository);
-  const adminLedgerActivity = buildAdminLedgerActivityService({
-    ledger,
-    walletRepository: wallets.repository,
-    platformActivityRepository,
-  });
-  const adminEventActivitySeed = buildAdminEventActivitySeedService({
-    auth,
-    marketData,
-    marketSeed,
-    ledger,
-    walletRepository: wallets.repository,
-    portfolioRepository,
-    marketActivityRepository,
-    priceHistoryRepository: marketPriceHistoryRepository,
-    platformActivityRepository,
-  });
   let snapshotCollectorTimer: ReturnType<typeof setInterval> | null = null;
+  let moneyOutboxLoop: MoneyOutboxLoop | null = null;
+  let moneyOutboxWorker: MoneyOutboxWorker | null = null;
+
+  if (config.moneyOutboxWorkerEnabled || config.moneyOutboxDrainEndpointEnabled) {
+    if (config.moneyOutboxDeliveryMode !== "structured_log") {
+      throw new Error(
+        "moneyOutboxDeliveryMode must be structured_log when a money outbox runtime is enabled.",
+      );
+    }
+    const outboxLogger: MoneyOutboxLogger = {
+      info: (fields, message) => app.log.info(fields, message),
+      warn: (fields, message) => app.log.warn(fields, message),
+      error: (fields, message) => app.log.error(fields, message),
+    };
+    const outboxHandler =
+      dependencies.moneyOutboxHandler ??
+      (async (event) => {
+        outboxLogger.info(
+          {
+            event: "money_outbox.structured_log_delivered",
+            outboxEventId: event.id,
+            eventType: event.eventType,
+            aggregateType: event.aggregateType,
+            aggregateId: event.aggregateId,
+            attempt: event.attempt,
+          },
+          "Money outbox event delivered to the structured-log sink.",
+        );
+      });
+    moneyOutboxWorker = new MoneyOutboxWorker({
+      repository: new PostgresMoneyOutboxRepository(db),
+      handler: outboxHandler,
+      logger: outboxLogger,
+      batchSize: config.moneyOutboxBatchSize,
+      concurrency: config.moneyOutboxConcurrency,
+      leaseDurationMs: config.moneyOutboxLeaseDurationMs,
+      maxAttempts: config.moneyOutboxMaxAttempts,
+      backoffBaseMs: config.moneyOutboxBackoffBaseMs,
+      backoffMaxMs: config.moneyOutboxBackoffMaxMs,
+      backoffJitterRatio: config.moneyOutboxBackoffJitterRatio,
+    });
+    if (config.moneyOutboxWorkerEnabled) {
+      moneyOutboxLoop = new MoneyOutboxLoop(
+        moneyOutboxWorker,
+        config.moneyOutboxPollIntervalMs,
+        outboxLogger,
+      );
+    }
+  }
 
   if (!db.enabled) {
     app.log.warn("Database disabled. Set DATABASE_URL to enable Postgres repositories.");
@@ -209,6 +270,7 @@ export function buildApp(config: AppConfig = getConfig()) {
       clearInterval(snapshotCollectorTimer);
     }
 
+    await moneyOutboxLoop?.stop();
     await authRateLimiter.close?.();
     await db.close();
   });
@@ -219,7 +281,20 @@ export function buildApp(config: AppConfig = getConfig()) {
   });
 
   app.addHook("preHandler", async (request, reply) => {
-    if (!config.csrfProtectionEnabled || !isStateChangingMethod(request.method)) {
+    const isSignedDepositWebhook =
+      request.method === "POST" &&
+      request.routeOptions.url === "/api/wallets/webhooks/deposits";
+    const isBearerProtectedProductionCoinCutover =
+      config.productionCoinCutoverEndpointEnabled &&
+      request.method === "POST" &&
+      request.routeOptions.url === "/api/ops/production-coin-cutover";
+
+    if (
+      !config.csrfProtectionEnabled ||
+      !isStateChangingMethod(request.method) ||
+      isSignedDepositWebhook ||
+      isBearerProtectedProductionCoinCutover
+    ) {
       return;
     }
 
@@ -308,8 +383,28 @@ export function buildApp(config: AppConfig = getConfig()) {
       });
     }
 
-    if (error instanceof LedgerError) {
+    if (error instanceof CoinLedgerError) {
       return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+    }
+
+    if (error instanceof CoinWalletError) {
+      return reply.status(error.statusCode).send({
+        data: null,
+        error: {
+          code: error.code,
+          message: error.message,
+        },
+      });
+    }
+
+    if (error instanceof ExchangeRateError) {
+      return reply.status(503).send({
         data: null,
         error: {
           code: error.code,
@@ -356,21 +451,22 @@ export function buildApp(config: AppConfig = getConfig()) {
   registerPlatformActivityRoutes(app, platformActivity);
   registerAuthRoutes(app, auth, audit, config, authRateLimiter, verification, twoFactor);
   registerComplianceRoutes(app, auth, compliance, config);
-  registerWalletRoutes(app, auth, audit, wallets, config);
-  registerLedgerRoutes(app, auth, audit, ledger, config);
+  registerWalletRoutes(app, auth, audit, config, coinWallets);
+  registerCoinRoutes(app, auth, config, coins);
   registerTradingRoutes(
     app,
     auth,
     config,
     audit,
     marketData,
-    ledger,
+    coins,
     portfolioRepository,
     compliance,
     marketActivityRepository,
     settlement.repository,
     {
       requirePersistentUserState: db.enabled || config.nodeEnv === "production",
+      requireAtomicTradeCommits: true,
     },
   );
   registerAdminRoutes(
@@ -381,11 +477,123 @@ export function buildApp(config: AppConfig = getConfig()) {
     config,
     settlement,
     marketSeed,
-    adminLedgerActivity,
-    adminEventActivitySeed,
     adminPanelAuth,
+    coinWallets,
   );
   registerWatchlistRoutes(app, auth, config, watchlistRepository);
+
+  if (config.productionCoinCutoverEndpointEnabled) {
+    app.get(
+      "/api/ops/production-coin-cutover/identity",
+      async (request, reply) => {
+        const access = authorizeProductionCoinCutoverEndpoint({
+          config,
+          vercelEnvironment: process.env.VERCEL_ENV,
+          authorization: request.headers.authorization,
+        });
+        if (!access.ok) {
+          return reply.status(access.statusCode).send({
+            data: null,
+            error: { code: access.code, message: access.message },
+          });
+        }
+
+        try {
+          const resolved = resolveProductionDatabaseTarget(process.env);
+          return reply
+            .header("cache-control", "no-store")
+            .send({
+              data: {
+                database: toSafeProductionDatabaseIdentity(resolved.target),
+              },
+              error: null,
+            });
+        } catch (error) {
+          app.log.error(
+            {
+              error: toSafeProductionCoinCutoverError(error),
+            },
+            "Production Coin cutover identity resolution failed.",
+          );
+          return reply
+            .header("cache-control", "no-store")
+            .status(503)
+            .send({
+              data: null,
+              error: {
+                code: "CUTOVER_IDENTITY_UNAVAILABLE",
+                message:
+                  "The production database identity could not be verified.",
+              },
+            });
+        }
+      },
+    );
+
+    app.post("/api/ops/production-coin-cutover", async (request, reply) => {
+      const access = authorizeProductionCoinCutoverEndpoint({
+        config,
+        vercelEnvironment: process.env.VERCEL_ENV,
+        authorization: request.headers.authorization,
+      });
+      if (!access.ok) {
+        return reply.status(access.statusCode).send({
+          data: null,
+          error: { code: access.code, message: access.message },
+        });
+      }
+
+      try {
+        const result = await runProductionCoinCutover(process.env);
+        return reply
+          .header("cache-control", "no-store")
+          .send({
+            data: toSafeProductionCoinCutoverResult(result),
+            error: null,
+          });
+      } catch (error) {
+        app.log.error(
+          {
+            error: toSafeProductionCoinCutoverError(error),
+          },
+          "Production Coin cutover failed.",
+        );
+        return reply
+          .header("cache-control", "no-store")
+          .status(409)
+          .send({
+            data: null,
+            error: {
+              code: "PRODUCTION_COIN_CUTOVER_FAILED",
+              message:
+                "The production Coin cutover did not complete. Inspect restricted runtime logs and retained database evidence.",
+            },
+          });
+      }
+    });
+  }
+
+  if (config.moneyOutboxDrainEndpointEnabled && moneyOutboxWorker) {
+    app.get("/api/cron/money-outbox", async (request, reply) => {
+      if (!hasValidCronAuthorization(request.headers.authorization, config.cronSecret)) {
+        return reply.status(401).send({
+          data: null,
+          error: { code: "UNAUTHORIZED", message: "Unauthorized" },
+        });
+      }
+
+      return reply.send({
+        data: await moneyOutboxWorker.runOnce(),
+        error: null,
+      });
+    });
+  }
+
+  if (moneyOutboxLoop) {
+    app.addHook("onReady", async () => {
+      moneyOutboxLoop?.start();
+    });
+  }
 
   if (config.marketSnapshotCollectorEnabled && config.marketSnapshotCollectorMarketIds.length > 0) {
     const collectConfiguredSnapshots = async () => {
@@ -407,6 +615,18 @@ export function buildApp(config: AppConfig = getConfig()) {
   }
 
   return app;
+}
+
+export function hasValidCronAuthorization(
+  authorization: string | undefined,
+  secret: string | null,
+) {
+  if (!authorization || !secret) {
+    return false;
+  }
+  const provided = Buffer.from(authorization);
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return provided.length === expected.length && timingSafeEqual(provided, expected);
 }
 
 function assertNoProductionMemoryFallback(config: AppConfig) {
@@ -567,7 +787,6 @@ const requiredProductionEnv = [
   "SESSION_SECRET",
   "SESSION_COOKIE_SECURE",
   "CORS_ALLOWED_ORIGINS",
-  "WALLET_DEPOSIT_WEBHOOK_SECRET",
 ];
 
 const isEntrypoint = process.argv[1]

@@ -143,6 +143,80 @@ export type ApiListResponse<T> = ApiResponse<T> & {
   };
 };
 
+export type CoinMicros = string;
+export type UsdtAtomic = string;
+export type DecimalString = string;
+
+export type SupportedMoneyAssetsPayload = {
+  internalCurrency: {
+    code: "COIN";
+    name: "Coins";
+    microsPerCoin: "1000000";
+    usdParity: "1";
+    blockchainAsset: false;
+  };
+  settlementAssets: Array<{
+    asset: "USDT";
+    network: "TRON";
+    rail: "TRC-20";
+    decimals: 6;
+    depositEnabled: boolean;
+    withdrawalEnabled: boolean;
+    reviewOnly: boolean;
+    disabledReason?: string | null;
+  }>;
+};
+
+export type CoinBalance = {
+  userId: string;
+  availableCoinMicros: CoinMicros;
+  reservedCoinMicros: CoinMicros;
+  totalCoinMicros: CoinMicros;
+};
+
+export type CoinOperationType =
+  | "crypto_deposit_credit"
+  | "withdrawal_reserve"
+  | "withdrawal_debit"
+  | "withdrawal_release"
+  | "trade_reserve"
+  | "trade_debit"
+  | "trade_release"
+  | "trade_settlement_credit"
+  | "fee_debit"
+  | "refund_credit"
+  | "bonus_credit"
+  | "admin_credit"
+  | "admin_debit"
+  | "migration_credit"
+  | "correction_credit"
+  | "correction_debit"
+  | "reversed_deposit";
+
+export type CoinLedgerEntry = {
+  id: string;
+  userId: string;
+  operationType: CoinOperationType;
+  availableDeltaCoinMicros: CoinMicros;
+  reservedDeltaCoinMicros: CoinMicros;
+  availableAfterCoinMicros: CoinMicros;
+  reservedAfterCoinMicros: CoinMicros;
+  idempotencyKey: string;
+  sourceType: string;
+  sourceId: string;
+  externalReference: string | null;
+  rateSnapshotId: string | null;
+  reason: string;
+  adminUserId: string | null;
+  adminActor: string | null;
+  auditMetadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type CoinLedgerPayload = {
+  entries: CoinLedgerEntry[];
+};
+
 export type MarketCategory = {
   id: string;
   slug: string;
@@ -174,47 +248,59 @@ export type MarketFilters = {
 export type Trade = {
   id: string;
   userId: string;
-  walletId: string;
   marketId: string;
   marketTitle: string;
   side: "yes" | "no";
   action: "buy" | "sell";
-  amount: number;
-  stakeAmount?: number;
-  platformFee?: number;
-  price: number;
-  shares: number;
-  realizedPnl: number | null;
+  amountCoinMicros: CoinMicros;
+  stakeCoinMicros: CoinMicros;
+  feeCoinMicros: CoinMicros;
+  price: DecimalString;
+  shares: DecimalString;
+  realizedPnlCoinMicros: CoinMicros | null;
   idempotencyKey: string | null;
+  status?: "reserved" | "partially_filled" | "filled" | "cancelled" | "failed";
   createdAt: string;
 };
 
+export type TradingMode = {
+  mode: "local_simulated" | "real_money";
+  warning: string;
+  realMoneyEnabled: boolean;
+  simulated: boolean;
+  localSimulationEnabled: boolean;
+  localSimulationBlockReason: string | null;
+  balance: {
+    asset: "COIN";
+    initialCoinMicros: CoinMicros;
+    simulatedCreditEnabled: boolean;
+  };
+  orders: {
+    simulatedExecutionEnabled: boolean;
+    realExecutionEnabled: boolean;
+    blockReason: string | null;
+  };
+};
+
 export type TradingQuote = {
+  tradingMode: TradingMode;
   id: string;
   marketId: string;
   marketTitle: string;
   side: "yes" | "no";
   action: "buy" | "sell";
-  price: number;
-  currentOdds: number;
-  shares: number;
-  amount: number;
-  stakeAmount: number;
-  platformFee: number;
-  fee: number;
-  estimatedCost: number;
-  estimatedProceeds: number;
-  estimatedPayout: number;
-  estimatedProfit: number;
-  availableCash: number;
-  balanceAfterBet: number;
-  availableShares: number;
-  poolBefore: number;
-  poolAfter: number;
-  outcomePoolBefore: number;
-  outcomePoolAfter: number;
-  priceImpact: number;
-  nextOdds: number;
+  price: DecimalString;
+  shares: DecimalString;
+  amountCoinMicros: CoinMicros;
+  stakeCoinMicros: CoinMicros;
+  feeCoinMicros: CoinMicros;
+  estimatedCostCoinMicros: CoinMicros;
+  estimatedProceedsCoinMicros: CoinMicros;
+  estimatedPayoutCoinMicros: CoinMicros;
+  estimatedProfitCoinMicros: CoinMicros;
+  availableCoinMicros: CoinMicros;
+  balanceAfterCoinMicros: CoinMicros;
+  availableShares: DecimalString;
   status: "quoted";
   createdAt: string;
 };
@@ -224,15 +310,17 @@ export type LocalPosition = {
   userId: string;
   marketId: string;
   marketTitle: string;
-  yesShares: number;
-  noShares: number;
-  yesCost: number;
-  noCost: number;
-  totalCost: number;
-  lastYesPrice: number | null;
-  lastNoPrice: number | null;
-  currentValue: number;
-  pnl: number;
+  yesShares: DecimalString;
+  noShares: DecimalString;
+  yesCostCoinMicros: CoinMicros;
+  noCostCoinMicros: CoinMicros;
+  totalCostCoinMicros: CoinMicros;
+  lastYesPrice: DecimalString | null;
+  lastNoPrice: DecimalString | null;
+  averagePrice: DecimalString;
+  currentPrice: DecimalString;
+  currentValueCoinMicros: CoinMicros;
+  pnlCoinMicros: CoinMicros;
   lastTradeAt: string;
 };
 
@@ -250,24 +338,10 @@ export type MarketHolder = {
   id: string;
   userId: string;
   displayName: string;
-  yesShares: number;
-  noShares: number;
-  shares: number;
-  value: number;
-  updatedAt: string;
-};
-
-export type MarketPublicPosition = {
-  id: string;
-  userId: string;
-  displayName: string;
-  side: "yes" | "no";
-  shares: number;
-  totalCost: number;
-  averagePrice: number | null;
-  lastPrice: number | null;
-  value: number;
-  pnl: number;
+  yesShares: DecimalString;
+  noShares: DecimalString;
+  shares: DecimalString;
+  valueCoinMicros: CoinMicros;
   updatedAt: string;
 };
 
@@ -280,9 +354,9 @@ export type MarketActivityItem =
       displayName: string;
       side: "yes" | "no";
       action: "buy" | "sell";
-      amount: number;
-      price: number;
-      shares: number;
+      amountCoinMicros: CoinMicros;
+      price: DecimalString;
+      shares: DecimalString;
       createdAt: string;
     }
   | (MarketComment & {
@@ -292,7 +366,6 @@ export type MarketActivityItem =
 export type MarketActivityPayload = {
   comments: MarketComment[];
   topHolders: MarketHolder[];
-  positions: MarketPublicPosition[];
   activity: MarketActivityItem[];
 };
 
@@ -303,23 +376,16 @@ export type LocalUser = {
 };
 
 export type LocalWallet = {
-  id: string;
   userId: string;
-  asset: "USDT";
-  network: "TRON";
-  balance: number;
-  initialBalance: number;
+  asset: "COIN";
+  availableCoinMicros: CoinMicros;
+  reservedCoinMicros: CoinMicros;
+  totalCoinMicros: CoinMicros;
+  initialCoinMicros: CoinMicros;
   updatedAt: string;
 };
 
-export type WalletCoreMode = "wallet_review_only";
-
-export type WalletProviderStatus = {
-  provider: "internal_wallet";
-  network: "TRON";
-  status: "available";
-  realTransfersEnabled: false;
-};
+export type WalletCoreMode = "wallet_review_only" | "real_money";
 
 export type Wallet = {
   id: string;
@@ -327,61 +393,124 @@ export type Wallet = {
   asset: "USDT";
   network: "TRON";
   address: string;
-  status: "pending" | "active" | "disabled";
-  provider: "internal_wallet";
+  status: "active";
+  provider: "fireblocks";
   createdAt: string;
   updatedAt: string;
 };
 
-export type WalletCorePayload = {
-  mode: WalletCoreMode;
-  warning: string;
-};
-
-export type MyWalletPayload = WalletCorePayload & {
+export type MyWalletPayload = {
   wallet: Wallet;
-  created: boolean;
-  providerStatus: WalletProviderStatus;
+  instructions: {
+    rail: "TRC-20";
+    tokenContract: string | null;
+    requiredConfirmations: string;
+    doNotSubmitTransactionHash: true;
+  };
+  reviewOnly: boolean;
 };
 
 export type DepositIntent = {
   id: string;
   userId: string;
-  walletId: string;
   asset: "USDT";
   network: "TRON";
   address: string;
-  expectedAmount: number;
-  status: "waiting" | "detected" | "credited" | "expired" | "rejected";
-  memo: string | null;
-  reference: string | null;
+  expectedUsdtAtomic: UsdtAtomic;
+  memo?: string | null;
+  status:
+    | "waiting"
+    | "detected"
+    | "confirming"
+    | "pending_rate"
+    | "awaiting_rate"
+    | "credited"
+    | "expired"
+    | "rejected"
+    | "manual_review";
   expiresAt: string;
   createdAt: string;
-  updatedAt: string;
 };
 
-export type WalletDepositEvent = {
+export type CoinDeposit = {
   id: string;
-  txHash: string;
-  logIndex: string;
-  walletId: string | null;
   userId: string | null;
-  amount: number;
-  asset: "USDT";
+  depositIntentId: string | null;
   network: "TRON";
-  confirmations: number;
-  status: "detected" | "confirmed" | "credited" | "rejected" | "manual_review";
   provider: string;
-  recipientAddress: string | null;
-  rejectionReason: string | null;
-  creditedLedgerEntryId: string | null;
+  providerEventId: string;
+  providerTransactionId: string | null;
+  blockchainTxHash: string;
+  eventIndex: string;
+  tokenContract: string;
+  destinationAddress: string;
+  grossUsdtAtomic: UsdtAtomic;
+  networkFeeUsdtAtomic: UsdtAtomic;
+  providerFeeUsdtAtomic: UsdtAtomic;
+  netUsdtAtomic: UsdtAtomic;
+  usdValueMicros: string | null;
+  creditedCoinMicros: CoinMicros | null;
+  actualConfirmations: string;
+  requiredConfirmations: string;
+  status:
+    | "detected"
+    | "confirming"
+    | "confirmed_unpriced"
+    | "pending_rate"
+    | "manual_review"
+    | "credited"
+    | "rejected"
+    | "reversal_pending"
+    | "reversing"
+    | "reversed";
+  rateSnapshotId: string | null;
+  ledgerEntryId: string | null;
+  reversalLedgerEntryId: string | null;
+  manualReviewReason: string | null;
+  detectedAt: string;
+  confirmedAt: string | null;
+  creditedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-export type WalletDepositsPayload = WalletCorePayload & {
-  depositIntents: DepositIntent[];
-  depositEvents: WalletDepositEvent[];
+export type CoinRateSnapshot = {
+  id: string;
+  asset: "USDT";
+  network: "TRON";
+  quoteCurrency: "USD";
+  rateNanos: string;
+  rateDecimal: DecimalString;
+  source: string;
+  kind: "indicative" | "final";
+  purpose: "deposit_final" | "withdrawal_indicative" | "withdrawal_final";
+  quotedAt: string;
+  expiresAt: string;
+  providerReference: string | null;
+  createdAt: string;
+};
+
+export type MoneyProviderEventEvidence = {
+  id: string;
+  provider: string;
+  providerEventId: string;
+  eventType: string;
+  providerTransactionId: string | null;
+  payload: Record<string, unknown>;
+  payloadHash: string;
+  receivedAt: string;
+};
+
+export type AdminMoneyDepositDetailPayload = {
+  deposit: CoinDeposit;
+  providerEvent: MoneyProviderEventEvidence | null;
+  rateSnapshot: CoinRateSnapshot | null;
+  ledgerEntry: CoinLedgerEntry | null;
+  reversalLedgerEntry: CoinLedgerEntry | null;
+};
+
+export type WalletDepositsPayload = {
+  deposits: CoinDeposit[];
 };
 
 export type WithdrawalRequest = {
@@ -390,43 +519,86 @@ export type WithdrawalRequest = {
   asset: "USDT";
   network: "TRON";
   destinationAddress: string;
-  amount: number;
+  withdrawalQuoteId: string;
+  coinReservedMicros: CoinMicros;
+  coinDebitedMicros: CoinMicros | null;
+  estimatedUsdtAtomic: UsdtAtomic;
+  finalUsdtAtomic: UsdtAtomic | null;
+  networkFeeUsdtAtomic: UsdtAtomic;
+  providerFeeUsdtAtomic: UsdtAtomic;
   status:
-    | "draft"
     | "pending_review"
     | "approved_for_review"
-    | "approved"
     | "rejected"
     | "cancelled"
     | "broadcast_pending"
     | "broadcasted"
     | "failed";
   idempotencyKey: string;
-  provider: "internal_wallet";
-  realTransferBlocked: true;
-  blockReason: "TRANSFERS_UNAVAILABLE";
+  fireblocksReference: string | null;
+  reserveLedgerEntryId: string;
+  finalLedgerEntryId: string | null;
+  releaseLedgerEntryId: string | null;
+  finalRateSnapshotId: string | null;
+  failureState: string | null;
+  reviewReason: string | null;
+  reviewedByActor: string | null;
+  reviewedAt: string | null;
+  realTransferBlocked: boolean;
+  blockReason: string | null;
   createdAt: string;
   updatedAt: string;
 };
 
-export type WithdrawalRequestsPayload = WalletCorePayload & {
+export type WithdrawalRequestsPayload = {
   withdrawalRequests: WithdrawalRequest[];
+  reviewOnly: true;
 };
 
-export type CreateWithdrawalPayload = WalletCorePayload & {
+export type WithdrawalRateSnapshot = Omit<CoinRateSnapshot, "purpose"> & {
+  purpose: "withdrawal_indicative" | "withdrawal_final";
+};
+
+export type WithdrawalQuote = {
+  id: string;
+  userId: string;
+  asset: "USDT";
+  network: "TRON";
+  destinationAddress: string;
+  coinToDebitMicros: CoinMicros;
+  grossUsdtAtomic: UsdtAtomic;
+  estimatedUsdtAtomic: UsdtAtomic;
+  networkFeeUsdtAtomic: UsdtAtomic;
+  providerFeeUsdtAtomic: UsdtAtomic;
+  rateSnapshot: WithdrawalRateSnapshot;
+  status: "open" | "consumed" | "expired" | "cancelled";
+  expiresAt: string;
+  idempotencyKey: string;
+  createdAt: string;
+};
+
+export type CreateWithdrawalQuotePayload = {
+  quote: WithdrawalQuote;
+};
+
+export type CreateWithdrawalPayload = {
   withdrawalRequest: WithdrawalRequest;
+  balance: CoinBalance;
   idempotent: boolean;
-  compliance: {
-    canUseRealMoney: boolean;
-    realTransferBlocked: true;
-    reason: "TRANSFERS_UNAVAILABLE";
-  };
 };
 
-export type CreateDepositIntentPayload = WalletCorePayload & {
+export type CreateDepositIntentPayload = {
   depositIntent: DepositIntent;
-  wallet: Wallet;
-  walletCreated: boolean;
+  instructions: {
+    asset: "USDT";
+    network: "TRON";
+    rail: "TRC-20";
+    tokenContract: string | null;
+    address: string;
+    requiredConfirmations: string;
+    doNotSubmitTransactionHash: true;
+  };
+  reviewOnly: boolean;
 };
 
 export type LedgerEntryType =
@@ -483,15 +655,16 @@ export type LedgerCreditPayload = {
 };
 
 export type PortfolioSummary = {
-  cash: number;
-  heldBalance?: number;
-  positionValue: number;
-  invested: number;
-  equity: number;
-  unrealizedPnl?: number;
-  realizedPnl?: number;
-  pnl: number;
-  pnlPercent: number;
+  availableCoinMicros: CoinMicros;
+  reservedCoinMicros: CoinMicros;
+  totalCoinMicros: CoinMicros;
+  positionValueCoinMicros: CoinMicros;
+  investedCoinMicros: CoinMicros;
+  equityCoinMicros: CoinMicros;
+  unrealizedPnlCoinMicros: CoinMicros;
+  realizedPnlCoinMicros: CoinMicros;
+  pnlCoinMicros: CoinMicros;
+  pnlPercent: DecimalString | null;
   openPositions: number;
 };
 
@@ -500,14 +673,15 @@ export type SettlementHistoryItem = {
   marketId: string | null;
   settlementId: string | null;
   side: "yes" | "no" | null;
-  originalStake: number;
-  payout: number;
-  profit: number;
+  originalStakeCoinMicros: CoinMicros;
+  payoutCoinMicros: CoinMicros;
+  profitCoinMicros: CoinMicros;
   kind: string | null;
   createdAt: string;
 };
 
 export type Portfolio = {
+  tradingMode: TradingMode;
   user: LocalUser;
   wallet: LocalWallet;
   trades: Trade[];
@@ -561,7 +735,7 @@ export type ComplianceEligibilityPayload = ComplianceMePayload & {
 
 export type UserSettings = {
   language: "en" | "ar";
-  currency: "USDT";
+  currency: "COIN";
   country: string | null;
   emailNotifications: boolean;
   marketNotifications: boolean;
@@ -659,6 +833,39 @@ export type AdminAuditPayload = {
   hiddenMarkets: HiddenMarketRule[];
 };
 
+export type AdminMoneyUserPayload = {
+  userId: string;
+  balance: CoinBalance;
+  ledger: CoinLedgerEntry[];
+  deposits: CoinDeposit[];
+  withdrawals: WithdrawalRequest[];
+};
+
+export type AdminMoneyDepositsPayload = {
+  deposits: CoinDeposit[];
+  reviewOnly: true;
+};
+
+export type AdminMoneyWithdrawalsPayload = {
+  withdrawalRequests: WithdrawalRequest[];
+  reviewOnly: true;
+};
+
+export type AdminCorrectionResult = {
+  auditId: string;
+  ledgerEntry: CoinLedgerEntry;
+  balance: CoinBalance;
+};
+
+export type AdminWithdrawalActionResult = {
+  withdrawalRequest: WithdrawalRequest;
+  balance?: CoinBalance;
+  idempotent: boolean;
+  broadcastAttempted?: false;
+  reviewOnly?: true;
+  retryBlockedReason?: string;
+};
+
 export type AdminWithdrawalsPayload = {
   mode: "wallet_review_only";
   realTransferBlocked: true;
@@ -672,12 +879,12 @@ export type AdminSettlementResult = {
     marketId: string;
     status: "resolved" | "cancelled" | "no_winner";
     winningSide: "yes" | "no" | null;
-    totalPool: number;
-    winningPool: number;
-    platformFee: number;
-    distributablePool: number;
+    totalPoolCoinMicros: string;
+    winningPoolCoinMicros: string;
+    platformFeeCoinMicros: string;
+    distributablePoolCoinMicros: string;
     payoutCount: number;
-    createdBy: string;
+    createdBy: string | null;
     idempotencyKey: string;
     createdAt: string;
   };
@@ -687,19 +894,23 @@ export type AdminSettlementResult = {
     marketId: string;
     userId: string;
     side: "yes" | "no";
-    originalStake: number;
-    payout: number;
-    profit: number;
+    originalStakeCoinMicros: string;
+    payoutCoinMicros: string;
+    profitCoinMicros: string;
     kind: "payout" | "refund" | "loss";
-    ledgerEntryId: string | null;
+    coinLedgerEntryId: string | null;
     createdAt: string;
   }>;
   balancing: {
-    totalPool: number;
-    payoutTotal: number;
-    platformFee: number;
+    totalPoolCoinMicros: string;
+    payoutTotalCoinMicros: string;
+    platformFeeCoinMicros: string;
     balanced: boolean;
+    fundingModel: "external_clob";
+    providerFundingVerified: false;
+    reviewOnly: true;
   };
+  idempotent: boolean;
 };
 
 export type AdminSeedOddsResult = {
@@ -742,7 +953,7 @@ export type AdminLedgerSeedActivityResult = {
   created: Array<{
     userId: string;
     ledgerEntry: LedgerEntry;
-    depositEvent: WalletDepositEvent | null;
+    depositEvent: CoinDeposit | null;
   }>;
   skipped: Array<{ userId: string; reason: string }>;
   errors: Array<{ userId: string; message: string }>;
@@ -786,8 +997,8 @@ export type PlatformActivityItem = {
   id: string;
   type: "deposit" | "payment" | "trade";
   displayName: string;
-  amount: number;
-  asset: "USDT";
+  amountCoinMicros: CoinMicros;
+  currency: "COIN";
   marketTitle: string | null;
   createdAt: string;
   relativeTime: string;

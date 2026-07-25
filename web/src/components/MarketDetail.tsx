@@ -5,25 +5,18 @@ import {
   Bookmark,
   ChevronDown,
   ChevronRight,
-  CheckCircle2,
-  Code2,
   ExternalLink,
-  Info,
+  Heart,
   Link2,
   MessageCircle,
-  SmilePlus,
+  MoreHorizontal,
 } from "lucide-react";
 import {
   createTradingQuoteApi,
-  loadComplianceEligibility,
   loadMarketActivity,
   placeTradeApi,
   postMarketComment,
-  resetPortfolioApi,
 } from "../lib/api";
-import {
-  isEligibleToTrade,
-} from "../lib/eligibility";
 import {
   formatCents,
   formatDate,
@@ -32,32 +25,38 @@ import {
   formatRelativeTime,
   formatShares,
   formatShortDate,
-  formatUsdt,
+  addCoinMicros,
+  addDecimalValues,
+  coinMicrosToInput,
+  compareCoinMicros,
+  compareDecimalValues,
+  formatCoinMicros,
+  isPositiveDecimal,
+  multiplyDecimalByRatio,
+  parseCoinInputToMicros,
 } from "../lib/format";
 import { getMarketEyebrowParts, getOutcomeActionLabel, getSourceImage } from "../lib/market";
 import { formatMarketText } from "../lib/marketText";
 import type {
-  ComplianceEligibilityPayload,
   LocalPosition,
   Market,
   MarketActivityItem,
   MarketActivityPayload,
   MarketComment,
   MarketHolder,
-  MarketPublicPosition,
   Trade,
   TradingQuote,
 } from "../lib/types";
 import { usePortfolio } from "../hooks/usePortfolio";
+import { useCoinAccount } from "../hooks/useCoinAccount";
 import { MarketChart } from "./MarketChart";
 import { MarketImage, OutcomeAvatar } from "./MarketMedia";
 import { MarketActivitySkeleton } from "./MarketSkeleton";
 
 type GroupMarket = NonNullable<Market["group_markets"]>[number];
 type DetailTab = "rules" | "context";
-type ActivityTab = "comments" | "holders" | "positions" | "activity";
+type ActivityTab = "comments" | "holders" | "activity";
 type MarketTradeActivityItem = Extract<MarketActivityItem, { type: "trade" }>;
-type OrderType = "market" | "limit";
 type MarketFaqItem = {
   id: string;
   question: string;
@@ -93,29 +92,33 @@ const iconButton =
 const tabButton = "rounded-md px-3 py-1.5 text-sm font-semibold transition";
 const activeTextTabClass = "text-[#0e0f11]";
 const inactiveTextTabClass = "text-[#77808d] transition hover:text-[#4b5563]";
-const platformFeeRate = 0.02;
 const emptyMarketActivity: MarketActivityPayload = {
   comments: [],
   topHolders: [],
-  positions: [],
   activity: [],
 };
 
 export function MarketDetail({
+  canComment,
+  isAuthenticated,
   market: initialMarket,
   detailStatus,
   onBack,
+  onDepositRequested,
+  onLoginRequested,
 }: {
+  canComment: boolean;
+  isAuthenticated: boolean;
   market: Market;
   detailStatus: "idle" | "loading" | "ready" | "error";
   onBack: () => void;
+  onDepositRequested: () => void;
+  onLoginRequested: () => void;
 }) {
   const [market, setMarket] = React.useState(initialMarket);
   const [side, setSide] = React.useState<"yes" | "no">("yes");
   const [action, setAction] = React.useState<"buy" | "sell">("buy");
-  const [orderType, setOrderType] = React.useState<OrderType>("market");
   const [amount, setAmount] = React.useState("0");
-  const [limitPriceCents, setLimitPriceCents] = React.useState("0.0");
   const [detailTab, setDetailTab] = React.useState<DetailTab>("rules");
   const [activityTab, setActivityTab] = React.useState<ActivityTab>("comments");
   const [commentText, setCommentText] = React.useState("");
@@ -124,37 +127,52 @@ export function MarketDetail({
   const [marketActivityStatus, setMarketActivityStatus] =
     React.useState<"loading" | "ready" | "error">("loading");
   const [isPostingComment, setIsPostingComment] = React.useState(false);
-  const [isSaved, setIsSaved] = React.useState(false);
-  const [showResolvedGroups, setShowResolvedGroups] = React.useState(false);
-  const [portfolio, setPortfolio] = usePortfolio();
   const [isPlacingTrade, setIsPlacingTrade] = React.useState(false);
-  const [eligibility, setEligibility] = React.useState<ComplianceEligibilityPayload | null>(null);
-  const [eligibilityStatus, setEligibilityStatus] = React.useState<"loading" | "ready" | "blocked">(
-    "loading",
-  );
+  const [orderType, setOrderType] = React.useState<"market" | "limit">("market");
+  const [isOrderTypeMenuOpen, setIsOrderTypeMenuOpen] = React.useState(false);
+  const orderTypeTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const orderTypePopoverRef = React.useRef<HTMLDivElement | null>(null);
+  const orderTypeOptionRefs = React.useRef<
+    Record<"market" | "limit", HTMLButtonElement | null>
+  >({
+    market: null,
+    limit: null,
+  });
+  const [limitPrice, setLimitPrice] = React.useState("");
+  const [quote, setQuote] = React.useState<TradingQuote | null>(null);
+  const [quoteStatus, setQuoteStatus] =
+    React.useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [quoteError, setQuoteError] = React.useState<string | null>(null);
   const [tradeMessage, setTradeMessage] = React.useState<{
     tone: "success" | "error" | "info";
     text: string;
   } | null>(null);
-  const [quote, setQuote] = React.useState<TradingQuote | null>(null);
-  const [quoteStatus, setQuoteStatus] = React.useState<"idle" | "loading" | "ready" | "error">(
-    "idle",
-  );
-  const [quoteError, setQuoteError] = React.useState<string | null>(null);
+  const [isSaved, setIsSaved] = React.useState(false);
+  const [portfolio, setPortfolio] = usePortfolio();
+  const {
+    balance: coinBalance,
+    refreshBalance: refreshCoinBalance,
+    supportedAssets,
+  } = useCoinAccount();
+  const depositEnabled =
+    supportedAssets?.settlementAssets.some((rail) => rail.depositEnabled) ?? false;
   const groupMarkets = sortGroupMarketsForDetail(market.group_markets ?? []);
   const isGroupedEvent = groupMarkets.length > 1;
   const liveGroupMarkets = groupMarkets.filter(isLiveGroupMarket);
   const resolvedGroupMarkets = groupMarkets.filter((groupMarket) => !isLiveGroupMarket(groupMarket));
-  const visibleGroupMarkets = [
-    ...liveGroupMarkets,
-    ...(showResolvedGroups ? resolvedGroupMarkets : []),
-  ];
-  const usesGroupMarketImages = groupMarkets.some((groupMarket) =>
-    hasDistinctGroupMarketImage(market, groupMarket),
+  const isTradingClosed =
+    market.closed ||
+    market.archived ||
+    market.status === "closed" ||
+    market.status === "expired" ||
+    (isGroupedEvent && liveGroupMarkets.length === 0);
+  const [showResolvedGroups, setShowResolvedGroups] = React.useState(
+    liveGroupMarkets.length === 0 && resolvedGroupMarkets.length > 0,
   );
   const initialSelectedMarketId =
-    groupMarkets.find((groupMarket) => groupMarket.id === market.canonical_market_id)?.id ??
+    liveGroupMarkets[0]?.id ??
     groupMarkets[0]?.id ??
+    groupMarkets.find((groupMarket) => groupMarket.id === market.canonical_market_id)?.id ??
     market.id;
   const [selectedMarketId, setSelectedMarketId] = React.useState(initialSelectedMarketId);
   const selectedGroupMarket =
@@ -170,61 +188,37 @@ export function MarketDetail({
   const no =
     tradeMarket.outcomes.find((outcome) => outcome.name.toLowerCase() === "no") ??
     secondaryOutcome;
-  const yesDisplayPrice = getActionDisplayPrice(yes?.price ?? null, action);
-  const noDisplayPrice = getActionDisplayPrice(no?.price ?? null, action);
-  const selectedMarketPrice = side === "yes" ? yesDisplayPrice : noDisplayPrice;
-  const limitOrderPrice = parseLimitPrice(limitPriceCents);
-  const selectedPrice = orderType === "limit" ? limitOrderPrice : selectedMarketPrice;
-  const amountValue = Number(amount);
-  const hasValidAmount = Number.isFinite(amountValue) && amountValue > 0;
-  const usesShareInput = action === "sell" || orderType === "limit";
-  const estimatedStake =
-    action === "buy" && selectedPrice && hasValidAmount
-      ? usesShareInput
-        ? amountValue * selectedPrice
-        : amountValue * (1 - platformFeeRate)
-      : 0;
-  const estimatedFee =
-    action === "buy" && selectedPrice && hasValidAmount
-      ? usesShareInput
-        ? estimatedStake / (1 - platformFeeRate) - estimatedStake
-        : amountValue * platformFeeRate
-      : 0;
-  const estimatedShares =
-    selectedPrice && hasValidAmount
-      ? action === "buy"
-        ? usesShareInput
-          ? amountValue
-          : estimatedStake / selectedPrice
-        : amountValue
-      : 0;
-  const estimatedCost = action === "buy" && selectedPrice
-    ? usesShareInput
-      ? estimatedStake + estimatedFee
-      : amountValue
-    : 0;
-  const estimatedProceeds = action === "sell" && selectedPrice ? estimatedShares * selectedPrice : 0;
   const currentPosition = portfolio.positions.find(
     (position) => position.marketId === tradeMarket.id,
   );
-  const selectedSideShares =
-    side === "yes" ? currentPosition?.yesShares ?? 0 : currentPosition?.noShares ?? 0;
   const marketTrades = portfolio.trades.filter((trade) => trade.marketId === tradeMarket.id);
   const selectedVariantLabel =
     selectedGroupMarket?.label ?? tradeMarket.groupItemTitle ?? tradeMarket.title;
-  const selectedVariantDisplayLabel = formatMarketText(selectedVariantLabel);
   const marketDisplayTitle = formatMarketText(market.title);
   const tradeMarketDisplayTitle = formatMarketText(tradeMarket.title);
   const eyebrowParts = getMarketEyebrowParts(market);
   const selectedOutcomeLabel =
     isGroupedEvent
-      ? `${selectedVariantDisplayLabel} ${side === "yes" ? "Yes" : "No"}`
+      ? `${formatMarketText(selectedVariantLabel)} ${side === "yes" ? "Yes" : "No"}`
       : side === "yes"
         ? formatMarketText(primaryOutcome?.name) || "Yes"
         : formatMarketText(secondaryOutcome?.name) || "No";
+  const selectedPrice = side === "yes"
+    ? yes?.price ?? yes?.probability ?? null
+    : no?.price ?? no?.probability ?? null;
+  const buyAmountCoinMicros = action === "buy" ? parseCoinInputToMicros(amount) : null;
+  const hasAvailableCoins = BigInt(coinBalance?.availableCoinMicros ?? "0") > 0n;
+  const hasValidAmount =
+    action === "buy" ? buyAmountCoinMicros !== null : isPositiveDecimal(amount);
+  const limitPriceValue = Number(limitPrice) / 100;
+  const hasValidLimitPrice =
+    orderType === "market" ||
+    (Number.isFinite(limitPriceValue) && limitPriceValue > 0 && limitPriceValue < 1);
+  const selectedSideShares =
+    side === "yes" ? currentPosition?.yesShares ?? "0" : currentPosition?.noShares ?? "0";
   const displayOutcomes =
     isGroupedEvent
-      ? groupMarkets.map((groupMarket) => ({
+      ? (liveGroupMarkets.length > 0 ? liveGroupMarkets : groupMarkets).map((groupMarket) => ({
           name: groupMarket.label,
           price: groupMarket.yes_price,
           probability: groupMarket.yes_price,
@@ -238,16 +232,6 @@ export function MarketDetail({
         ];
   const priceHistory = market.history?.price_history ?? [];
   const timelineDates = [market.starts_at, market.ends_at].filter(Boolean).map(formatShortDate);
-  const canTrade = eligibilityStatus === "ready" && isEligibleToTrade(eligibility);
-  const canPlaceTrade =
-    canTrade &&
-    !isPlacingTrade &&
-    selectedPrice !== null &&
-    selectedPrice > 0 &&
-    hasValidAmount &&
-    (action === "buy"
-      ? estimatedCost <= portfolio.wallet.balance
-      : estimatedShares <= selectedSideShares);
   const activityMarketIds =
     groupMarkets.length > 1
       ? [...new Set([...groupMarkets.map((groupMarket) => groupMarket.id), market.id])]
@@ -272,10 +256,107 @@ export function MarketDetail({
     setDetailTab("rules");
     setActivityTab("comments");
     setCommentText("");
-    setOrderType("market");
-    setLimitPriceCents("0.0");
-    setAmount("0");
   }, [market.id]);
+
+  React.useEffect(() => {
+    setAmount("0");
+    setTradeMessage(null);
+    setQuote(null);
+    setQuoteStatus("idle");
+    setQuoteError(null);
+    setLimitPrice("");
+    setOrderType("market");
+    setIsOrderTypeMenuOpen(false);
+  }, [tradeMarket.id]);
+
+  React.useEffect(() => {
+    if (!isOrderTypeMenuOpen) {
+      return undefined;
+    }
+
+    orderTypeOptionRefs.current[orderType]?.focus();
+
+    function closeOrderTypePopoverOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      setIsOrderTypeMenuOpen(false);
+      orderTypeTriggerRef.current?.focus();
+    }
+
+    function closeOrderTypePopoverOnOutsidePointer(event: PointerEvent) {
+      if (!(event.target instanceof Node)) {
+        return;
+      }
+      if (
+        orderTypePopoverRef.current?.contains(event.target) ||
+        orderTypeTriggerRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+
+      setIsOrderTypeMenuOpen(false);
+    }
+
+    document.addEventListener("keydown", closeOrderTypePopoverOnEscape);
+    document.addEventListener("pointerdown", closeOrderTypePopoverOnOutsidePointer);
+
+    return () => {
+      document.removeEventListener("keydown", closeOrderTypePopoverOnEscape);
+      document.removeEventListener("pointerdown", closeOrderTypePopoverOnOutsidePointer);
+    };
+  }, [isOrderTypeMenuOpen, orderType]);
+
+  React.useEffect(() => {
+    if (!isAuthenticated || !selectedPrice || selectedPrice <= 0 || !hasValidAmount) {
+      setQuote(null);
+      setQuoteStatus("idle");
+      setQuoteError(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      setQuoteStatus("loading");
+      setQuoteError(null);
+      void createTradingQuoteApi({
+        marketId: tradeMarket.id,
+        side,
+        action,
+        amountCoinMicros: action === "buy" ? buyAmountCoinMicros ?? undefined : undefined,
+        shares: action === "sell" ? amount : undefined,
+      })
+        .then((nextQuote) => {
+          if (!cancelled) {
+            setQuote(nextQuote);
+            setQuoteStatus("ready");
+          }
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            setQuote(null);
+            setQuoteStatus("error");
+            setQuoteError(error instanceof Error ? error.message : "Could not quote this trade.");
+          }
+        });
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    action,
+    amount,
+    buyAmountCoinMicros,
+    hasValidAmount,
+    isAuthenticated,
+    selectedPrice,
+    side,
+    tradeMarket.id,
+  ]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -306,252 +387,12 @@ export function MarketDetail({
     };
   }, [activityMarketIdsKey, market.id]);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    const timeout = window.setTimeout(() => {
-      if (!cancelled) {
-        setEligibility(null);
-        setEligibilityStatus("blocked");
-      }
-    }, 6000);
-
-    setEligibilityStatus("loading");
-    loadComplianceEligibility()
-      .then((nextEligibility) => {
-        if (!cancelled) {
-          window.clearTimeout(timeout);
-          setEligibility(nextEligibility);
-          setEligibilityStatus("ready");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          window.clearTimeout(timeout);
-          setEligibility(null);
-          setEligibilityStatus("blocked");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, []);
-
-  React.useEffect(() => {
-    if (!hasValidAmount || !selectedPrice || selectedPrice <= 0) {
-      setQuote(null);
-      setQuoteStatus("idle");
-      setQuoteError(null);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const timeout = window.setTimeout(() => {
-      setQuoteStatus("loading");
-      setQuoteError(null);
-      createTradingQuoteApi({
-        marketId: tradeMarket.id,
-        side,
-        action,
-        amount: action === "buy" ? estimatedCost : undefined,
-        shares: action === "sell" ? estimatedShares : undefined,
-      })
-        .then((nextQuote) => {
-          if (!cancelled) {
-            setQuote(nextQuote);
-            setQuoteStatus("ready");
-          }
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            setQuote(null);
-            setQuoteStatus("error");
-            setQuoteError(error instanceof Error ? error.message : "Quote unavailable");
-          }
-        });
-    }, 220);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, [
-    action,
-    estimatedCost,
-    estimatedShares,
-    hasValidAmount,
-    selectedPrice,
-    side,
-    tradeMarket.id,
-  ]);
-
-  async function placeTrade() {
-    if (!canTrade) {
-      setTradeMessage({
-        tone: "info",
-        text: "Complete verification",
-      });
-      return;
-    }
-
-    if (!selectedPrice || selectedPrice <= 0) {
-      setTradeMessage({
-        tone: "error",
-        text: orderType === "limit"
-          ? "Enter a valid limit price."
-          : "Price is not available for this side yet.",
-      });
-      return;
-    }
-
-    if (!hasValidAmount) {
-      setTradeMessage({
-        tone: "error",
-        text: usesShareInput ? "Enter a valid share quantity." : "Enter a valid USDT amount.",
-      });
-      return;
-    }
-
-    if (action === "buy" && estimatedCost > portfolio.wallet.balance) {
-      setTradeMessage({ tone: "error", text: "Insufficient balance." });
-      return;
-    }
-
-    if (action === "sell" && estimatedShares > selectedSideShares) {
-      setTradeMessage({ tone: "error", text: "Insufficient shares for this sale." });
-      return;
-    }
-
-    setIsPlacingTrade(true);
-    setTradeMessage({ tone: "info", text: "Placing order..." });
-    try {
-      const result = await placeTradeApi({
-        marketId: tradeMarket.id,
-        side,
-        action,
-        amount: action === "buy" ? estimatedCost : undefined,
-        shares: action === "sell" ? estimatedShares : undefined,
-      });
-      setPortfolio(result.portfolio);
-      if (result.market) {
-        setMarket(result.market);
-      }
-      setQuote(null);
-      setTradeMessage({
-        tone: "success",
-        text:
-          action === "buy"
-            ? `Bought ${formatShares(result.trade.shares)} ${selectedOutcomeLabel} shares for ${formatUsdt(result.trade.amount)}.`
-            : `Sold ${formatShares(result.trade.shares)} ${selectedOutcomeLabel} shares for ${formatUsdt(result.trade.amount)}.`,
-      });
-    } catch (error) {
-      setTradeMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Could not place trade.",
-      });
-    } finally {
-      setIsPlacingTrade(false);
-    }
-  }
-
-  async function resetPortfolio() {
-    if (!window.confirm("Reset your portfolio to 10,000 USDT and clear trade history?")) {
-      return;
-    }
-
-    try {
-      const nextPortfolio = await resetPortfolioApi();
-      setPortfolio(nextPortfolio);
-      setTradeMessage({ tone: "success", text: "Portfolio reset to 10,000 USDT." });
-    } catch (error) {
-      setTradeMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Could not reset portfolio.",
-      });
-    }
-  }
-
-  function addQuickAmount(value: number) {
-    const currentAmount = Number(amount);
-    const nextAmount = Number.isFinite(currentAmount) ? currentAmount + value : value;
-    setAmount(formatInputNumber(Math.min(portfolio.wallet.balance, nextAmount)));
-  }
-
-  function addShareStep(value: number) {
-    const currentAmount = Number(amount);
-    const nextAmount = Number.isFinite(currentAmount) ? currentAmount + value : value;
-    const maxShares =
-      action === "sell"
-        ? selectedSideShares
-        : selectedPrice && selectedPrice > 0
-          ? portfolio.wallet.balance / selectedPrice
-          : Number.POSITIVE_INFINITY;
-    setAmount(formatInputNumber(Math.min(maxShares, Math.max(0, nextAmount))));
-  }
-
-  function setSellSharePercent(percent: number) {
-    setAmount(formatInputNumber(selectedSideShares * percent));
-  }
-
-  function setMaxAmount() {
-    if (action === "sell") {
-      setAmount(formatInputNumber(selectedSideShares));
-      return;
-    }
-
-    if (orderType === "limit") {
-      const maxShares =
-        selectedPrice && selectedPrice > 0 ? portfolio.wallet.balance / selectedPrice : 0;
-      setAmount(formatInputNumber(maxShares));
-      return;
-    }
-
-    setAmount(formatInputNumber(portfolio.wallet.balance));
-  }
-
-  function adjustLimitPrice(delta: number) {
-    const currentPrice = Number(limitPriceCents);
-    const nextPrice = Math.min(99, Math.max(0, (Number.isFinite(currentPrice) ? currentPrice : 0) + delta));
-    setLimitPriceCents(nextPrice.toFixed(1));
-  }
-
-  function changeAction(nextAction: "buy" | "sell") {
-    setAction(nextAction);
-    setAmount("0");
-    setTradeMessage(null);
-  }
-
-  function toggleOrderType() {
-    setOrderType((current) => (current === "market" ? "limit" : "market"));
-    setLimitPriceCents("0.0");
-    setAmount("0");
-    setTradeMessage(null);
-  }
-
   async function copyMarketLink() {
     await copyTextToClipboard(window.location.href);
-    setTradeMessage({ tone: "success", text: "Market link copied." });
-  }
-
-  async function copyEmbedCode() {
-    const url = window.location.href;
-    const title = marketDisplayTitle.replace(/"/g, "&quot;");
-    await copyTextToClipboard(
-      `<iframe title="${title}" src="${url}" width="100%" height="720"></iframe>`,
-    );
-    setTradeMessage({ tone: "success", text: "Embed code copied." });
   }
 
   function toggleSavedMarket() {
-    setIsSaved((current) => {
-      const next = !current;
-      setTradeMessage({
-        tone: "success",
-        text: next ? "Market saved." : "Market removed from saved.",
-      });
-      return next;
-    });
+    setIsSaved((current) => !current);
   }
 
   async function postComment() {
@@ -567,341 +408,483 @@ export function MarketDetail({
       const nextActivity = await postMarketComment({
         marketId: tradeMarket.id,
         body: text,
-        positionLabel: selectedOutcomeLabel,
       });
       setMarketActivity(nextActivity);
       setMarketActivityStatus("ready");
       setCommentText("");
       setActivityTab("comments");
     } catch (error) {
-      setTradeMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Could not post comment.",
-      });
+      console.error(error instanceof Error ? error.message : "Could not post comment.");
     } finally {
       setIsPostingComment(false);
     }
   }
 
-  function goToVerification() {
-    window.location.href = "/kyc";
+  async function placeTrade() {
+    if (!isAuthenticated) {
+      onLoginRequested();
+      return;
+    }
+
+    if (action === "buy" && BigInt(coinBalance?.availableCoinMicros ?? "0") <= 0n) {
+      if (depositEnabled) {
+        onDepositRequested();
+      } else {
+        setTradeMessage({
+          tone: "error",
+          text: "No Available Coins. The external deposit rail is currently unavailable.",
+        });
+      }
+      return;
+    }
+
+    if (!selectedPrice || selectedPrice <= 0) {
+      setTradeMessage({ tone: "error", text: "Price is not available for this side yet." });
+      return;
+    }
+
+    if (!hasValidAmount) {
+      setTradeMessage({ tone: "error", text: "Enter a valid amount." });
+      return;
+    }
+
+    if (!hasValidLimitPrice) {
+      setTradeMessage({ tone: "error", text: "Enter a limit price between 1¢ and 99¢." });
+      return;
+    }
+
+    if (
+      orderType === "limit" &&
+      ((action === "buy" && selectedPrice > limitPriceValue) ||
+        (action === "sell" && selectedPrice < limitPriceValue))
+    ) {
+      setTradeMessage({
+        tone: "info",
+        text: `The current price is ${formatCents(selectedPrice)}. This limit is not marketable yet, so no order was executed.`,
+      });
+      return;
+    }
+
+    if (
+      action === "buy" &&
+      buyAmountCoinMicros &&
+      compareCoinMicros(buyAmountCoinMicros, coinBalance?.availableCoinMicros ?? "0") === 1
+    ) {
+      setTradeMessage({ tone: "error", text: "Insufficient balance." });
+      return;
+    }
+
+    if (
+      action === "sell" &&
+      compareDecimalValues(amount, selectedSideShares, 6) === 1
+    ) {
+      setTradeMessage({ tone: "error", text: "Insufficient shares." });
+      return;
+    }
+
+    setIsPlacingTrade(true);
+    setTradeMessage({ tone: "info", text: "Placing order..." });
+    try {
+      const result = await placeTradeApi({
+        marketId: tradeMarket.id,
+        side,
+        action,
+        amountCoinMicros: action === "buy" ? buyAmountCoinMicros ?? undefined : undefined,
+        shares: action === "sell" ? amount : undefined,
+      });
+      setPortfolio(result.portfolio);
+      void refreshCoinBalance().catch(() => undefined);
+      if (result.market) {
+        setMarket(result.market);
+      }
+      setAmount("0");
+      setTradeMessage({
+        tone: "success",
+        text:
+          action === "buy"
+            ? `Bought ${formatShares(result.trade.shares)} ${selectedOutcomeLabel} shares for ${formatCoinMicros(result.trade.amountCoinMicros)}.`
+            : `Sold ${formatShares(result.trade.shares)} ${selectedOutcomeLabel} shares for ${formatCoinMicros(result.trade.amountCoinMicros)}.`,
+      });
+    } catch (error) {
+      setTradeMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "Could not place trade.",
+      });
+    } finally {
+      setIsPlacingTrade(false);
+    }
   }
 
-	  function renderTradeTicket() {
-	    const ticketPrimaryLabel = isGroupedEvent
-	      ? selectedVariantDisplayLabel
-	      : formatEnglishDate(market.dates?.ends_at ?? market.ends_at) ?? selectedOutcomeLabel;
-	    const actionLabel = action === "buy" ? "Buy" : "Sell";
-	    const sideLabel = side === "yes" ? "Yes" : "No";
-	    const tradeButtonLabel = isPlacingTrade
-	      ? "Placing..."
-	      : orderType === "limit"
-	        ? `Place ${actionLabel.toLowerCase()} order`
-	        : `${actionLabel} ${sideLabel}`;
+  function changeTradeAction(nextAction: "buy" | "sell") {
+    setAction(nextAction);
+    setAmount("0");
+    setQuote(null);
+    setQuoteStatus("idle");
+    setQuoteError(null);
+    setTradeMessage(null);
+  }
+
+  function selectGroupedOutcome(marketId: string, nextSide: "yes" | "no" = side) {
+    if (marketId !== selectedMarketId) {
+      setAmount("0");
+    }
+
+    setSelectedMarketId(marketId);
+    setSide(nextSide);
+    setQuote(null);
+    setQuoteStatus("idle");
+    setQuoteError(null);
+    setTradeMessage(null);
+  }
+
+  function updateTradeAmount(value: string) {
+    const normalized = value.replace(/[^0-9.]/g, "");
+    const [whole = "", ...decimalParts] = normalized.split(".");
+    const nextAmount = decimalParts.length > 0
+      ? `${whole || "0"}.${decimalParts.join("")}`
+      : whole;
+
+    setAmount(nextAmount || "0");
+    setTradeMessage(null);
+  }
+
+  function changeOrderType(nextOrderType: "market" | "limit") {
+    setOrderType(nextOrderType);
+    setIsOrderTypeMenuOpen(false);
+    orderTypeTriggerRef.current?.focus();
+    setTradeMessage(null);
+    if (nextOrderType === "limit" && selectedPrice) {
+      setLimitPrice(String(Math.max(1, Math.min(99, Math.round(selectedPrice * 100)))));
+    }
+  }
+
+  function addQuickTradeAmount(value: string) {
+    const currentMicros = parseCoinInputToMicros(amount, true) ?? "0";
+    const incrementMicros = parseCoinInputToMicros(value) ?? "0";
+    const nextMicros = addCoinMicros(currentMicros, incrementMicros) ?? currentMicros;
+    const maximum = coinBalance?.availableCoinMicros ?? "0";
+    const capped = compareCoinMicros(nextMicros, maximum) === 1 ? maximum : nextMicros;
+
+    setAmount(coinMicrosToInput(capped));
+    setTradeMessage(null);
+  }
+
+  function setSellSharePercent(numerator: bigint, denominator: bigint) {
+    setAmount(multiplyDecimalByRatio(selectedSideShares, numerator, denominator, 6) ?? "0");
+    setTradeMessage(null);
+  }
+
+  function setMaximumTradeAmount() {
+    const maximum =
+      action === "buy"
+        ? coinMicrosToInput(coinBalance?.availableCoinMicros ?? "0")
+        : selectedSideShares;
+    setAmount(maximum);
+    setTradeMessage(null);
+  }
+
+  function renderTradeTicket() {
+    const ticketPrimaryLabel = isGroupedEvent
+      ? formatMarketText(selectedVariantLabel)
+      : formatEnglishDate(tradeMarket.dates?.ends_at ?? tradeMarket.ends_at) ?? selectedOutcomeLabel;
+    const sideLabel = side === "yes" ? "Yes" : "No";
+    const ticketTitle = isGroupedEvent ? marketDisplayTitle : tradeMarketDisplayTitle;
+    const ticketImageMarket =
+      selectedGroupMarket && !hasDistinctGroupMarketImage(market, selectedGroupMarket)
+        ? market
+        : tradeMarket;
 
     return (
       <>
-        <div className="market-trade-ticket flex h-full w-full flex-col overflow-hidden rounded-[22px] border border-[#e6e8ea] bg-white shadow-none">
-          <div className="flex w-full flex-col">
-            <div className="flex w-full items-center gap-3 px-4 pb-4 pt-5">
-              <MarketImage market={tradeMarket} className="h-12 w-12 min-w-12 rounded-[7px]" />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm font-medium text-[#77808d]">{tradeMarketDisplayTitle}</span>
-                <span className="flex min-w-0 items-center text-base font-semibold text-[#0e0f11]">
-                  <span className="min-w-0 truncate">{ticketPrimaryLabel}</span>
-                  <span className="mx-1.5 shrink-0 text-[#a6adb7]">·</span>
-                  <span className={side === "yes" ? "shrink-0 text-[#30a159]" : "shrink-0 text-[#e23939]"}>
-	                    {side === "yes" ? "Yes" : "No"}
-                  </span>
+        <div className="market-trade-ticket flex h-full w-full flex-col overflow-hidden rounded-[16px] border border-[var(--pm-border)] bg-[var(--pm-surface-1)] shadow-none">
+          <div className="flex items-center gap-3 px-4 pb-2 pt-4">
+            <MarketImage market={ticketImageMarket} className="h-12 w-12 min-w-12 rounded-[7px]" />
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="truncate text-[15px] font-medium leading-5 text-[var(--pm-text-secondary)]">
+                {ticketTitle}
+              </span>
+              <span className="flex min-w-0 items-center text-base font-semibold leading-5 text-[var(--pm-text-primary)]">
+                <span className="min-w-0 truncate">{ticketPrimaryLabel}</span>
+                <span className="mx-1.5 shrink-0 text-[var(--pm-text-tertiary)]">·</span>
+                <span className={side === "yes" ? "shrink-0 text-[var(--pm-green)]" : "shrink-0 text-[var(--pm-red)]"}>
+                  {sideLabel}
                 </span>
-              </div>
-            </div>
-
-            <div className="flex w-full items-end justify-between border-b border-[#e6e8ea] px-4 pb-0">
-              <div className="flex gap-4 text-[18px] font-semibold leading-none">
-                <button
-                  className={`relative bg-transparent pb-4 ${
-                    action === "buy" ? "text-[#0e0f11]" : "text-[#77808d] hover:text-[#4b5563]"
-                  }`}
-                  onClick={() => changeAction("buy")}
-                  type="button"
-                >
-                  Buy
-                  {action === "buy" ? (
-                    <span className="absolute bottom-0 left-0 h-[3px] w-full bg-[#0e0f11]" />
-                  ) : null}
-                </button>
-                <button
-                  className={`relative bg-transparent pb-4 ${
-                    action === "sell" ? "text-[#0e0f11]" : "text-[#77808d] hover:text-[#4b5563]"
-                  }`}
-                  onClick={() => changeAction("sell")}
-                  type="button"
-                >
-                  Sell
-                  {action === "sell" ? (
-                    <span className="absolute bottom-0 left-0 h-[3px] w-full bg-[#0e0f11]" />
-                  ) : null}
-                </button>
-              </div>
-              <button
-                className="flex w-[90px] items-center justify-end gap-1 pb-4 text-[17px] font-semibold capitalize text-[#0e0f11] transition hover:text-[#4b5563]"
-                onClick={toggleOrderType}
-                type="button"
-              >
-	                {orderType === "market" ? "Market" : "Limit"}
-                <ChevronDown
-                  className={`ml-1 transition-transform ${orderType === "limit" ? "rotate-180" : ""}`}
-                  size={18}
-                />
-              </button>
+              </span>
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-5 px-4 py-5">
-            <div className="grid w-full grid-cols-2 gap-3">
+          <div className="relative flex h-[41px] items-end justify-between border-b border-[var(--pm-border)] px-4">
+            <div className="flex h-full items-end gap-4 text-[18px] font-semibold leading-none">
+              {(["buy", "sell"] as const).map((nextAction) => (
+                <button
+                  aria-pressed={action === nextAction}
+                  className={`relative h-full bg-transparent pt-0.5 capitalize transition ${
+                    action === nextAction
+                      ? "text-[var(--pm-text-primary)]"
+                      : "text-[var(--pm-text-secondary)] hover:text-[var(--pm-text-primary)]"
+                  }`}
+                  key={nextAction}
+                  onClick={() => changeTradeAction(nextAction)}
+                  type="button"
+                >
+                  {nextAction}
+                  {action === nextAction ? (
+                    <span className="absolute inset-x-0 bottom-0 h-[3px] bg-[var(--pm-text-primary)]" />
+                  ) : null}
+                </button>
+              ))}
+            </div>
+            <div className="relative flex h-full items-center">
               <button
-                className={`h-16 min-w-0 rounded-[14px] px-3 text-[20px] font-semibold transition ${
-                  side === "yes"
-                    ? "bg-[#30a159] text-white shadow-[0_4px_0_rgba(24,126,63,0.95)]"
-                    : "bg-[#f4f5f6] text-[#77808d] shadow-[0_4px_0_rgba(0,0,0,0.18)] hover:text-[#0e0f11]"
-                }`}
-                onClick={() => setSide("yes")}
+                ref={orderTypeTriggerRef}
+                aria-controls="order-type-popover"
+                aria-expanded={isOrderTypeMenuOpen}
+                className="flex h-9 items-center gap-1 rounded-lg px-2 text-base font-medium capitalize text-[var(--pm-text-primary)] transition hover:bg-[var(--pm-surface-2)]"
+                onClick={() => setIsOrderTypeMenuOpen((current) => !current)}
                 type="button"
               >
-	                <span className="block truncate">Yes {formatCents(yesDisplayPrice)}</span>
+                {orderType}
+                <ChevronDown
+                  className={`text-[var(--pm-text-secondary)] transition-transform ${
+                    isOrderTypeMenuOpen ? "rotate-180" : ""
+                  }`}
+                  size={18}
+                />
               </button>
-              <button
-                className={`h-16 min-w-0 rounded-[14px] px-3 text-[20px] font-semibold transition ${
-                  side === "no"
-                    ? "bg-[#e23939] text-white shadow-[0_4px_0_rgba(168,30,30,0.95)]"
-                    : "bg-[#f4f5f6] text-[#77808d] shadow-[0_4px_0_rgba(0,0,0,0.18)] hover:text-[#0e0f11]"
-                }`}
-                onClick={() => setSide("no")}
-                type="button"
+              {isOrderTypeMenuOpen ? (
+                <div
+                  ref={orderTypePopoverRef}
+                  className="absolute right-0 top-[38px] z-30 w-40 overflow-hidden rounded-xl border border-[var(--pm-border)] bg-[var(--pm-surface-1)] p-1.5 shadow-[0_14px_34px_rgba(0,0,0,0.22)]"
+                  id="order-type-popover"
+                >
+                  {(["market", "limit"] as const).map((nextOrderType) => (
+                    <button
+                      ref={(node) => {
+                        orderTypeOptionRefs.current[nextOrderType] = node;
+                      }}
+                      aria-pressed={orderType === nextOrderType}
+                      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm font-semibold capitalize transition ${
+                        orderType === nextOrderType
+                          ? "bg-[var(--pm-surface-2)] text-[var(--pm-text-primary)]"
+                          : "text-[var(--pm-text-secondary)] hover:bg-[var(--pm-surface-2)] hover:text-[var(--pm-text-primary)]"
+                      }`}
+                      key={nextOrderType}
+                      onClick={() => changeOrderType(nextOrderType)}
+                      type="button"
+                    >
+                      {nextOrderType}
+                      {orderType === nextOrderType ? (
+                        <span className="text-[var(--pm-brand)]">✓</span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex flex-col px-4 pb-4 pt-5">
+            <div className="grid grid-cols-2 gap-3">
+              <PressableOutcomeButton
+                pressed={side === "yes"}
+                tone="yes"
+                variant="ticket"
+                onClick={() => {
+                  setSide("yes");
+                  setQuote(null);
+                  setTradeMessage(null);
+                }}
               >
-	                <span className="block truncate">No {formatCents(noDisplayPrice)}</span>
-              </button>
+                <span className="block truncate">Yes {formatCents(yes?.price ?? null)}</span>
+              </PressableOutcomeButton>
+              <PressableOutcomeButton
+                pressed={side === "no"}
+                tone="no"
+                variant="ticket"
+                onClick={() => {
+                  setSide("no");
+                  setQuote(null);
+                  setTradeMessage(null);
+                }}
+              >
+                <span className="block truncate">No {formatCents(no?.price ?? null)}</span>
+              </PressableOutcomeButton>
             </div>
 
             {orderType === "limit" ? (
-              <>
-                <div className="flex w-full items-center">
-                  <span className="flex-1 text-base font-medium text-[#0e0f11]">
-	                    Limit price
-                  </span>
-                  <div className="flex h-10 items-center overflow-hidden rounded-md border border-[#e6e8ea] bg-white text-center text-lg font-semibold text-[#0e0f11]">
-                    <button
-                      className="grid h-full aspect-square place-items-center text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
-                      onClick={() => adjustLimitPrice(-1)}
-                      type="button"
-                    >
-                      -
-                    </button>
-                    <div className="flex min-w-[66px] items-center justify-center gap-0.5">
-                      <input
-                        className="w-9 bg-transparent text-center tabular-nums tracking-normal outline-none"
-                        inputMode="decimal"
-                        onChange={(event) => setLimitPriceCents(event.target.value)}
-                        placeholder="0"
-                        type="text"
-                        value={limitPriceCents.replace(/\.0$/, "")}
-                      />
-                      <span>¢</span>
-                    </div>
-                    <button
-                      className="grid h-full aspect-square place-items-center text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
-                      onClick={() => adjustLimitPrice(1)}
-                      type="button"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                <div className="-mx-4 h-px bg-[#e6e8ea]" />
-
-                <div className="flex w-full flex-col gap-2">
-                  <div className="flex w-full items-center">
-	                    <span className="flex-1 text-base font-medium text-[#0e0f11]">Shares</span>
-                    <input
-                      className="h-10 min-w-[118px] rounded-md border border-[#e6e8ea] bg-transparent px-3 text-right text-lg font-semibold text-[#0e0f11] outline-none"
-                      inputMode="decimal"
-                      onChange={(event) => setAmount(event.target.value)}
-                      placeholder="0"
-                      type="text"
-                      value={amount === "0" ? "" : amount}
-                    />
-                  </div>
-                  <div className="flex w-full justify-end">
-                    <div className="flex gap-1">
-                      {(action === "sell" ? [0.25, 0.5, 0.75] : [-100, -10, 10, 20, 100]).map((value) => (
-                        <button
-                          className="h-8 rounded-md border border-[#e6e8ea] bg-white px-2.5 text-xs font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
-                          key={value}
-                          onClick={() => {
-                            if (action === "sell") {
-                              setSellSharePercent(value);
-                            } else {
-                              addShareStep(value);
-                            }
-                          }}
-                          type="button"
-                        >
-                          {action === "sell"
-                            ? `${Math.round(value * 100)}%`
-                            : value > 0
-                              ? `+${value}`
-                              : value}
-                        </button>
-                      ))}
-                      <button
-                        className="h-8 rounded-md border border-[#e6e8ea] bg-white px-2.5 text-xs font-semibold text-[#77808d] transition hover:bg-[#f4f5f6] hover:text-[#0e0f11]"
-                        onClick={setMaxAmount}
-                        type="button"
-                      >
-                        Max
-                      </button>
-                    </div>
-                  </div>
-                  <div className="h-6" />
-                </div>
-
-                <div className="-mx-4 h-px bg-[#e6e8ea]" />
-
-                <div className="grid gap-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <span className="text-sm font-medium text-[#77808d]">
-	                      Expires
-                    </span>
-                    <button
-                      className="flex items-center gap-1 text-sm font-medium text-[#77808d]"
-                      type="button"
-                    >
-	                      Never
-                      <ChevronDown size={14} />
-                    </button>
-                  </div>
-                  {action === "buy" ? (
-                    <>
-                      <TradeInfoRow label="Total" value={formatUsd(estimatedCost)} tone="blue" />
-                      <TradeInfoRow label="Into market" value={formatUsd(estimatedStake)} />
-                      <TradeInfoRow label="Platform fee" value={formatUsd(estimatedFee)} />
-                      <TradeInfoRow
-                        label="To win"
-                        value={formatUsd(Math.max(0, estimatedShares - estimatedCost))}
-                        tone="green"
-                        withInfo
-                      />
-                    </>
-                  ) : (
-                    <TradeInfoRow
-                      label="You'll receive"
-                      value={formatUsd(estimatedProceeds)}
-                      tone="green"
-                      withInfo
-                    />
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="mt-2 flex min-h-[132px] items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <span className="block text-[22px] font-medium text-[#0e0f11]">
-	                      {action === "buy" ? "Amount" : "Shares"}
-                    </span>
-                    {action === "buy" ? (
-                      <span className="mt-1 block text-sm font-semibold text-[#77808d]">
-                        {formatUsd(portfolio.wallet.balance)} available
-                      </span>
-                    ) : null}
-                  </div>
+              <label className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-[var(--pm-border)] bg-[var(--pm-surface-2)] px-3 py-2.5">
+                <span className="text-sm font-semibold text-[var(--pm-text-primary)]">
+                  Limit price
+                </span>
+                <span className="flex items-center gap-1 text-lg font-semibold text-[var(--pm-text-primary)]">
                   <input
-                    className="min-w-0 flex-1 bg-transparent text-right text-[72px] font-semibold leading-none text-[#697d91] outline-none"
+                    aria-label="Limit price in cents"
+                    className="w-14 bg-transparent text-right outline-none"
                     inputMode="decimal"
-                    onChange={(event) => setAmount(event.target.value.replace(/^\$/, ""))}
-                    placeholder={usesShareInput ? "0" : "$0"}
+                    max="99"
+                    min="1"
+                    onChange={(event) => {
+                      setLimitPrice(event.target.value.replace(/[^0-9.]/g, ""));
+                      setTradeMessage(null);
+                    }}
+                    placeholder="50"
                     type="text"
-                    value={amount === "0" ? "" : usesShareInput ? amount : `$${amount}`}
+                    value={limitPrice}
                   />
-                </div>
-                <div className="flex justify-end gap-2">
-                  {action === "sell" ? (
-                    [0.25, 0.5, 0.75].map((value) => (
-                      <button
-                        className="h-10 rounded-[12px] border border-transparent bg-[#f4f5f6] px-4 text-base font-semibold text-[#77808d] transition hover:bg-[#eef1f4] hover:text-[#0e0f11]"
-                        key={value}
-                        onClick={() => setSellSharePercent(value)}
-                        type="button"
-                      >
-                        {Math.round(value * 100)}%
-                      </button>
-                    ))
-                  ) : (
-                    [1, 5, 10, 100].map((value) => (
-                      <button
-                        className="h-10 rounded-[12px] border border-transparent bg-[#f4f5f6] px-4 text-base font-semibold text-[#77808d] transition hover:bg-[#eef1f4] hover:text-[#0e0f11]"
-                        key={value}
-                        onClick={() => addQuickAmount(value)}
-                        type="button"
-                      >
-                        +${value}
-                      </button>
-                    ))
-                  )}
+                  ¢
+                </span>
+              </label>
+            ) : null}
+
+            <div className="mt-5 flex min-h-[76px] items-center justify-between gap-3">
+              <label className="min-w-0 flex-1" htmlFor="market-trade-amount">
+                <span className="block text-[17px] font-medium text-[var(--pm-text-primary)]">
+                  {action === "buy" ? "Amount" : "Shares"}
+                </span>
+              </label>
+              <input
+                aria-label={action === "buy" ? "Trade amount" : "Shares to sell"}
+                className="min-w-0 w-[54%] bg-transparent text-right text-[46px] font-semibold leading-none tracking-[-0.04em] text-[var(--pm-text-tertiary)] outline-none placeholder:text-[var(--pm-text-tertiary)]"
+                id="market-trade-amount"
+                inputMode="decimal"
+                onChange={(event) => updateTradeAmount(event.target.value)}
+                placeholder={action === "buy" ? "0 Coins" : "0"}
+                type="text"
+                value={amount === "0" ? "" : amount}
+              />
+            </div>
+
+            <div className="mt-0.5 flex justify-end gap-1.5">
+              {action === "buy" ? (
+                (["1", "5", "10", "100"] as const).map((value) => (
                   <button
-                    className="h-10 rounded-[12px] border border-transparent bg-[#f4f5f6] px-4 text-base font-semibold text-[#77808d] transition hover:bg-[#eef1f4] hover:text-[#0e0f11]"
-                    onClick={setMaxAmount}
+                    className="h-[30px] rounded-[9px] bg-[var(--pm-surface-3)] px-2.5 text-xs font-semibold text-[var(--pm-text-secondary)] transition hover:text-[var(--pm-text-primary)]"
+                    key={value}
+                    onClick={() => addQuickTradeAmount(value)}
                     type="button"
                   >
-                    Max
+                    +{value} Coins
                   </button>
+                ))
+              ) : (
+                ([
+                  ["25", 1n, 4n],
+                  ["50", 1n, 2n],
+                  ["75", 3n, 4n],
+                ] as const).map(([label, numerator, denominator]) => (
+                  <button
+                    className="h-[30px] rounded-[9px] bg-[var(--pm-surface-3)] px-2.5 text-xs font-semibold text-[var(--pm-text-secondary)] transition hover:text-[var(--pm-text-primary)]"
+                    key={label}
+                    onClick={() => setSellSharePercent(numerator, denominator)}
+                    type="button"
+                  >
+                    {label}%
+                  </button>
+                ))
+              )}
+              {action === "sell" ? (
+                <button
+                  className="h-[30px] rounded-[9px] bg-[var(--pm-surface-3)] px-2.5 text-xs font-semibold text-[var(--pm-text-secondary)] transition hover:text-[var(--pm-text-primary)]"
+                  onClick={setMaximumTradeAmount}
+                  type="button"
+                >
+                  Max
+                </button>
+              ) : null}
+            </div>
+
+            <div className="mt-4 min-h-[74px] rounded-xl bg-[var(--pm-surface-2)] px-3 py-2.5">
+              {!isAuthenticated ? (
+                <p className="text-sm font-medium leading-5 text-[var(--pm-text-secondary)]">
+                  Log in to see your cash, quote, and potential return.
+                </p>
+              ) : BigInt(coinBalance?.availableCoinMicros ?? "0") <= 0n && action === "buy" ? (
+                <p className="text-sm font-medium leading-5 text-[var(--pm-text-secondary)]">
+                  Your Available Coins balance is empty. Deposit availability depends on the
+                  supported money rail.
+                </p>
+              ) : quoteStatus === "loading" ? (
+                <p className="text-sm font-medium text-[var(--pm-text-secondary)]">
+                  Updating quote…
+                </p>
+              ) : quote ? (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                  <QuoteRow label="Avg. price" value={formatCents(quote.price)} />
+                  <QuoteRow label="Shares" value={formatShares(quote.shares)} />
+                  <QuoteRow
+                    label={action === "buy" ? "Potential return" : "You receive"}
+                    value={formatCoinMicros(
+                      action === "buy"
+                        ? quote.estimatedPayoutCoinMicros
+                        : quote.estimatedProceedsCoinMicros,
+                    )}
+                  />
+                  <QuoteRow label="Fee" value={formatCoinMicros(quote.feeCoinMicros)} />
                 </div>
-              </>
-            )}
+              ) : quoteStatus === "error" ? (
+                <p className="text-sm font-medium leading-5 text-[var(--pm-red)]">
+                  {quoteError ?? "Could not update quote."}
+                </p>
+              ) : (
+                <div className="flex items-center justify-between gap-3 text-sm font-medium text-[var(--pm-text-secondary)]">
+                  <span>Available Coins</span>
+                  <strong className="text-[var(--pm-text-primary)]">
+                    {formatCoinMicros(coinBalance?.availableCoinMicros ?? "0")}
+                  </strong>
+                </div>
+              )}
+            </div>
 
             <button
-              className="mt-1 flex h-16 w-full items-center justify-center gap-2 rounded-[14px] bg-[#0093fd] px-5 text-[18px] font-semibold text-white shadow-[0_7px_0_#0879c8] transition hover:bg-[#1a9cff] active:translate-y-[2px] active:shadow-[0_4px_0_#0879c8] disabled:cursor-wait disabled:opacity-90"
-              disabled={isPlacingTrade}
-              onClick={() => {
-                if (canTrade) {
-                  void placeTrade();
-                } else {
-                  goToVerification();
-                }
-              }}
+              className="mt-4 h-12 rounded-[12px] bg-[var(--pm-brand)] text-base font-semibold text-white shadow-[0_5px_0_#0879c8] transition hover:bg-[var(--pm-brand-hover)] active:translate-y-[2px] active:shadow-[0_3px_0_#0879c8] disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={
+                isAuthenticated &&
+                (action === "buy" && !hasAvailableCoins
+                  ? !depositEnabled
+                  : isPlacingTrade ||
+                    !hasValidAmount ||
+                    !selectedPrice ||
+                    !hasValidLimitPrice ||
+                    quoteStatus === "loading")
+              }
+              onClick={() => void placeTrade()}
               type="button"
             >
-              {tradeButtonLabel}
+              {!isAuthenticated
+                ? "Log in to trade"
+                : action === "buy" &&
+                    BigInt(coinBalance?.availableCoinMicros ?? "0") <= 0n
+                  ? depositEnabled
+                    ? "Deposit"
+                    : "Deposit unavailable"
+                  : isPlacingTrade
+                ? "Placing..."
+                : action === "buy"
+                  ? `${orderType === "limit" ? "Place limit · " : "Buy "}${sideLabel}`
+                  : `${orderType === "limit" ? "Place limit · " : "Sell "}${sideLabel}`}
             </button>
 
             {tradeMessage ? (
               <div
-                className={`flex items-start gap-2 rounded-lg px-4 py-3 text-sm font-semibold ${
+                className={`rounded-lg px-3 py-2 text-sm font-semibold ${
                   tradeMessage.tone === "success"
-                    ? "bg-[#3db468]/10 text-[#a6d2b6]"
+                    ? "bg-[var(--pm-green-muted)] text-[var(--pm-green)]"
                     : tradeMessage.tone === "error"
-                      ? "bg-[#cb3131]/10 text-[#daa]"
-                      : "bg-[#f4f5f6] text-[#0e0f11]"
+                      ? "bg-[var(--pm-red-muted)] text-[var(--pm-red)]"
+                      : "bg-[var(--pm-surface-2)] text-[var(--pm-text-secondary)]"
                 }`}
               >
-                {tradeMessage.tone === "success" ? (
-                  <CheckCircle2 className="mt-0.5 shrink-0" size={17} />
-                ) : tradeMessage.tone === "error" ? (
-                  <AlertCircle className="mt-0.5 shrink-0" size={17} />
-                ) : null}
-                <span className="min-w-0 break-words">{tradeMessage.text}</span>
+                {tradeMessage.text}
               </div>
             ) : null}
           </div>
         </div>
 
-        <p className="mt-5 px-3 text-center text-sm font-medium leading-5 text-[#77808d]">
-	          By trading, you agree to the{" "}
-	          <a className="underline hover:text-[#0e0f11]" href="#terms">
-	            Terms of Use
-	          </a>
+        <p className="mt-5 px-3 text-center text-sm font-medium leading-5 text-[var(--pm-text-secondary)]">
+          By trading, you agree to the{" "}
+          <a className="underline hover:text-[var(--pm-text-primary)]" href="#terms">
+            Terms of Use
+          </a>
           .
         </p>
       </>
@@ -944,14 +927,6 @@ export function MarketDetail({
                 <div className="hidden shrink-0 items-center gap-1 sm:flex">
                   <button
                     className={iconButton}
-                    aria-label="Embed market"
-                    onClick={() => void copyEmbedCode()}
-                    type="button"
-                  >
-                    <Code2 size={18} />
-                  </button>
-                  <button
-                    className={iconButton}
                     aria-label="Copy market link"
                     onClick={() => void copyMarketLink()}
                     type="button"
@@ -972,6 +947,18 @@ export function MarketDetail({
               </div>
             </div>
 
+            {isTradingClosed ? (
+              <div
+                className="mb-4 mt-5 flex items-start gap-3 rounded-xl border border-[var(--pm-border)] bg-[var(--pm-surface-2)] px-4 py-3 text-sm font-medium text-[var(--pm-text-secondary)]"
+                role="status"
+              >
+                <AlertCircle className="mt-0.5 shrink-0" size={18} />
+                <span>
+                  This market is closed and no longer accepts trades. Resolved outcomes are shown below.
+                </span>
+              </div>
+            ) : null}
+
             <MarketChart
               endsAt={marketEndDate}
               outcomes={displayOutcomes}
@@ -979,84 +966,132 @@ export function MarketDetail({
               selectedOutcomeName={selectedVariantLabel}
             />
 
-            <div className="market-detail-outcome-list clear-both">
-              {visibleGroupMarkets.map((groupMarket) => {
+            <div
+              className="clear-both mt-3 border-t border-[var(--pm-border)]"
+              data-orientation="vertical"
+            >
+              {liveGroupMarkets.map((groupMarket) => {
                 const isSelected = groupMarket.id === tradeMarket.id;
                 const change = getGroupMarketPriceChange(market, groupMarket);
+                const yesPrice = groupMarket.yes_price;
+                const noPrice = groupMarket.no_price;
+                const showGroupMarketImage = hasDistinctGroupMarketImage(market, groupMarket);
 
                 return (
                   <div
-                    className="market-detail-outcome-row group relative grid min-w-0 gap-3 py-3 transition md:min-h-[72px] md:grid-cols-[minmax(0,1fr)_132px_280px] md:items-center"
+                    className="[&+&]:border-t [&+&]:border-[var(--pm-border)]"
+                    data-testid="market-detail-group-row"
+                    data-orientation="vertical"
+                    data-state="closed"
                     key={groupMarket.id}
                   >
-                    <button
-                      className="flex min-w-0 items-center gap-3 text-left"
-                      onClick={() => setSelectedMarketId(groupMarket.id)}
-                      type="button"
+                    <div
+                      className="flex w-full flex-1 cursor-pointer items-center justify-between bg-[var(--pm-background)] text-base font-medium leading-none text-[var(--pm-text-primary)] transition-all duration-200"
+                      data-orientation="vertical"
+                      data-state="closed"
                     >
-                      {usesGroupMarketImages ? (
-                        <MarketImage market={groupMarket} className="size-12 rounded-full" />
-                      ) : null}
-                      <span className="min-w-0">
-                        <span className="block max-w-full truncate text-[16px] font-semibold leading-5 text-[var(--pm-text-primary)]">
-                          {formatMarketText(groupMarket.label)}
-                        </span>
-                        <span className="mt-1.5 flex items-center gap-2 text-[14px] font-medium leading-none text-[#77808d]">
-	                          {formatMoney(groupMarket.volume)} Volume
-                        </span>
-                      </span>
-                    </button>
-
-                    <div className="flex items-baseline gap-2 md:justify-center">
-                      <strong className="text-[28px] font-semibold leading-none text-[#0e0f11]">
-                        {formatPercent(groupMarket.yes_price)}
-                      </strong>
-                      {change !== null && change !== 0 ? (
-                        <span
-                          className={`text-xs font-semibold ${
-                            change > 0 ? "text-[#30a159]" : "text-[#e23939]"
+                      <div
+                        className="group relative flex w-full flex-col gap-3 overflow-visible py-2.5 transition"
+                        data-orientation="vertical"
+                        data-state="closed"
+                      >
+                        <div
+                          className={`pointer-events-none absolute -bottom-px -left-3 -right-3 -top-px rounded-[12px] border transition-colors ${
+                            isSelected
+                              ? "border-[var(--pm-border-strong)] bg-[var(--pm-surface-2)]"
+                              : "border-transparent group-hover:bg-[var(--pm-surface-2)]"
                           }`}
-                        >
-                          {change > 0 ? "▲" : "▼"} {formatPercent(Math.abs(change))}
-                        </span>
-                      ) : null}
-                    </div>
+                        />
+                        <div className="z-[1] flex min-h-12 w-full flex-col gap-3 md:flex-row md:justify-between">
+                          <button
+                            aria-label={`Select ${formatMarketText(groupMarket.label)}`}
+                            aria-pressed={isSelected}
+                            className="z-[1] flex w-full min-w-0 flex-[4] items-center justify-between gap-4 rounded-[10px] text-left outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--pm-brand)]/70 md:w-auto"
+                            onClick={() => selectGroupedOutcome(groupMarket.id)}
+                            type="button"
+                          >
+                            <span
+                              className={`flex min-w-0 flex-[3] items-center ${
+                                showGroupMarketImage ? "gap-4" : "gap-0"
+                              }`}
+                            >
+                              {showGroupMarketImage ? (
+                                <MarketImage
+                                  market={groupMarket}
+                                  className="!h-11 !w-11 !min-w-[44px] !rounded-[9px]"
+                                />
+                              ) : null}
+                              <span className="flex min-w-0 flex-col gap-y-1">
+                                <span className="block max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap">
+                                  <span className="block max-w-[400px] overflow-hidden text-ellipsis whitespace-nowrap text-[17px] font-semibold leading-5 text-[var(--pm-text-primary)] min-[1024px]:max-[1050px]:max-w-[170px] min-[1050px]:max-[1080px]:max-w-[200px] min-[1080px]:max-[1140px]:max-w-[230px] min-[1140px]:max-[1220px]:max-w-[320px]">
+                                    {formatMarketText(groupMarket.label)}
+                                  </span>
+                                </span>
+                                <span className="flex min-h-5 items-center gap-1.5 text-[14px] leading-none text-[var(--pm-text-secondary)]">
+                                  {formatMoney(groupMarket.volume)} Volume
+                                </span>
+                              </span>
+                            </span>
+                            <span className="relative z-10 flex min-w-[104px] flex-1 items-center justify-end pr-1 md:justify-center md:pr-0">
+                              <span className="relative flex items-center">
+                                <span className="text-[30px] font-semibold leading-none tracking-[-0.03em] text-[var(--pm-text-primary)]">
+                                {formatPercent(groupMarket.yes_price)}
+                                </span>
+                              {change !== null && change !== 0 ? (
+                                <span
+                                  className={`absolute left-[calc(100%+0.325rem)] top-1/2 hidden -translate-y-1/2 items-center min-[1120px]:flex ${
+                                    change > 0 ? "text-[#30a159]" : "text-[#e23939]"
+                                  }`}
+                                >
+                                  <span
+                                    className={`mr-1 h-0 w-0 border-x-[5px] border-x-transparent ${
+                                      change > 0
+                                        ? "border-b-[8px] border-b-current"
+                                        : "border-t-[8px] border-t-current"
+                                    }`}
+                                    aria-hidden="true"
+                                  />
+                                  <span className="text-xs font-semibold leading-none">
+                                    {formatPercent(Math.abs(change))}
+                                  </span>
+                                </span>
+                              ) : null}
+                              </span>
+                            </span>
+                          </button>
 
-                    <div className="grid min-w-0 grid-cols-2 gap-2 md:flex md:justify-end">
-                      <button
-                        className={`h-12 min-w-0 rounded-[7.2px] px-4 text-sm font-semibold transition md:w-[136px] ${
-                          isSelected && side === "yes"
-                            ? "bg-[#30a159] text-white shadow-[0_4px_0_rgba(24,126,63,0.95)]"
-                            : "bg-[#30a159]/12 text-[#30a159] hover:bg-[#30a159] hover:text-white"
-                        } disabled:cursor-not-allowed disabled:opacity-40`}
-                        disabled={groupMarket.yes_price === null}
-                        onClick={() => {
-                          setSelectedMarketId(groupMarket.id);
-                          setSide("yes");
-                        }}
-                      >
-                        <span className="block truncate">
-	                          {getTradeActionLabel(action)} Yes{" "}
-                          {formatCents(getActionDisplayPrice(groupMarket.yes_price, action))}
-                        </span>
-                      </button>
-                      <button
-                        className={`h-12 min-w-0 rounded-[7.2px] px-4 text-sm font-semibold transition md:w-[136px] ${
-                          isSelected && side === "no"
-                            ? "bg-[#e23939] text-white shadow-[0_4px_0_rgba(168,30,30,0.95)]"
-                            : "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939] hover:text-white"
-                        } disabled:cursor-not-allowed disabled:opacity-40`}
-                        disabled={groupMarket.no_price === null}
-                        onClick={() => {
-                          setSelectedMarketId(groupMarket.id);
-                          setSide("no");
-                        }}
-                      >
-                        <span className="block truncate">
-	                          {getTradeActionLabel(action)} No{" "}
-                          {formatCents(getActionDisplayPrice(groupMarket.no_price, action))}
-                        </span>
-                      </button>
+                          <div className="z-[1] grid min-w-0 grid-cols-2 gap-2 md:flex md:flex-[3] md:items-center md:justify-end">
+                            <PressableOutcomeButton
+                              aria-label={`Select Yes for ${formatMarketText(groupMarket.label)} at ${formatCents(yesPrice)}`}
+                              pressed={isSelected && side === "yes"}
+                              tone="yes"
+                              variant="list"
+                              onClick={() => selectGroupedOutcome(groupMarket.id, "yes")}
+                            >
+                              <span className="flex min-w-0 items-center gap-1">
+                                <span className="min-w-0 truncate opacity-90">
+                                  Yes
+                                </span>
+                                <span className="shrink-0 text-base">{formatCents(yesPrice)}</span>
+                              </span>
+                            </PressableOutcomeButton>
+                            <PressableOutcomeButton
+                              aria-label={`Select No for ${formatMarketText(groupMarket.label)} at ${formatCents(noPrice)}`}
+                              pressed={isSelected && side === "no"}
+                              tone="no"
+                              variant="list"
+                              onClick={() => selectGroupedOutcome(groupMarket.id, "no")}
+                            >
+                              <span className="flex min-w-0 items-center gap-1">
+                                <span className="min-w-0 truncate opacity-90">
+                                  No
+                                </span>
+                                <span className="shrink-0 text-base">{formatCents(noPrice)}</span>
+                              </span>
+                            </PressableOutcomeButton>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1064,16 +1099,72 @@ export function MarketDetail({
             </div>
 
             {resolvedGroupMarkets.length > 0 ? (
-              <button
-                className="mb-5 mt-2 flex h-8 items-center gap-2 p-0 text-sm font-semibold text-[#77808d] transition hover:text-[#0e0f11]"
-                onClick={() => setShowResolvedGroups((current) => !current)}
-              >
-                {showResolvedGroups ? "Hide resolved" : "View resolved"}
-                <ChevronDown
-                  className={`transition-transform ${showResolvedGroups ? "rotate-180" : ""}`}
-                  size={17}
-                />
-              </button>
+              <>
+                <button
+                  aria-controls="resolved-group-markets"
+                  aria-expanded={showResolvedGroups}
+                  className="mb-2 mt-3 flex h-9 items-center gap-2 rounded-lg px-1 text-sm font-semibold text-[var(--pm-text-secondary)] outline-none transition hover:text-[var(--pm-text-primary)] focus-visible:ring-2 focus-visible:ring-[var(--pm-brand)]/60"
+                  onClick={() => setShowResolvedGroups((current) => !current)}
+                  type="button"
+                >
+                  {showResolvedGroups ? "Hide resolved" : "View resolved"}
+                  <ChevronDown
+                    className={`transition-transform ${showResolvedGroups ? "rotate-180" : ""}`}
+                    size={17}
+                  />
+                </button>
+
+                {showResolvedGroups ? (
+                  <div
+                    className="mb-5 border-t border-[var(--pm-border)]"
+                    id="resolved-group-markets"
+                  >
+                    {resolvedGroupMarkets.map((groupMarket) => {
+                      const resolvedOutcome = getResolvedGroupMarketOutcome(groupMarket);
+                      const isYes = resolvedOutcome?.toLowerCase() === "yes";
+
+                      return (
+                        <div
+                          className="flex min-h-[74px] items-center justify-between gap-4 border-b border-[var(--pm-border)] py-3"
+                          data-testid="market-detail-resolved-group-row"
+                          key={groupMarket.id}
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-[17px] font-semibold leading-5 text-[var(--pm-text-primary)]">
+                              {formatMarketText(groupMarket.label)}
+                            </div>
+                            <div className="mt-1 text-[14px] text-[var(--pm-text-secondary)]">
+                              {formatMoney(groupMarket.volume)} Volume
+                            </div>
+                          </div>
+
+                          {resolvedOutcome ? (
+                            <div
+                              className={`flex shrink-0 items-center gap-2 text-[17px] font-medium ${
+                                isYes ? "text-[#30a159]" : "text-[var(--pm-text-primary)]"
+                              }`}
+                            >
+                              {formatMarketText(resolvedOutcome)}
+                              <span
+                                aria-hidden="true"
+                                className={`grid h-5 w-5 place-items-center rounded-full text-sm font-bold leading-none text-white ${
+                                  isYes ? "bg-[#30a159]" : "bg-[#e23939]"
+                                }`}
+                              >
+                                {isYes ? "✓" : "×"}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="shrink-0 text-[15px] font-medium text-[var(--pm-text-secondary)]">
+                              Closed
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </>
             ) : null}
 
             <MarketInfoTabs
@@ -1085,6 +1176,7 @@ export function MarketDetail({
             <MarketActivityTabs
               activeTab={activityTab}
               activityMarketLabels={activityMarketLabels}
+              canComment={canComment}
               commentText={commentText}
               currentPosition={currentPosition}
               data={marketActivity}
@@ -1100,7 +1192,16 @@ export function MarketDetail({
           </article>
 
           <aside className="h-fit min-w-0 overflow-visible xl:sticky xl:top-[132px] xl:w-[340px] xl:self-start">
-            {renderTradeTicket()}
+            {isTradingClosed ? (
+              <div className="rounded-[16px] border border-[var(--pm-border)] bg-[var(--pm-surface-1)] p-5">
+                <div className="text-lg font-semibold text-[var(--pm-text-primary)]">Market closed</div>
+                <p className="mt-2 text-sm leading-6 text-[var(--pm-text-secondary)]">
+                  Trading is unavailable because this event has already ended.
+                </p>
+              </div>
+            ) : (
+              renderTradeTicket()
+            )}
           </aside>
         </div>
       </section>
@@ -1146,14 +1247,6 @@ export function MarketDetail({
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
-                <button
-                  className={iconButton}
-                  aria-label="Embed market"
-                  onClick={() => void copyEmbedCode()}
-                  type="button"
-                >
-                  <Code2 size={20} />
-                </button>
                 <button
                   className={iconButton}
                   aria-label="Copy market link"
@@ -1210,13 +1303,15 @@ export function MarketDetail({
 
           <div className="market-detail-outcome-list mt-4 grid gap-0">
             {isGroupedEvent ? groupMarkets.map((groupMarket) => {
+              const showGroupMarketImage = hasDistinctGroupMarketImage(market, groupMarket);
+
               return (
                 <div
                   className="market-detail-outcome-row grid min-w-0 gap-3 py-4 transition md:grid-cols-[minmax(0,1fr)_110px_220px] md:items-center"
                   key={groupMarket.id}
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    {usesGroupMarketImages ? (
+                    {showGroupMarketImage ? (
                       <MarketImage market={groupMarket} className="h-12 w-12 rounded-full" />
                     ) : null}
                     <div className="min-w-0">
@@ -1237,48 +1332,23 @@ export function MarketDetail({
                     </span>
                   </div>
                   <div className="grid min-w-0 grid-cols-2 gap-2">
-                    <button
-                      className="min-w-0 rounded-[7.2px] bg-[#30a159]/12 px-3 py-3 text-sm font-semibold text-[#30a159] transition hover:bg-[#30a159] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={groupMarket.yes_price === null}
-                      onClick={() => {
-                        setSelectedMarketId(groupMarket.id);
-                        setSide("yes");
-                      }}
-                    >
+                    <span className="min-w-0 rounded-[7.2px] bg-[#30a159]/12 px-3 py-3 text-sm font-semibold text-[#30a159]">
                       <span className="block truncate">
-	                        {getTradeActionLabel(action)} Yes{" "}
-                        {formatCents(getActionDisplayPrice(groupMarket.yes_price, action))}
+                        Yes{" "}
+                        {formatCents(groupMarket.yes_price)}
                       </span>
-                    </button>
-                    <button
-                      className="min-w-0 rounded-[7.2px] bg-[#e23939]/10 px-3 py-3 text-sm font-semibold text-[#e23939] transition hover:bg-[#e23939] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                      disabled={groupMarket.no_price === null}
-                      onClick={() => {
-                        setSelectedMarketId(groupMarket.id);
-                        setSide("no");
-                      }}
-                    >
+                    </span>
+                    <span className="min-w-0 rounded-[7.2px] bg-[#e23939]/10 px-3 py-3 text-sm font-semibold text-[#e23939]">
                       <span className="block truncate">
-	                        {getTradeActionLabel(action)} No{" "}
-                        {formatCents(getActionDisplayPrice(groupMarket.no_price, action))}
+                        No{" "}
+                        {formatCents(groupMarket.no_price)}
                       </span>
-                    </button>
+                    </span>
                   </div>
                 </div>
               );
             }) : displayOutcomes.map((outcome, index) => {
               const price = outcome.price ?? outcome.probability ?? null;
-              const isBinaryMarket = tradeMarket.outcomes.length === 2;
-              const normalizedOutcomeName = outcome.name.trim().toLowerCase();
-              const tradeSide =
-                normalizedOutcomeName === "no" || (!isBinaryMarket && index === 1)
-                  ? "no"
-                  : "yes";
-              const isTradableOutcome = isBinaryMarket && index < 2;
-              const actionLabel = isTradableOutcome
-                ? `${getTradeActionLabel(action)} ${getOutcomeActionLabel(outcome.name, true)}`
-                : `View ${getOutcomeActionLabel(outcome.name, false)}`;
-              const displayPrice = getActionDisplayPrice(price, action);
 
               return (
                 <div
@@ -1304,21 +1374,11 @@ export function MarketDetail({
                       Current market price
                     </span>
                   </div>
-                  <button
-                    className={`min-w-0 rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                      tradeSide === "no"
-                        ? "bg-[#e23939]/10 text-[#e23939] hover:bg-[#e23939] hover:text-white"
-                        : "bg-[#30a159]/12 text-[#30a159] hover:bg-[#30a159] hover:text-white"
-                    }`}
-                    disabled={!isTradableOutcome || price === null}
-                    onClick={() => {
-                      setSide(tradeSide);
-                    }}
-                  >
+                  <span className="min-w-0 rounded-2xl bg-[#30a159]/12 px-4 py-3 text-sm font-semibold text-[#30a159]">
                     <span className="block truncate">
-                      {actionLabel} {formatCents(displayPrice)}
+                      {formatCents(price)}
                     </span>
-                  </button>
+                  </span>
                 </div>
               );
             })}
@@ -1334,6 +1394,7 @@ export function MarketDetail({
           <MarketActivityTabs
             activeTab={activityTab}
             activityMarketLabels={activityMarketLabels}
+            canComment={canComment}
             commentText={commentText}
             currentPosition={currentPosition}
             data={marketActivity}
@@ -1350,286 +1411,16 @@ export function MarketDetail({
         </article>
 
         <aside className="h-fit min-w-0 overflow-visible xl:sticky xl:top-[132px] xl:w-[340px] xl:self-start">
-          {renderTradeTicket()}
-        </aside>
-
-        <aside className="hidden">
-          <div className="flex items-center gap-3">
-            <MarketImage market={tradeMarket} className="h-14 w-14" />
-            <div className="min-w-0">
-              <strong className="block truncate text-lg font-semibold text-[#dee3e7]">
-                {selectedOutcomeLabel}
-              </strong>
-              <span className="text-sm font-semibold text-[#7b8996]">
-                Balance {formatUsdt(portfolio.wallet.balance)}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-6 flex items-center justify-between border-b border-[#242b32] pb-3">
-            <div className="flex gap-4 text-lg font-semibold">
-              <button
-                className={action === "buy" ? "text-[#dee3e7]" : "text-[#7b8996]"}
-                onClick={() => changeAction("buy")}
-              >
-                Buy
-              </button>
-              <button
-                className={action === "sell" ? "text-[#dee3e7]" : "text-[#7b8996]"}
-                onClick={() => changeAction("sell")}
-              >
-                Sell
-              </button>
-            </div>
-            <button
-              className="flex items-center gap-1 text-sm font-semibold text-[#dee3e7] transition hover:text-white"
-              onClick={toggleOrderType}
-              type="button"
-            >
-              {orderType === "market" ? "Market" : "Limit"}
-              <ChevronDown
-                className={`transition-transform ${orderType === "limit" ? "rotate-180" : ""}`}
-                size={15}
-              />
-            </button>
-          </div>
-
-          <div className="mt-5 grid min-w-0 grid-cols-2 gap-3">
-            <button
-              className={`min-w-0 rounded-2xl px-3 py-4 text-base font-semibold transition sm:px-4 sm:text-lg ${
-                side === "yes"
-                  ? "bg-[#3db468]/80 text-white"
-                  : "bg-[#2e3841] text-[#7b8996] hover:text-[#dee3e7]"
-              }`}
-              onClick={() => setSide("yes")}
-            >
-              <span className="block truncate">
-                {isGroupedEvent ? "Yes" : primaryOutcome?.name ?? "Yes"} {formatCents(yesDisplayPrice)}
-              </span>
-            </button>
-            <button
-              className={`min-w-0 rounded-2xl px-3 py-4 text-base font-semibold transition sm:px-4 sm:text-lg ${
-                side === "no"
-                  ? "bg-[#cb3131]/80 text-white"
-                  : "bg-[#2e3841] text-[#7b8996] hover:text-[#dee3e7]"
-              }`}
-              onClick={() => setSide("no")}
-            >
-              <span className="block truncate">
-                {isGroupedEvent ? "No" : secondaryOutcome?.name ?? "No"} {formatCents(noDisplayPrice)}
-              </span>
-            </button>
-          </div>
-
-          {orderType === "limit" ? (
-            <label className="mt-7 block">
-              <span className="text-base font-semibold text-[#dee3e7]">Limit price</span>
-              <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-[#242b32] bg-[#15191d] px-3 py-2">
-                <button
-                  className="grid h-10 w-10 place-items-center rounded-xl bg-[#2e3841] text-lg font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
-                  onClick={() => adjustLimitPrice(-1)}
-                  type="button"
-                >
-                  -
-                </button>
-                <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-                  <input
-                    className="min-w-0 flex-1 bg-transparent text-right text-xl font-semibold text-[#dee3e7] outline-none"
-                    inputMode="decimal"
-                    onChange={(event) => setLimitPriceCents(event.target.value)}
-                    type="text"
-                    value={limitPriceCents}
-                  />
-                  <span className="text-xl font-semibold text-[#7b8996]">¢</span>
-                </div>
-                <button
-                  className="grid h-10 w-10 place-items-center rounded-xl bg-[#2e3841] text-lg font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
-                  onClick={() => adjustLimitPrice(1)}
-                  type="button"
-                >
-                  +
-                </button>
-              </div>
-            </label>
-          ) : null}
-
-          <label className={orderType === "limit" ? "mt-6 block" : "mt-7 block"}>
-            <span className="text-base font-semibold text-[#dee3e7]">
-              {usesShareInput ? "Shares" : "Amount"}
-            </span>
-            <div className="mt-2 flex items-center gap-2 border-b border-[#242b32] pb-2">
-              {!usesShareInput ? (
-                <span className="text-4xl font-semibold text-[#7b8996] sm:text-5xl">$</span>
-              ) : null}
-              <input
-                className="min-w-0 flex-1 bg-transparent text-right text-4xl font-semibold text-[#dee3e7] outline-none sm:text-5xl"
-                inputMode="decimal"
-                type="text"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-              />
-            </div>
-          </label>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {action === "sell" ? (
-              [0.25, 0.5, 0.75].map((value) => (
-                <button
-                  className="rounded-2xl bg-[#2e3841] px-3 py-2 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
-                  key={value}
-                  onClick={() => setSellSharePercent(value)}
-                  type="button"
-                >
-                  {Math.round(value * 100)}%
-                </button>
-              ))
-            ) : orderType === "limit" ? (
-              [-100, -10, 10, 100].map((value) => (
-                <button
-                  className="rounded-2xl bg-[#2e3841] px-3 py-2 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
-                  key={value}
-                  onClick={() => addShareStep(value)}
-                  type="button"
-                >
-                  {value > 0 ? `+${value}` : value}
-                </button>
-              ))
-            ) : (
-              [1, 5, 10, 100].map((value) => (
-                <button
-                  className="rounded-2xl bg-[#2e3841] px-3 py-2 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
-                  onClick={() => addQuickAmount(value)}
-                  key={value}
-                  type="button"
-                >
-                  +${value}
-                </button>
-              ))
-            )}
-            <button
-              className="rounded-2xl bg-[#2e3841] px-3 py-2 text-sm font-semibold text-[#7b8996] transition hover:text-[#dee3e7]"
-              onClick={setMaxAmount}
-              type="button"
-            >
-              Max
-            </button>
-          </div>
-
-          {orderType === "limit" ? (
-            <div className="mt-6 grid gap-3 border-t border-[#242b32] pt-5">
-              <SummaryRow label="Expires" value="Never" />
-              {action === "buy" ? (
-                <>
-                  <SummaryRow label="Total" value={formatUsd(estimatedCost)} />
-                  <SummaryRow label="To win" value={formatUsd(Math.max(0, estimatedShares - estimatedCost))} accent />
-                </>
-              ) : (
-                <>
-                  <SummaryRow label="You'll receive" value={formatUsd(estimatedProceeds)} accent />
-                  <SummaryRow label="Available shares" value={formatShares(selectedSideShares)} />
-                </>
-              )}
-            </div>
-          ) : action === "buy" ? (
-            <div className="mt-5 flex items-center justify-between rounded-2xl bg-[#15191d] px-4 py-3">
-              <span className="text-sm font-semibold text-[#7b8996]">Estimated shares</span>
-              <strong className="text-sm font-semibold text-[#dee3e7]">
-                {formatShares(estimatedShares)}
-              </strong>
+          {isTradingClosed ? (
+            <div className="rounded-[16px] border border-[var(--pm-border)] bg-[var(--pm-surface-1)] p-5">
+              <div className="text-lg font-semibold text-[var(--pm-text-primary)]">Market closed</div>
+              <p className="mt-2 text-sm leading-6 text-[var(--pm-text-secondary)]">
+                Trading is unavailable because this event has already ended.
+              </p>
             </div>
           ) : (
-            <div className="mt-5 grid gap-3 border-t border-[#242b32] pt-5">
-              <SummaryRow label="Estimated proceeds" value={formatUsd(estimatedProceeds)} accent />
-              <SummaryRow label="Available shares" value={formatShares(selectedSideShares)} />
-            </div>
+            renderTradeTicket()
           )}
-
-          <button
-            className="mt-4 w-full rounded-2xl bg-[#0093fd] px-5 py-4 text-base font-semibold text-white shadow-[0_4px_0_rgba(0,0,0,0.28)] transition hover:bg-[#26a3fd] disabled:opacity-50"
-            disabled={canTrade && !canPlaceTrade}
-            onClick={() => {
-              if (canTrade) {
-                void placeTrade();
-              } else {
-                goToVerification();
-              }
-            }}
-          >
-            {!canTrade
-              ? "Complete verification"
-              : isPlacingTrade
-                ? "Placing..."
-                : action === "buy"
-                  ? `Buy ${side === "yes" ? "Yes" : "No"}`
-                  : `Sell ${side === "yes" ? "Yes" : "No"}`}
-          </button>
-
-          {tradeMessage ? (
-            <div
-              className={`mt-4 flex items-start gap-2 rounded-2xl px-4 py-3 text-sm font-semibold ${
-                tradeMessage.tone === "success"
-                  ? "bg-[#3db468]/10 text-[#a6d2b6]"
-                  : tradeMessage.tone === "error"
-                    ? "bg-[#cb3131]/10 text-[#daa]"
-                    : "bg-[#15191d] text-[#dee3e7]"
-              }`}
-            >
-              {tradeMessage.tone === "success" ? (
-                <CheckCircle2 className="mt-0.5 shrink-0" size={17} />
-              ) : tradeMessage.tone === "error" ? (
-                <AlertCircle className="mt-0.5 shrink-0" size={17} />
-              ) : null}
-              <span className="min-w-0 break-words">{tradeMessage.text}</span>
-            </div>
-          ) : null}
-
-          <div className="mt-6 rounded-2xl border border-[#242b32] bg-[#15191d] p-4">
-            <div className="flex items-center justify-between gap-4">
-              <h3 className="text-base font-semibold text-[#dee3e7]">Your position</h3>
-              <button className="text-sm font-semibold text-[#0093fd]" onClick={resetPortfolio}>
-                Reset
-              </button>
-            </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <TicketStat label="Yes shares" value={formatShares(currentPosition?.yesShares ?? 0)} />
-              <TicketStat label="No shares" value={formatShares(currentPosition?.noShares ?? 0)} />
-              <TicketStat label="Open cost" value={formatUsdt(currentPosition?.totalCost ?? 0)} />
-            </div>
-          </div>
-
-          <div className="mt-6 border-t border-[#242b32] pt-5">
-            <h3 className="text-base font-semibold text-[#dee3e7]">Trade history</h3>
-            {marketTrades.length === 0 ? (
-              <p className="mt-3 text-sm font-semibold text-[#7b8996]">No trades yet.</p>
-            ) : (
-              <div className="mt-4 grid gap-3">
-                {marketTrades.slice(0, 6).map((trade) => (
-                  <div
-                    className="grid gap-2 rounded-2xl bg-[#15191d] p-3 text-sm"
-                    key={trade.id}
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <strong className="font-semibold text-[#dee3e7]">
-                        {trade.action === "sell" ? "Sell" : "Buy"}{" "}
-                        {trade.side === "yes" ? "Yes" : "No"}
-                      </strong>
-                      <span className="font-semibold text-[#7b8996]">
-                        {formatRelativeTime(trade.createdAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <strong className="font-semibold text-[#dee3e7]">
-                        {formatShares(trade.shares)} shares
-                      </strong>
-                      <span className="font-semibold text-[#7b8996]">
-                        {formatUsdt(trade.amount)} @ {formatPercent(trade.price)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </aside>
       </div>
     </section>
@@ -1771,6 +1562,7 @@ function MarketFaqSection({
 function MarketActivityTabs({
   activeTab,
   activityMarketLabels,
+  canComment,
   commentText,
   currentPosition,
   data,
@@ -1784,6 +1576,7 @@ function MarketActivityTabs({
 }: {
   activeTab: ActivityTab;
   activityMarketLabels: Record<string, string>;
+  canComment: boolean;
   commentText: string;
   currentPosition: LocalPosition | undefined;
   data: MarketActivityPayload;
@@ -1795,22 +1588,16 @@ function MarketActivityTabs({
   onPostComment: () => void | Promise<void>;
   onTabChange: (tab: ActivityTab) => void;
 }) {
-  const wrapperClass = framed ? `${panel} mt-6 p-5` : "mt-12";
+  const wrapperClass = framed ? `${panel} mt-6 p-5` : "mt-8";
   const activityTrades = data.activity.filter(
     (item): item is MarketTradeActivityItem => item.type === "trade",
   );
   const tabs: Array<{ id: ActivityTab; label: string }> = [
     {
       id: "comments",
-      label:
-        market.comment_count && market.comment_count > 0
-          ? `Comments (${market.comment_count})`
-          : data.comments.length > 0
-            ? `Comments (${data.comments.length})`
-            : "Comments",
+      label: data.comments.length > 0 ? `Comments (${data.comments.length})` : "Comments",
     },
     { id: "holders", label: "Top Holders" },
-    { id: "positions", label: "Positions" },
     { id: "activity", label: "Activity" },
   ];
 
@@ -1833,40 +1620,8 @@ function MarketActivityTabs({
         ))}
       </div>
 
-      {activeTab === "comments" ? (
-        <div className="mt-5 flex items-center gap-3 rounded-xl border border-[#dfe3e7] bg-white px-4 py-3 text-[#77808d]">
-          <input
-            aria-label="Add a comment"
-            className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-[#0e0f11] outline-none placeholder:text-[#77808d]"
-            disabled={isPostingComment}
-            onChange={(event) => onCommentTextChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !isPostingComment) {
-                void onPostComment();
-              }
-            }}
-            placeholder="Add a comment..."
-            type="text"
-            value={commentText}
-          />
-          <SmilePlus className="shrink-0" size={18} />
-          <button
-            className="rounded-[7.2px] bg-[#9bb7ff] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#7fa1ff] disabled:cursor-not-allowed disabled:opacity-45"
-            disabled={!commentText.trim() || isPostingComment}
-            onClick={() => void onPostComment()}
-            type="button"
-          >
-            {isPostingComment ? "Posting" : "Post"}
-          </button>
-        </div>
-      ) : null}
-
       {activeTab === "activity" ? (
-        <div className="mb-2 mt-8 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <ActivityFilterButton label="All" />
-            <ActivityFilterButton label="Min. Amount" />
-          </div>
+        <div className="mb-2 mt-8 flex justify-end">
           <div className="flex items-center gap-2.5 text-sm font-semibold text-[#e23939]">
             <span className="relative flex h-2.5 w-2.5 items-center justify-center">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#e23939] opacity-85 [animation-duration:1.2s]" />
@@ -1877,52 +1632,24 @@ function MarketActivityTabs({
         </div>
       ) : null}
 
-      <div className={activeTab === "activity" ? "mt-0" : "mt-5"}>
+      <div className={activeTab === "activity" || activeTab === "comments" ? "mt-0" : "mt-5"}>
         {isLoading ? (
           <MarketActivitySkeleton rows={activeTab === "comments" ? 3 : 4} />
         ) : null}
 
         {!isLoading && activeTab === "comments" ? (
-          <div className="grid gap-5">
-            {data.comments.length > 0 ? (
-              data.comments.map((comment) => (
-                <CommentRow comment={comment} key={comment.id} />
-              ))
-            ) : (
-              <EmptyActivityState text="No comments yet." />
-            )}
-          </div>
+          <CommentsBoard
+            canComment={canComment}
+            commentText={commentText}
+            comments={data.comments}
+            isPostingComment={isPostingComment}
+            onCommentTextChange={onCommentTextChange}
+            onPostComment={onPostComment}
+          />
         ) : null}
 
         {!isLoading && activeTab === "holders" ? (
-          data.topHolders.length > 0 ? (
-            <div className="grid gap-3">
-              {data.topHolders.map((holder, index) => (
-                <HolderRow holder={holder} index={index} key={holder.id} />
-              ))}
-            </div>
-          ) : (
-            <EmptyActivityState text="No holders yet." />
-          )
-        ) : null}
-
-        {!isLoading && activeTab === "positions" ? (
-          <div className="grid gap-3">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <TicketStat label="Your Yes shares" value={formatShares(currentPosition?.yesShares ?? 0)} />
-              <TicketStat label="Your No shares" value={formatShares(currentPosition?.noShares ?? 0)} />
-              <TicketStat label="Your open cost" value={formatUsdt(currentPosition?.totalCost ?? 0)} />
-            </div>
-            {data.positions.length > 0 ? (
-              <div className="grid gap-3">
-                {data.positions.map((position) => (
-                  <PositionRow position={position} key={position.id} />
-                ))}
-              </div>
-            ) : (
-              <EmptyActivityState text="No public positions yet." />
-            )}
-          </div>
+          <HoldersBoard holders={data.topHolders} market={market} />
         ) : null}
 
         {!isLoading && activeTab === "activity" ? (
@@ -1946,84 +1673,318 @@ function MarketActivityTabs({
   );
 }
 
-function CommentRow({ comment }: { comment: MarketComment }) {
+function CommentsBoard({
+  canComment,
+  commentText,
+  comments,
+  isPostingComment,
+  onCommentTextChange,
+  onPostComment,
+}: {
+  canComment: boolean;
+  commentText: string;
+  comments: MarketComment[];
+  isPostingComment: boolean;
+  onCommentTextChange: (value: string) => void;
+  onPostComment: () => void | Promise<void>;
+}) {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!canComment || !commentText.trim() || isPostingComment) {
+      return;
+    }
+
+    void onPostComment();
+  }
+
   return (
-    <div className="flex gap-4">
-      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#f4f5f6] text-sm font-black uppercase text-[#0e0f11]">
-        {comment.displayName.slice(0, 1)}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-3">
-          <strong className="text-sm font-semibold text-[#0e0f11]">{comment.displayName}</strong>
-          {comment.positionLabel ? (
-            <span className="rounded-full bg-[#f4f5f6] px-2 py-0.5 text-xs font-semibold text-[#77808d]">
-              {comment.positionLabel}
-            </span>
-          ) : null}
-          <span className="text-sm font-semibold text-[#77808d]">
-            {formatRelativeTime(comment.createdAt)}
-          </span>
+    <div className="pt-2 lg:pb-4 lg:pt-4">
+      <div className="w-full">
+        <div id="commentsInner" className="flex w-full flex-col">
+          <section data-nosnippet="true">
+            <div className="flex items-center pb-4">
+              <form className="relative flex w-full flex-col rounded-xl border border-[var(--pm-border)]" onSubmit={handleSubmit}>
+                <div className="relative flex items-end">
+                  <textarea
+                    aria-label="Add a comment"
+                    className="h-12 max-h-52 min-h-[48px] w-full resize-none rounded-xl border-none bg-transparent px-3.5 py-3.5 pr-24 text-[14px] leading-5 text-[var(--pm-text-primary)] shadow-none outline-none transition placeholder:text-[var(--pm-text-secondary)] focus:outline-none"
+                    disabled={!canComment || isPostingComment}
+                    onChange={(event) => onCommentTextChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                        event.preventDefault();
+                        if (canComment && commentText.trim() && !isPostingComment) {
+                          void onPostComment();
+                        }
+                      }
+                    }}
+                    placeholder={canComment ? "Add a comment..." : "Sign in to leave a comment."}
+                    value={commentText}
+                  />
+                  <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                    <button
+                      className="inline-flex h-8 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md bg-[var(--pm-accent)] px-3.5 text-sm font-semibold text-white transition duration-150 hover:bg-[#7fa1ff] disabled:pointer-events-none disabled:opacity-50"
+                      disabled={!canComment || !commentText.trim() || isPostingComment}
+                      type="submit"
+                    >
+                      {isPostingComment ? "Posting" : "Post"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="flex gap-4">
+                <button
+                  aria-label="Sort comments by"
+                  aria-expanded="false"
+                  aria-haspopup="menu"
+                  className="group flex cursor-pointer items-center gap-2 border-none bg-transparent p-0 text-sm font-medium text-[var(--pm-text-primary)] focus-visible:outline-none focus-visible:ring-0"
+                  data-state="closed"
+                  type="button"
+                >
+                  <span>Newest</span>
+                  <ChevronDown className="transition-transform duration-200 group-data-[state=open]:rotate-180" size={12} />
+                </button>
+              </div>
+            </div>
+
+            <div>
+              {comments.length > 0 ? (
+                comments.map((comment) => <CommentRow comment={comment} key={comment.id} />)
+              ) : (
+                <EmptyActivityState plain text="No comments yet." />
+              )}
+            </div>
+
+          </section>
         </div>
-        <p className="mt-2 break-words text-base leading-7 text-[#0e0f11]">{comment.body}</p>
       </div>
-      <MessageCircle className="mt-1 shrink-0 text-[#77808d]" size={18} />
     </div>
   );
 }
 
-function HolderRow({ holder, index }: { holder: MarketHolder; index: number }) {
-  const leadingSide = holder.yesShares >= holder.noShares ? "Yes" : "No";
+function CommentRow({ comment }: { comment: MarketComment }) {
+  const likes = getCommentLikeCount(comment);
 
   return (
-    <div className="grid gap-3 rounded-xl border border-[#e6e8ea] bg-white px-4 py-3 text-sm sm:grid-cols-[48px_minmax(0,1fr)_140px_120px] sm:items-center">
-      <span className="font-semibold text-[#77808d]">#{index + 1}</span>
-      <div className="min-w-0">
-        <strong className="block truncate text-[#0e0f11]">{holder.displayName}</strong>
-        <span className="text-xs font-semibold text-[#77808d]">
-          {leadingSide} heavy · updated {formatRelativeTime(holder.updatedAt)}
-        </span>
+    <article className="comment flex pt-6" id={`comment-${comment.id}`}>
+      <div className="flex w-full">
+        <CommentAvatar label={comment.displayName} seed={`${comment.userId ?? comment.id}:${comment.displayName}`} />
+        <div className="ml-3.5 flex w-[calc(100%-58px)] flex-col whitespace-normal">
+          <div className="relative flex w-full items-center justify-between gap-3">
+            <div className="flex items-baseline gap-1 overflow-hidden text-ellipsis whitespace-nowrap pr-8">
+              <div className="flex items-baseline gap-2">
+                <span className="overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold text-[var(--pm-text-primary)] hover:underline" title={comment.displayName}>
+                  {comment.displayName}
+                </span>
+                {comment.positionLabel ? <CommentPositionBadge label={comment.positionLabel} /> : null}
+              </div>
+              <time className="ml-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-[var(--pm-text-secondary)]" dateTime={comment.createdAt}>
+                {formatActivityRelativeTime(comment.createdAt)}
+              </time>
+            </div>
+            <div className="absolute right-0 top-0 flex">
+              <button
+                aria-label="Comment actions"
+                aria-expanded="false"
+                aria-haspopup="menu"
+                className="flex size-6 min-w-6 cursor-pointer items-center justify-center rounded-sm bg-transparent text-[var(--pm-text-secondary)] outline-none transition-none hover:bg-[var(--pm-surface-2)] active:bg-[var(--pm-surface-2)]"
+                data-state="closed"
+                type="button"
+              >
+                <MoreHorizontal size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div className="comment-body flex flex-col">
+            <div className="mb-2 mt-1 max-w-full text-base font-normal text-[var(--pm-text-primary)]">
+              <div className="whitespace-pre-wrap break-words overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:4]">
+                {comment.body}
+              </div>
+            </div>
+          </div>
+
+          <div className="-ml-1.5 flex items-center gap-1.5">
+            <button className="inline-flex h-6 w-fit cursor-pointer items-center justify-center gap-1 rounded-sm py-1 pl-1 pr-1.5 text-base font-semibold text-[var(--pm-text-secondary)] transition duration-150 hover:bg-[var(--pm-surface-2)] active:scale-[97%]" type="button">
+              <Heart size={18} />
+              <span className="text-xs text-[var(--pm-text-secondary)]">{likes}</span>
+            </button>
+            <button className="inline-flex h-6 w-fit cursor-pointer items-center justify-center gap-1 rounded-sm py-1 pl-1.5 pr-1.5 text-base font-semibold text-[var(--pm-text-secondary)] transition duration-150 hover:bg-[var(--pm-surface-2)] active:scale-[97%]" type="button">
+              <MessageCircle size={12} />
+              <span className="text-xs">Reply</span>
+            </button>
+          </div>
+        </div>
       </div>
-      <strong className="text-[#0e0f11]">{formatShares(holder.shares)} shares</strong>
-      <span className="font-semibold text-[#77808d]">{formatUsdt(holder.value)}</span>
-    </div>
+    </article>
   );
 }
 
-function PositionRow({ position }: { position: MarketPublicPosition }) {
+function CommentAvatar({ label, seed }: { label: string; seed: string }) {
+  const palette = getActivityAvatarPalette(seed);
+
   return (
-    <div className="grid gap-3 rounded-xl border border-[#e6e8ea] bg-white px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_86px_120px_120px] sm:items-center">
-      <div className="min-w-0">
-        <strong className="block truncate text-[#0e0f11]">{position.displayName}</strong>
-        <span className="text-xs font-semibold text-[#77808d]">
-          Updated {formatRelativeTime(position.updatedAt)}
-        </span>
+    <span
+      aria-hidden="true"
+      className="grid h-10 w-10 min-w-10 shrink-0 place-items-center overflow-hidden rounded-full text-sm font-black uppercase text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
+      title={label}
+      style={{
+        background:
+          `radial-gradient(circle at 34% 28%, ${palette[0]} 0, transparent 34%), ` +
+          `radial-gradient(circle at 72% 70%, ${palette[1]} 0, transparent 42%), ` +
+          `linear-gradient(135deg, ${palette[2]}, ${palette[3]})`,
+      }}
+    >
+      {label.trim().slice(0, 1)}
+    </span>
+  );
+}
+
+function CommentPositionBadge({ label }: { label: string }) {
+  const formattedLabel = formatCommentPositionLabel(label);
+  const isNo = /\bno\b/i.test(formattedLabel);
+  const toneClass = isNo
+    ? "bg-red-500/10 text-[#e23939] hover:bg-red-500/20"
+    : "bg-green-600/10 text-[#30a159] hover:bg-green-600/20";
+
+  return (
+    <span className={`inline-flex h-[22px] items-center rounded-sm px-1.5 text-xs font-semibold ${toneClass}`}>
+      {formattedLabel}
+    </span>
+  );
+}
+
+function HoldersBoard({ holders, market }: { holders: MarketHolder[]; market: Market }) {
+  const yesHolders = holders
+    .filter((holder) => isPositiveDecimal(holder.yesShares))
+    .sort(
+      (left, right) =>
+        compareDecimalValues(right.yesShares, left.yesShares, 6) ?? 0,
+    )
+    .slice(0, 16);
+  const noHolders = holders
+    .filter((holder) => isPositiveDecimal(holder.noShares))
+    .sort(
+      (left, right) =>
+        compareDecimalValues(right.noShares, left.noShares, 6) ?? 0,
+    )
+    .slice(0, 16);
+
+  return (
+    <div className="max-lg:min-h-[400px] max-lg:pt-2 lg:min-h-[496px] lg:pb-16 lg:pt-4">
+      <div className="w-full">
+        <div className="flex w-full flex-col">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MarketDropdownButton
+                ariaLabel="Sort markets by"
+                className="w-full justify-between md:w-[250px]"
+                label={getMarketFilterLabel(market)}
+              />
+            </div>
+          </div>
+
+          <div className="flex min-w-0">
+            <HolderColumn holders={yesHolders} side="yes" title="Yes holders" />
+            <HolderColumn holders={noHolders} side="no" title="No holders" />
+          </div>
+        </div>
       </div>
-      <span
-        className={`w-fit rounded-full px-2 py-1 text-xs font-bold uppercase ${
-          position.side === "yes" ? "bg-[#3db468]/15 text-[#a6d2b6]" : "bg-[#cb3131]/15 text-[#d78282]"
-        }`}
-      >
-        {position.side}
-      </span>
-      <strong className="text-[#0e0f11]">{formatShares(position.shares)} shares</strong>
-      <span className={position.pnl >= 0 ? "font-semibold text-[#a6d2b6]" : "font-semibold text-[#d78282]"}>
-        {position.pnl >= 0 ? "+" : ""}
-        {formatUsdt(position.pnl)}
-      </span>
     </div>
   );
 }
 
-function ActivityFilterButton({ label }: { label: string }) {
+function HolderColumn({
+  holders,
+  side,
+  title,
+}: {
+  holders: MarketHolder[];
+  side: "yes" | "no";
+  title: string;
+}) {
+  const valueClass = side === "yes" ? "text-[#30a159]" : "text-[#e23939]";
+
+  return (
+    <div className={`flex min-w-0 w-1/2 flex-col ${side === "yes" ? "pr-2 lg:pr-5" : "pl-2 lg:pl-5"}`}>
+      <div className="flex h-[44px] min-w-0 items-center justify-between border-b border-[var(--pm-border)]">
+        <span className="truncate text-base font-semibold text-[var(--pm-text-primary)]">{title}</span>
+        <span className="hidden text-[10px] font-medium uppercase tracking-wider text-[var(--pm-text-secondary)] lg:block">
+          Shares
+        </span>
+      </div>
+      <div className="flex flex-col">
+        {holders.length > 0 ? (
+          holders.map((holder) => (
+            <HolderRow
+              holder={holder}
+              key={`${side}-${holder.id}`}
+              shares={side === "yes" ? holder.yesShares : holder.noShares}
+              valueClass={valueClass}
+            />
+          ))
+        ) : (
+          <div className="border-b border-[var(--pm-border)] py-4 text-sm font-medium text-[var(--pm-text-secondary)]">
+            No holders yet.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MarketDropdownButton({
+  ariaLabel,
+  className = "",
+  label,
+}: {
+  ariaLabel?: string;
+  className?: string;
+  label: string;
+}) {
   return (
     <button
-      aria-label={label}
-      className="group inline-flex h-10 w-fit shrink-0 items-center gap-2 rounded-full bg-[var(--pm-surface-2)] px-4 text-sm font-semibold text-[var(--pm-text-primary)] transition duration-150 active:scale-[0.97] hover:bg-[var(--pm-surface-3)]"
+      aria-label={ariaLabel}
+      aria-expanded="false"
+      aria-haspopup="menu"
+      className={`group flex h-10 cursor-pointer items-center gap-1 rounded-md border border-[var(--pm-border)] px-4 text-base font-semibold text-[var(--pm-text-primary)] transition duration-150 hover:bg-[var(--pm-surface-2)] active:scale-[97%] focus-visible:outline-none focus-visible:ring-0 ${className}`}
+      data-slot="dropdown-menu-trigger"
+      data-state="closed"
       type="button"
     >
-      {label}
-      <ChevronDown className="transition-transform duration-200 group-data-[state=open]:rotate-180" size={12} />
+      <span className="truncate font-medium">{label}</span>
+      <ChevronDown className="shrink-0 transition-transform duration-200" size={12} />
     </button>
+  );
+}
+
+function HolderRow({
+  holder,
+  shares,
+  valueClass,
+}: {
+  holder: MarketHolder;
+  shares: string;
+  valueClass: string;
+}) {
+  return (
+    <div className="flex min-h-[44px] w-full min-w-0 border-b border-[var(--pm-border)] max-lg:py-2 lg:h-[44px] lg:items-center lg:justify-between">
+      <div className="flex min-w-0 flex-1 items-center overflow-hidden whitespace-nowrap text-ellipsis">
+        <ActivityAvatar seed={`${holder.userId}:${holder.displayName}`} label={holder.displayName} />
+        <div className="ml-4 flex min-w-0 items-center gap-1 overflow-hidden">
+          <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-base font-medium text-[var(--pm-text-primary)]">
+            {truncateActivityName(holder.displayName)}
+          </span>
+        </div>
+      </div>
+      <span className={`relative inline-flex shrink-0 overflow-hidden whitespace-nowrap text-right text-base font-semibold ${valueClass}`}>
+        {formatHolderShares(shares)}
+      </span>
+    </div>
   );
 }
 
@@ -2056,7 +2017,9 @@ function ActivityRow({
           <span>for</span>{" "}
           <strong className="font-semibold text-[var(--pm-text-primary)]">{outcomeLabel}</strong>{" "}
           <span>at {formatActivityCents(item.price)}</span>{" "}
-          <span className="text-[var(--pm-text-secondary)]">({formatActivityMoney(item.amount)})</span>
+          <span className="text-[var(--pm-text-secondary)]">
+            ({formatCoinMicros(item.amountCoinMicros)})
+          </span>
         </div>
       </div>
       <div className="ml-2 flex shrink-0 items-center gap-2 text-sm font-medium text-[var(--pm-text-secondary)]">
@@ -2116,18 +2079,47 @@ function truncateActivityName(value: string) {
   return `${trimmed.slice(0, 15)}...`;
 }
 
-function formatActivityShares(value: number) {
-  return new Intl.NumberFormat("en", {
-    maximumFractionDigits: value >= 100 ? 0 : 2,
-  }).format(value);
+function formatCommentPositionLabel(value: string) {
+  return value
+    .replace(/\bда\b/gi, "Yes")
+    .replace(/\bнет\b/gi, "No")
+    .replace(/\byes\b/gi, "Yes")
+    .replace(/\bno\b/gi, "No");
 }
 
-function formatActivityCents(value: number) {
-  return `${(value * 100).toFixed(1)}¢`;
+function getCommentLikeCount(comment: MarketComment) {
+  let hash = 0;
+  const source = `${comment.id}:${comment.createdAt}`;
+
+  for (let index = 0; index < source.length; index += 1) {
+    hash = (hash * 31 + source.charCodeAt(index)) >>> 0;
+  }
+
+  return hash % 3;
 }
 
-function formatActivityMoney(value: number) {
-  return `$${new Intl.NumberFormat("en", { maximumFractionDigits: 0 }).format(value)}`;
+function formatActivityShares(value: string) {
+  return formatShares(value);
+}
+
+function formatHolderShares(value: string) {
+  return formatShares(value);
+}
+
+function formatActivityCents(value: string) {
+  return formatCents(value);
+}
+
+function getMarketFilterLabel(market: Market) {
+  const groupMarket = market as Market & { label?: string };
+
+  return formatMarketText(
+    groupMarket.label ||
+      market.groupItemTitle ||
+      market.event_title ||
+      market.title ||
+      "This market",
+  );
 }
 
 function formatActivityRelativeTime(value: string) {
@@ -2180,9 +2172,15 @@ function hashString(value: string) {
   return hash;
 }
 
-function EmptyActivityState({ text }: { text: string }) {
+function EmptyActivityState({ plain = false, text }: { plain?: boolean; text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-[#dfe3e7] bg-white p-4 text-sm font-semibold text-[#77808d]">
+    <div
+      className={
+        plain
+          ? "py-4 text-sm font-semibold text-[#77808d]"
+          : "rounded-xl border border-dashed border-[#dfe3e7] bg-white p-4 text-sm font-semibold text-[#77808d]"
+      }
+    >
       {text}
     </div>
   );
@@ -2218,7 +2216,6 @@ function LegacyMarketActivityTabs({
       label: comments.length > 0 ? `Comments (${comments.length})` : "Comments",
     },
     { id: "holders", label: "Top Holders" },
-    { id: "positions", label: "Positions" },
     { id: "activity", label: "Activity" },
   ];
 
@@ -2251,7 +2248,6 @@ function LegacyMarketActivityTabs({
           type="text"
           value={commentText}
         />
-        <SmilePlus className="shrink-0" size={18} />
         <button
           className="rounded-2xl bg-[#0093fd]/25 px-4 py-2 text-sm font-semibold text-[#0093fd] transition hover:bg-[#0093fd]/35 disabled:cursor-not-allowed disabled:opacity-45"
           disabled={!commentText.trim()}
@@ -2291,9 +2287,9 @@ function LegacyMarketActivityTabs({
                 </div>
               ))
             ) : (
-              <div className="rounded-2xl border border-dashed border-[#242b32] bg-[#15191d] p-4 text-sm font-semibold text-[#7b8996]">
+              <p className="py-4 text-sm font-semibold text-[#7b8996]">
                 No comments yet.
-              </div>
+              </p>
             )}
           </div>
         ) : null}
@@ -2316,14 +2312,6 @@ function LegacyMarketActivityTabs({
           </div>
         ) : null}
 
-        {activeTab === "positions" ? (
-          <div className="grid gap-3 sm:grid-cols-3">
-            <TicketStat label="Yes shares" value={formatShares(currentPosition?.yesShares ?? 0)} />
-            <TicketStat label="No shares" value={formatShares(currentPosition?.noShares ?? 0)} />
-            <TicketStat label="Open cost" value={formatUsdt(currentPosition?.totalCost ?? 0)} />
-          </div>
-        ) : null}
-
         {activeTab === "activity" ? (
           marketTrades.length > 0 ? (
             <div className="grid gap-3">
@@ -2343,7 +2331,7 @@ function LegacyMarketActivityTabs({
                       {formatShares(trade.shares)} shares
                     </strong>
                     <span className="font-semibold text-[#7b8996]">
-                      {formatUsdt(trade.amount)} @ {formatPercent(trade.price)}
+                      {formatCoinMicros(trade.amountCoinMicros)} @ {formatPercent(trade.price)}
                     </span>
                   </div>
                 </div>
@@ -2378,7 +2366,11 @@ async function copyTextToClipboard(text: string) {
 }
 
 function buildHolderRows(currentPosition: LocalPosition | undefined, market: Market) {
-  const userShares = (currentPosition?.yesShares ?? 0) + (currentPosition?.noShares ?? 0);
+  const userShares =
+    addDecimalValues(
+      currentPosition?.yesShares ?? "0",
+      currentPosition?.noShares ?? "0",
+    ) ?? "0";
 
   return [
     { label: "You", value: `${formatShares(userShares)} shares` },
@@ -2393,130 +2385,6 @@ function getOutcomeVolume(market: Market, outcomeName: string) {
   return latest?.outcomeVolumes?.[outcomeName] ?? 0;
 }
 
-function QuotePreview({
-  error,
-  quote,
-  status,
-}: {
-  error: string | null;
-  quote: TradingQuote | null;
-  status: "idle" | "loading" | "ready" | "error";
-}) {
-  if (status === "idle" && !quote) {
-    return null;
-  }
-
-  if (status === "loading" && !quote) {
-    return (
-      <div className="rounded-lg border border-[#e6e8ea] bg-[#f7f8fa] px-3 py-2 text-sm font-semibold text-[#77808d]">
-        Calculating quote...
-      </div>
-    );
-  }
-
-  if (status === "error" && !quote) {
-    return (
-      <div className="rounded-lg border border-[#e23939]/20 bg-[#e23939]/10 px-3 py-2 text-sm font-semibold text-[#991b1b]">
-        {error ?? "Quote unavailable"}
-      </div>
-    );
-  }
-
-  if (!quote) {
-    return null;
-  }
-
-  const impact = quote.priceImpact;
-
-  return (
-    <div className="grid gap-2 rounded-lg border border-[#e6e8ea] bg-[#f7f8fa] px-3 py-3">
-      <QuoteRow label="Current odds" value={formatPercent(quote.currentOdds)} />
-      <QuoteRow label="Est. payout" value={formatUsd(quote.estimatedPayout)} tone="green" />
-      <QuoteRow label="Est. profit" value={formatUsd(quote.estimatedProfit)} tone={quote.estimatedProfit >= 0 ? "green" : "red"} />
-      <QuoteRow label="Fee" value={formatUsd(quote.fee)} />
-      <QuoteRow label="Balance after" value={formatUsd(quote.balanceAfterBet)} />
-      <QuoteRow label="Pool" value={`${formatUsd(quote.poolBefore)} -> ${formatUsd(quote.poolAfter)}`} />
-      <QuoteRow
-        label="Price impact"
-        value={`${impact >= 0 ? "+" : ""}${formatPercent(impact)}`}
-        tone={impact >= 0 ? "green" : "red"}
-      />
-    </div>
-  );
-}
-
-function QuoteRow({
-  label,
-  tone,
-  value,
-}: {
-  label: string;
-  tone?: "green" | "red";
-  value: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 text-xs font-semibold">
-      <span className="text-[#77808d]">{label}</span>
-      <strong
-        className={
-          tone === "green"
-            ? "text-[#30a159]"
-            : tone === "red"
-              ? "text-[#e23939]"
-              : "text-[#0e0f11]"
-        }
-      >
-        {value}
-      </strong>
-    </div>
-  );
-}
-
-function SummaryRow({
-  accent = false,
-  label,
-  value,
-}: {
-  accent?: boolean;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 text-sm font-semibold">
-      <span className="text-[#77808d]">{label}</span>
-      <strong className={accent ? "text-[#30a159]" : "text-[#0e0f11]"}>{value}</strong>
-    </div>
-  );
-}
-
-function TradeInfoRow({
-  label,
-  tone = "blue",
-  value,
-  withInfo = false,
-}: {
-  label: string;
-  tone?: "blue" | "green";
-  value: string;
-  withInfo?: boolean;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <p className="flex items-center gap-1.5 text-base font-medium leading-5 text-[#0e0f11]">
-        {label}
-        {withInfo ? <Info className="text-[#77808d]" size={16} /> : null}
-      </p>
-      <p
-        className={`text-[20px] font-semibold leading-6 ${
-          tone === "green" ? "text-[#30a159]" : "text-[#1f55f5]"
-        }`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function TicketStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
@@ -2524,6 +2392,15 @@ function TicketStat({ label, value }: { label: string; value: string }) {
         {label}
       </span>
       <strong className="mt-1 block break-words text-sm font-semibold text-[#0e0f11]">{value}</strong>
+    </div>
+  );
+}
+
+function QuoteRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="contents">
+      <span className="text-[var(--pm-text-secondary)]">{label}</span>
+      <strong className="text-right font-semibold text-[var(--pm-text-primary)]">{value}</strong>
     </div>
   );
 }
@@ -2537,48 +2414,6 @@ function DetailStat({ label, value }: { label: string; value: string }) {
       <strong className="mt-1 block break-words text-sm font-semibold text-[#0e0f11]">{value}</strong>
     </div>
   );
-}
-
-function getTradeActionLabel(action: "buy" | "sell") {
-  return action === "buy" ? "Buy" : "Sell";
-}
-
-function getActionDisplayPrice(price: number | null, action: "buy" | "sell") {
-  if (price === null) {
-    return null;
-  }
-
-  if (action === "sell") {
-    return Math.max(0.01, price - 0.01);
-  }
-
-  return price;
-}
-
-function parseLimitPrice(value: string) {
-  const cents = Number(value);
-
-  if (!Number.isFinite(cents) || cents <= 0) {
-    return null;
-  }
-
-  return Math.min(99, cents) / 100;
-}
-
-function formatInputNumber(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0";
-  }
-
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function formatUsd(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "$0.00";
-  }
-
-  return `$${value.toFixed(2)}`;
 }
 
 function formatEnglishDate(value: string | null) {
@@ -2616,6 +2451,63 @@ function normalizeImageUrl(value: string | null | undefined) {
   return value?.trim() || null;
 }
 
+function PressableOutcomeButton({
+  "aria-label": ariaLabel,
+  children,
+  onClick,
+  pressed,
+  tone,
+  variant,
+}: {
+  "aria-label"?: string;
+  children: React.ReactNode;
+  onClick: () => void;
+  pressed: boolean;
+  tone: "yes" | "no";
+  variant: "list" | "ticket";
+}) {
+  const isYes = tone === "yes";
+  const radius = variant === "ticket" ? "rounded-[12px]" : "rounded-[10px]";
+  const baseColor = isYes ? "bg-[#237b43]" : "bg-[#982525]";
+  const selectedSurface = isYes
+    ? "border-[#30a159] bg-[#30a159] text-white"
+    : "border-[#e23939] bg-[#e23939] text-white";
+  const idleSurface =
+    variant === "ticket"
+      ? "border-transparent bg-[var(--pm-surface-3)] text-[var(--pm-text-secondary)] group-hover:text-[var(--pm-text-primary)]"
+      : isYes
+        ? "border-[#30a159]/20 bg-[#30a159]/15 text-[#30a159] group-hover:border-[#30a159]/45 group-hover:bg-[#30a159]/22"
+        : "border-[#e23939]/20 bg-[#e23939]/10 text-[#e23939] group-hover:border-[#e23939]/45 group-hover:bg-[#e23939]/16";
+
+  return (
+    <button
+      aria-label={ariaLabel}
+      aria-pressed={pressed}
+      className={`group relative isolate h-12 w-full min-w-0 overflow-visible bg-transparent text-base font-semibold outline-none focus-visible:ring-2 ${
+        isYes
+          ? "focus-visible:ring-[#30a159]/45"
+          : "focus-visible:ring-[#e23939]/45"
+      } ${radius} ${variant === "list" ? "md:w-[140px]" : ""}`}
+      onClick={onClick}
+      type="button"
+    >
+      {pressed ? (
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-x-0 top-[3px] z-0 h-12 ${radius} ${baseColor}`}
+        />
+      ) : null}
+      <span
+        className={`pointer-events-none absolute inset-0 z-[1] flex items-center justify-center border px-3 py-2 transition-[transform,background-color,border-color,color] duration-100 ${
+          pressed ? `${selectedSurface} group-active:translate-y-[3px]` : idleSurface
+        } ${radius}`}
+      >
+        {children}
+      </span>
+    </button>
+  );
+}
+
 function isLiveGroupMarket(groupMarket: GroupMarket) {
   return (
     groupMarket.active !== false &&
@@ -2624,6 +2516,17 @@ function isLiveGroupMarket(groupMarket: GroupMarket) {
     groupMarket.trading.accepting_orders !== false &&
     groupMarket.status !== "closed" &&
     groupMarket.status !== "expired"
+  );
+}
+
+function getResolvedGroupMarketOutcome(groupMarket: GroupMarket) {
+  if (isLiveGroupMarket(groupMarket)) {
+    return null;
+  }
+
+  return (
+    groupMarket.outcomes.find((outcome) => (outcome.price ?? outcome.probability ?? 0) >= 0.999)
+      ?.name ?? null
   );
 }
 
@@ -2760,6 +2663,12 @@ function buildMarketFaq(market: Market, groupMarkets: GroupMarket[]): MarketFaqI
   const volume = market.volume_detail?.volume ?? market.volume;
   const openedAt = market.dates?.starts_at ?? market.starts_at;
   const rulesPreview = splitDescription(market.description).slice(0, 2);
+  const isClosed =
+    market.closed ||
+    market.archived ||
+    market.status === "closed" ||
+    market.status === "expired" ||
+    (groupMarkets.length > 0 && groupMarkets.every((groupMarket) => !isLiveGroupMarket(groupMarket)));
 
   const overviewAnswer = groupMarkets.length > 0
     ? [
@@ -2787,16 +2696,22 @@ function buildMarketFaq(market: Market, groupMarkets: GroupMarket[]): MarketFaqI
     },
     {
       id: "trade",
-      question: `How do I trade on "${title}"?`,
-      answer: [
-        `To trade on "${title}", browse the ${outcomeCount} available outcome${outcomeCount === 1 ? "" : "s"} listed on this page. Each outcome displays a current price representing the market's implied probability.`,
-        "Select the outcome you believe is most likely, choose Yes to trade in favor of it or No to trade against it, enter your amount, and place the order. If your chosen outcome is correct when the market resolves, Yes shares pay out $1 each; if it is incorrect, they pay out $0.",
-      ],
+      question: isClosed ? `Can I still trade on "${title}"?` : `How do I trade on "${title}"?`,
+      answer: isClosed
+        ? [
+            `No. "${title}" is closed and no longer accepts orders. The outcomes shown on this page are final resolution results, not tradable prices.`,
+          ]
+        : [
+            `To trade on "${title}", browse the ${outcomeCount} available outcome${outcomeCount === 1 ? "" : "s"} listed on this page. Each outcome displays a current price representing the market's implied probability.`,
+            "Select the outcome you believe is most likely, choose Yes to trade in favor of it or No to trade against it, enter your amount, and place the order. If your chosen outcome is correct when the market resolves, Yes shares pay out $1 each; if it is incorrect, they pay out $0.",
+          ],
     },
     {
       id: "odds",
-      question: `What are the current odds for "${title}"?`,
-      answer: [buildCurrentOddsAnswer(title, outcomes)],
+      question: isClosed ? `What was the result of "${title}"?` : `What are the current odds for "${title}"?`,
+      answer: isClosed && leadingOutcome
+        ? [`The market is resolved. "${leadingOutcome.label}" is the final winning outcome.`]
+        : [buildCurrentOddsAnswer(title, outcomes)],
     },
     {
       id: "resolution",

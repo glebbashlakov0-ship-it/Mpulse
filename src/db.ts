@@ -1,5 +1,6 @@
 import pg from "pg";
 import type { AppConfig } from "./config.js";
+import { enforceVerifiedPostgresTls } from "./postgresTls.js";
 
 const { Pool } = pg;
 
@@ -33,8 +34,10 @@ export function buildDatabase(config: AppConfig): Database {
   }
 
   const pool = new Pool({
-    connectionString: config.databaseUrl,
-    ssl: config.databaseSsl ? { rejectUnauthorized: false } : false,
+    connectionString: config.databaseSsl
+      ? enforceVerifiedPostgresTls(config.databaseUrl)
+      : config.databaseUrl,
+    ssl: config.databaseSsl ? { rejectUnauthorized: true } : false,
   });
 
   return {

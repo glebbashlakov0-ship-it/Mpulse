@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router";
 import { Toaster } from "react-hot-toast";
 import { useTranslation } from "react-i18next";
 import { AuthModal } from "./components/AuthModal";
@@ -20,6 +20,8 @@ import { VerifyEmailPage } from "./pages/VerifyEmailPage";
 import { RequestPasswordResetPage } from "./pages/RequestPasswordResetPage";
 import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { AuthProvider, useAuth } from "./hooks/useAuth";
+import { CoinAccountProvider } from "./hooks/useCoinAccount";
+import { PortfolioProvider } from "./hooks/usePortfolio";
 import { useWatchlist } from "./hooks/useWatchlist";
 import {
   defaultMarketFilters,
@@ -53,7 +55,11 @@ function RootApp() {
 
   return (
     <AuthProvider>
-      <PublicApp />
+      <CoinAccountProvider>
+        <PortfolioProvider>
+          <PublicApp />
+        </PortfolioProvider>
+      </CoinAccountProvider>
     </AuthProvider>
   );
 }

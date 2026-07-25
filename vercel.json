@@ -2,6 +2,18 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist-web",
+  "functions": {
+    "src/server.ts": {
+      "includeFiles": "{migrations/**,releases/**}",
+      "maxDuration": "max"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/money-outbox",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/health",

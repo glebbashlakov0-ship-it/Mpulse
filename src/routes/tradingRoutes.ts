@@ -5,11 +5,11 @@ import type { AppConfig } from "../config.js";
 import type { ComplianceService } from "../compliance.js";
 import { type MarketDataService } from "../marketDataService.js";
 import {
-  createTradingQuote,
-  getPortfolio,
-  placeLocalOrder,
-  placeTrade,
-  resetPortfolio,
+  buildTradingMode,
+  createCoinTradingQuote,
+  getCoinPortfolio,
+  placeCoinTradingOrder,
+  type CoinLedgerPort,
   type TradeSide,
   type TradeAction,
 } from "../trading.js";
@@ -17,6 +17,7 @@ import type { PortfolioRepository } from "../portfolioRepository.js";
 import type { MarketActivityRepository } from "../marketActivityRepository.js";
 import type { SettlementRepository } from "../settlement.js";
 import { syncTradingMarketActivity } from "../tradingActivitySync.js";
+import type { RealMoneyExecutionVenueRuntime } from "../realMoneyAdapterRuntime.js";
 
 function getIdempotencyKey(
   request: FastifyRequest,
@@ -38,7 +39,7 @@ function parseTradingRequest(body: {
   marketId?: unknown;
   side?: unknown;
   action?: unknown;
-  amount?: unknown;
+  amountCoinMicros?: unknown;
   shares?: unknown;
 }): (
   | {
@@ -46,8 +47,8 @@ function parseTradingRequest(body: {
       marketId: string;
       side: TradeSide;
       action: TradeAction;
-      amount?: number;
-      shares?: number;
+      amountCoinMicros?: string;
+      shares?: string;
     }
   | {
       ok: false;
@@ -60,14 +61,24 @@ function parseTradingRequest(body: {
     : null;
   const side = body?.side === "yes" || body?.side === "no" ? body.side : null;
   const action = body?.action === "buy" || body?.action === "sell" ? body.action : null;
-  const amount = typeof body?.amount === "number" ? body.amount : undefined;
-  const shares = typeof body?.shares === "number" ? body.shares : undefined;
+  const amountCoinMicros =
+    typeof body?.amountCoinMicros === "string"
+      ? body.amountCoinMicros
+      : undefined;
+  const shares = typeof body?.shares === "string" ? body.shares : undefined;
 
-  if (!marketId || !side || !action || (amount === undefined && shares === undefined)) {
+  if (
+    !marketId ||
+    !side ||
+    !action ||
+    (action === "buy" && amountCoinMicros === undefined) ||
+    (action === "sell" && shares === undefined)
+  ) {
     return {
       ok: false,
       code: "INVALID_TRADE_REQUEST",
-      message: "marketId, side, action, and amount or shares are required.",
+      message:
+        "Buy orders require amountCoinMicros as an integer string; sell orders require shares as a decimal string.",
     };
   }
 
@@ -76,7 +87,7 @@ function parseTradingRequest(body: {
     marketId,
     side,
     action,
-    amount,
+    amountCoinMicros,
     shares,
   };
 }
@@ -87,13 +98,18 @@ export function registerTradingRoutes(
   config: AppConfig,
   audit: AuditService,
   marketData: MarketDataService,
-  ledger: import("../ledger.js").LedgerService,
+  coinLedger: CoinLedgerPort | null,
   portfolioRepository?: PortfolioRepository,
   compliance?: ComplianceService,
   marketActivityRepository?: MarketActivityRepository,
   settlementRepository?: SettlementRepository,
-  options: { requirePersistentUserState?: boolean } = {},
+  options: {
+    requirePersistentUserState?: boolean;
+    requireAtomicTradeCommits?: boolean;
+    loadRealExecutionRuntime?: () => Promise<RealMoneyExecutionVenueRuntime | null>;
+  } = {},
 ) {
+  const tradingMode = buildTradingMode(config);
   const authenticatedStateRoute = options.requirePersistentUserState
     ? {
         preHandler: (request: FastifyRequest, reply: FastifyReply) =>
@@ -109,6 +125,26 @@ export function registerTradingRoutes(
     return context;
   }
 
+  const resolvePortfolioMarket = async (marketId: string) =>
+    (await marketData.getMarketDetail(marketId)).data;
+
+  function requireCoinRuntime(reply: FastifyReply) {
+    if (coinLedger && portfolioRepository) {
+      return {
+        coinLedger,
+        portfolioRepository,
+      };
+    }
+    reply.status(503).send({
+      data: null,
+      error: {
+        code: "COIN_LEDGER_UNAVAILABLE",
+        message: "Persistent Coin ledger trading is unavailable.",
+      },
+    });
+    return null;
+  }
+
   async function ensureEligibleForOrder(request: FastifyRequest, reply: FastifyReply) {
     const context = getRequiredContext(request);
 
@@ -121,16 +157,30 @@ export function registerTradingRoutes(
       sessionId: context.session.id,
     });
 
-    if (eligibility.canTradeLocal) {
+    const canPlaceOrder = tradingMode.realMoneyEnabled
+      ? eligibility.canUseRealMoney
+      : eligibility.canTradeLocal;
+
+    if (canPlaceOrder) {
       return { ok: true as const, context, eligibility };
     }
+
+    const rejection = tradingMode.realMoneyEnabled
+      ? {
+          code: "TRADING_ELIGIBILITY_REQUIRED",
+          message: "Complete the required trading profile and legal acknowledgements before trading.",
+        }
+      : {
+          code: "TRADING_ACCOUNT_RESTRICTED",
+          message: "Trading is unavailable for this account.",
+        };
 
     await audit.record({
       eventType: "trading.rejected",
       userId: context.user.id,
       sessionId: context.session.id,
       metadata: {
-        reason: "KYC_ELIGIBILITY_REQUIRED",
+        reason: rejection.code,
         reasons: eligibility.reasons,
       },
     });
@@ -138,33 +188,54 @@ export function registerTradingRoutes(
     reply.status(403).send({
       data: null,
       error: {
-        code: "KYC_ELIGIBILITY_REQUIRED",
-        message: "Complete verification and legal acknowledgements before trading.",
+        code: rejection.code,
+        message: rejection.message,
         reasons: eligibility.reasons,
       },
     });
     return { ok: false as const };
   }
 
-  app.get("/api/portfolio", authenticatedStateRoute, async (request) => ({
-    data: await getPortfolio(
-      getRequiredContext(request)?.user.id,
-      ledger,
-      getAuthContext(request) ? portfolioRepository : undefined,
-      getAuthContext(request) ? settlementRepository : undefined,
-    ),
-  }));
+  app.get("/api/portfolio", authenticatedStateRoute, async (request, reply) => {
+    const runtime = requireCoinRuntime(reply);
+    if (!runtime) return reply;
+    const context = getRequiredContext(request);
+    if (!context) {
+      return reply.status(401).send({
+        data: null,
+        error: { code: "UNAUTHENTICATED", message: "Authentication is required." },
+      });
+    }
+    return {
+      data: await getCoinPortfolio({
+        userId: context.user.id,
+        tradingMode,
+        coinLedger: runtime.coinLedger,
+        portfolioRepository: runtime.portfolioRepository,
+        settlementRepository,
+        marketResolver: resolvePortfolioMarket,
+      }),
+    };
+  });
 
   app.post<{
     Body: {
       marketId?: unknown;
       side?: unknown;
       action?: unknown;
-      amount?: unknown;
+      amountCoinMicros?: unknown;
       shares?: unknown;
     };
   }>("/api/trading/quote", authenticatedStateRoute, async (request, reply) => {
     const context = getRequiredContext(request);
+    const runtime = requireCoinRuntime(reply);
+    if (!runtime) return reply;
+    if (!context) {
+      return reply.status(401).send({
+        data: null,
+        error: { code: "UNAUTHENTICATED", message: "Authentication is required." },
+      });
+    }
     const parsed = parseTradingRequest(request.body);
 
     if (!parsed.ok) {
@@ -187,16 +258,17 @@ export function registerTradingRoutes(
     }
 
     const market = (await marketData.getMarketDetail(parsed.marketId)).data;
-    const result = await createTradingQuote({
+    const result = await createCoinTradingQuote({
       market,
       side: parsed.side,
       action: parsed.action,
-      amount: parsed.amount,
+      amountCoinMicros: parsed.amountCoinMicros,
       shares: parsed.shares,
-      userId: context?.user.id,
-      ledger,
-      portfolioRepository: context ? portfolioRepository : undefined,
-      settlementRepository: context ? settlementRepository : undefined,
+      userId: context.user.id,
+      tradingMode,
+      coinLedger: runtime.coinLedger,
+      portfolioRepository: runtime.portfolioRepository,
+      settlementRepository,
     });
 
     if (!result.ok) {
@@ -228,8 +300,10 @@ export function registerTradingRoutes(
         marketId: parsed.marketId,
         side: parsed.side,
         action: parsed.action,
-        amount: result.quote.amount,
+        amountCoinMicros: result.quote.amountCoinMicros,
         shares: result.quote.shares,
+        tradingMode: result.quote.tradingMode.mode,
+        realMoneyEnabled: result.quote.tradingMode.realMoneyEnabled,
       },
     });
 
@@ -243,17 +317,25 @@ export function registerTradingRoutes(
       marketId?: unknown;
       side?: unknown;
       action?: unknown;
-      amount?: unknown;
+      amountCoinMicros?: unknown;
       shares?: unknown;
       idempotencyKey?: unknown;
     };
   }>("/api/trading/orders", authenticatedStateRoute, async (request, reply) => {
+    const runtime = requireCoinRuntime(reply);
+    if (!runtime) return reply;
     const eligibilityResult = await ensureEligibleForOrder(request, reply);
     if (!eligibilityResult.ok) {
       return reply;
     }
 
     const context = eligibilityResult.context;
+    if (!context) {
+      return reply.status(401).send({
+        data: null,
+        error: { code: "UNAUTHENTICATED", message: "Authentication is required." },
+      });
+    }
     const parsed = parseTradingRequest(request.body);
     const idempotencyKey = getIdempotencyKey(request, request.body);
 
@@ -278,17 +360,25 @@ export function registerTradingRoutes(
     }
 
     const market = (await marketData.getMarketDetail(parsed.marketId)).data;
-    const result = await placeLocalOrder({
+    const realExecutionRuntime = tradingMode.realMoneyEnabled
+      ? await options.loadRealExecutionRuntime?.()
+      : null;
+    const result = await placeCoinTradingOrder({
       market,
       side: parsed.side,
       action: parsed.action,
-      amount: parsed.amount,
+      amountCoinMicros: parsed.amountCoinMicros,
       shares: parsed.shares,
-      userId: context?.user.id,
-      idempotencyKey,
-      ledger,
-      portfolioRepository: context ? portfolioRepository : undefined,
-      settlementRepository: context ? settlementRepository : undefined,
+      userId: context.user.id,
+      idempotencyKey: idempotencyKey ?? "",
+      tradingMode,
+      coinLedger: runtime.coinLedger,
+      portfolioRepository: runtime.portfolioRepository,
+      settlementRepository,
+      realExecutionRuntime,
+      audit: {
+        sessionId: context.session.id,
+      },
     });
 
     if (!result.ok) {
@@ -313,32 +403,15 @@ export function registerTradingRoutes(
       });
     }
 
-    if (!result.idempotent) {
-      await syncTradingMarketActivity({
+    const activitySync = !result.idempotent
+      ? await syncTradingMarketActivity({
         repository: marketActivityRepository,
         displayName: context?.user.displayName ?? "Pulse Trader",
         result,
-      });
-    }
-
-    if (!result.idempotent) {
-      await audit.record({
-        eventType: result.trade.action === "buy" ? "trading.buy_local" : "trading.sell_local",
-        userId: context?.user.id,
-        sessionId: context?.session.id,
-        metadata: {
-          marketId: result.trade.marketId,
-          side: result.trade.side,
-          amount: result.trade.amount,
-          shares: result.trade.shares,
-          price: result.trade.price,
-          idempotencyKey,
-        },
-      });
-    }
+      })
+      : null;
 
     const freshMarket = await marketData.getMarketDetail(parsed.marketId).catch(() => null);
-
     return {
       data: {
         ...result,
@@ -357,53 +430,91 @@ export function registerTradingRoutes(
     };
   });
 
-  app.get("/api/trading/positions", authenticatedStateRoute, async (request) => ({
-    data: await getPortfolio(
-      getRequiredContext(request)?.user.id,
-      ledger,
-      getAuthContext(request) ? portfolioRepository : undefined,
-      getAuthContext(request) ? settlementRepository : undefined,
-    ),
-  }));
+  app.get("/api/trading/positions", authenticatedStateRoute, async (request, reply) => {
+    const runtime = requireCoinRuntime(reply);
+    const context = getRequiredContext(request);
+    if (!runtime || !context) return reply;
+    return {
+      data: await getCoinPortfolio({
+        userId: context.user.id,
+        tradingMode,
+        coinLedger: runtime.coinLedger,
+        portfolioRepository: runtime.portfolioRepository,
+        settlementRepository,
+        marketResolver: resolvePortfolioMarket,
+      }),
+    };
+  });
 
-  app.get("/api/trading/trades", authenticatedStateRoute, async (request) => ({
-    data: (
-      await getPortfolio(
-        getRequiredContext(request)?.user.id,
-        ledger,
-        getAuthContext(request) ? portfolioRepository : undefined,
-        getAuthContext(request) ? settlementRepository : undefined,
-      )
-    ).trades,
-  }));
+  app.get("/api/trading/trades", authenticatedStateRoute, async (request, reply) => {
+    const runtime = requireCoinRuntime(reply);
+    const context = getRequiredContext(request);
+    if (!runtime || !context) return reply;
+    return {
+      data: (
+        await getCoinPortfolio({
+          userId: context.user.id,
+          tradingMode,
+          coinLedger: runtime.coinLedger,
+          portfolioRepository: runtime.portfolioRepository,
+          settlementRepository,
+        })
+      ).trades,
+    };
+  });
 
   app.post<{
     Body: {
       marketId?: string;
       side?: TradeSide;
-      amount?: number;
+      amountCoinMicros?: string;
     };
   }>("/api/trading/trades", authenticatedStateRoute, async (request, reply) => {
-    const { marketId, side, amount } = request.body;
+    const runtime = requireCoinRuntime(reply);
+    if (!runtime) return reply;
+    const eligibilityResult = await ensureEligibleForOrder(request, reply);
+    if (!eligibilityResult.ok) {
+      return reply;
+    }
 
-    if (!marketId || (side !== "yes" && side !== "no") || typeof amount !== "number") {
+    const context = eligibilityResult.context;
+    if (!context) {
+      return reply.status(401).send({
+        data: null,
+        error: { code: "UNAUTHENTICATED", message: "Authentication is required." },
+      });
+    }
+    const { marketId, side, amountCoinMicros } = request.body;
+
+    if (
+      !marketId ||
+      (side !== "yes" && side !== "no") ||
+      typeof amountCoinMicros !== "string"
+    ) {
       return reply.status(400).send({
         data: null,
         error: {
           code: "INVALID_TRADE_REQUEST",
-          message: "marketId, side, and amount are required.",
+          message: "marketId, side, and amountCoinMicros are required.",
         },
       });
     }
 
     const market = (await marketData.getMarketDetail(marketId)).data;
-    const result = await placeTrade({
+    const result = await placeCoinTradingOrder({
       market,
       side,
-      amount,
-      userId: getAuthContext(request)?.user.id,
-      ledger,
-      portfolioRepository: getAuthContext(request) ? portfolioRepository : undefined,
+      action: "buy",
+      amountCoinMicros,
+      userId: context.user.id,
+      idempotencyKey: getIdempotencyKey(request, null) ?? "",
+      tradingMode,
+      coinLedger: runtime.coinLedger,
+      portfolioRepository: runtime.portfolioRepository,
+      settlementRepository,
+      realExecutionRuntime: tradingMode.realMoneyEnabled
+        ? await options.loadRealExecutionRuntime?.()
+        : null,
     });
 
     if (!result.ok) {
@@ -421,12 +532,14 @@ export function registerTradingRoutes(
     };
   });
 
-  app.post("/api/portfolio/reset", authenticatedStateRoute, async (request) => ({
-    data: await resetPortfolio(
-      getRequiredContext(request)?.user.id,
-      ledger,
-      getAuthContext(request) ? portfolioRepository : undefined,
-      getAuthContext(request) ? settlementRepository : undefined,
-    ),
-  }));
+  app.post("/api/portfolio/reset", authenticatedStateRoute, async (_request, reply) =>
+    reply.status(410).send({
+      data: null,
+      error: {
+        code: "PORTFOLIO_RESET_DISABLED",
+        message:
+          "Portfolio reset is disabled because Coin ledger history is immutable.",
+      },
+    }),
+  );
 }

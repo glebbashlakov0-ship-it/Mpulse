@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AuditEvent, AuditLogRepository } from "./audit.js";
 import type { Database, Queryable } from "./db.js";
 import { numberFromDb, sortJsonValue, stableStringify, toIsoString } from "./utils.js";
 
@@ -49,15 +50,69 @@ export type CreateLedgerEntryInput = {
   idempotencyKey: string;
   metadata?: Record<string, unknown>;
   createdAt?: string;
+  auditEvent?: AuditEvent | ((result: CreateLedgerEntryResult) => AuditEvent | null) | null;
 };
+
+export type LedgerRuntimePolicy = {
+  appMode?: string;
+  nodeEnv?: string;
+  productionDeployment?: boolean;
+  localLedgerCreditApiEnabled?: boolean;
+  localDepositWebhookCreditEnabled?: boolean;
+  adminManualDepositCreditEnabled?: boolean;
+  adminActivitySeedApiEnabled?: boolean;
+  localSimulatedTradingEnabled?: boolean;
+  realTradingExecutionEnabled?: boolean;
+  realWithdrawalTransferEnabled?: boolean;
+  marketSettlementCreditEnabled?: boolean;
+};
+
+export type LedgerRuntimeCapabilities = {
+  localLedgerCreditApiConfigured: boolean;
+  localLedgerCreditApiEnabled: boolean;
+  localLedgerCreditApiBlockReason: string | null;
+  localDepositWebhookCreditEnabled: boolean;
+  adminManualDepositCreditEnabled: boolean;
+  adminActivitySeedCreditEnabled: boolean;
+  localSimulatedTradingEnabled: boolean;
+  realTradingExecutionEnabled: boolean;
+  realWithdrawalTransferEnabled: boolean;
+  marketSettlementCreditEnabled: boolean;
+  unclassifiedProductionCreditsBlocked: boolean;
+};
+
+export type LedgerRuntimeReadinessBlockerCode =
+  | "LOCAL_LEDGER_CREDIT_API_ENABLED"
+  | "LOCAL_DEPOSIT_WEBHOOK_CREDIT_ENABLED"
+  | "ADMIN_MANUAL_DEPOSIT_CREDIT_ENABLED"
+  | "ADMIN_ACTIVITY_SEED_CREDIT_ENABLED"
+  | "LOCAL_SIMULATED_LEDGER_ENABLED"
+  | "REAL_TRADING_LEDGER_DISABLED"
+  | "REAL_WITHDRAWAL_LEDGER_DISABLED"
+  | "MARKET_SETTLEMENT_LEDGER_DISABLED"
+  | "UNCLASSIFIED_PRODUCTION_CREDITS_NOT_BLOCKED";
+
+export type LedgerRuntimeReadinessBlocker = {
+  source: "ledger";
+  code: LedgerRuntimeReadinessBlockerCode;
+  message: string;
+};
+
+type LedgerPolicySource =
+  | "local_ledger_credit"
+  | "local_deposit_webhook"
+  | "admin_deposit_review"
+  | "admin_seed"
+  | "local_simulated_trading"
+  | "real_trading_execution"
+  | "real_withdrawal_transfer"
+  | "market_settlement"
+  | "unknown_balance_credit"
+  | "unrestricted";
 
 export type LedgerRepository = {
   createEntry(entry: LedgerEntry): Promise<void>;
-  createEntryAtomically?(input: CreateLedgerEntryInput): Promise<{
-    entry: LedgerEntry;
-    balance: LedgerBalance;
-    idempotent: boolean;
-  }>;
+  createEntryAtomically?(input: CreateLedgerEntryInput): Promise<CreateLedgerEntryResult>;
   findByIdempotencyKey(userId: string, idempotencyKey: string): Promise<LedgerEntry | null>;
   getBalance?(input: {
     userId: string;
@@ -72,6 +127,15 @@ export type LedgerRepository = {
   }): Promise<LedgerEntry[]>;
 };
 
+export type CreateLedgerEntryResult = {
+  entry: LedgerEntry;
+  balance: LedgerBalance;
+  idempotent: boolean;
+  audit?: {
+    committed: boolean;
+  };
+};
+
 export class LedgerError extends Error {
   constructor(
     public readonly code:
@@ -80,7 +144,9 @@ export class LedgerError extends Error {
       | "INVALID_LEDGER_REASON"
       | "IDEMPOTENCY_KEY_REQUIRED"
       | "IDEMPOTENCY_KEY_REUSE_MISMATCH"
-      | "INSUFFICIENT_LEDGER_BALANCE",
+      | "INSUFFICIENT_LEDGER_BALANCE"
+      | "LEDGER_RUNTIME_POLICY_REQUIRED"
+      | "LEDGER_ENTRY_POLICY_DISABLED",
     message: string,
     public readonly statusCode = 400,
   ) {
@@ -143,86 +209,31 @@ type LedgerBalanceRow = {
   available_balance: string | number | null;
 };
 
+function hasTransaction(db: Queryable | Database): db is Database {
+  return typeof (db as Database).transaction === "function";
+}
+
 export class PostgresLedgerRepository implements LedgerRepository {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Queryable | Database,
+    private readonly runtimePolicy?: LedgerRuntimePolicy,
+  ) {}
 
   async createEntry(entry: LedgerEntry) {
+    assertPersistentLedgerRuntimePolicy(this.runtimePolicy);
+    assertLedgerRuntimePolicyAllowsEntry(entry, this.runtimePolicy);
     await this.insertEntry(this.db, entry);
   }
 
   async createEntryAtomically(input: CreateLedgerEntryInput) {
-    return this.db.transaction(async (client) => {
-      const asset = input.asset ?? "USDT";
-      const walletId = input.walletId ?? null;
-      const idempotencyKey = input.idempotencyKey.trim();
+    assertPersistentLedgerRuntimePolicy(this.runtimePolicy);
+    assertLedgerRuntimePolicyAllowsEntry(input, this.runtimePolicy);
 
-      await client.query("select pg_advisory_xact_lock(hashtext($1))", [
-        `ledger:${input.userId}`,
-      ]);
+    if (hasTransaction(this.db)) {
+      return this.db.transaction((client) => this.createEntryAtomicallyIn(client, input));
+    }
 
-      const previous = await this.findByIdempotencyKeyIn(client, input.userId, idempotencyKey);
-      if (previous) {
-        assertLedgerIdempotencyMatches(previous, input);
-        return {
-          entry: previous,
-          balance: await this.getBalanceIn(client, {
-            userId: input.userId,
-            asset: previous.asset,
-            walletId: previous.walletId,
-          }),
-          idempotent: true,
-        };
-      }
-
-      const balanceBefore = await this.getBalanceIn(client, {
-        userId: input.userId,
-        asset,
-        walletId,
-      });
-      const heldBalance = balanceBefore.totalHeld - balanceBefore.totalReleased;
-
-      if (input.entryType === "release" && input.amount > heldBalance + Number.EPSILON) {
-        throw new LedgerError(
-          "INSUFFICIENT_LEDGER_BALANCE",
-          "Insufficient held ledger balance for this release.",
-        );
-      }
-
-      const availableAfter = balanceBefore.availableBalance + getAvailableBalanceEffect(input);
-      if (availableAfter < -Number.EPSILON) {
-        throw new LedgerError(
-          "INSUFFICIENT_LEDGER_BALANCE",
-          "Insufficient ledger-derived balance for this operation.",
-        );
-      }
-
-      const entry: LedgerEntry = {
-        id: randomUUID(),
-        userId: input.userId,
-        walletId,
-        asset,
-        entryType: input.entryType,
-        amount: input.amount,
-        reason: input.reason.trim(),
-        referenceType: input.referenceType?.trim() || null,
-        referenceId: input.referenceId?.trim() || null,
-        idempotencyKey,
-        metadata: input.metadata ?? {},
-        createdAt: input.createdAt ?? new Date().toISOString(),
-      };
-
-      await this.insertEntry(client, entry);
-
-      return {
-        entry,
-        balance: await this.getBalanceIn(client, {
-          userId: input.userId,
-          asset: entry.asset,
-          walletId: entry.walletId,
-        }),
-        idempotent: false,
-      };
-    });
+    return this.createEntryAtomicallyIn(this.db, input);
   }
 
   async findByIdempotencyKey(userId: string, idempotencyKey: string) {
@@ -281,6 +292,114 @@ export class PostgresLedgerRepository implements LedgerRepository {
         entry.idempotencyKey,
         JSON.stringify(entry.metadata),
         entry.createdAt,
+      ],
+    );
+  }
+
+  private async createEntryAtomicallyIn(
+    client: Queryable,
+    input: CreateLedgerEntryInput,
+  ): Promise<CreateLedgerEntryResult> {
+    const asset = input.asset ?? "USDT";
+    const walletId = input.walletId ?? null;
+    const idempotencyKey = input.idempotencyKey.trim();
+
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [
+      `ledger:${input.userId}`,
+    ]);
+
+    const previous = await this.findByIdempotencyKeyIn(client, input.userId, idempotencyKey);
+    if (previous) {
+      assertLedgerIdempotencyMatches(previous, input);
+      return {
+        entry: previous,
+        balance: await this.getBalanceIn(client, {
+          userId: input.userId,
+          asset: previous.asset,
+          walletId: previous.walletId,
+        }),
+        idempotent: true,
+        audit: input.auditEvent
+          ? {
+              committed: false,
+            }
+          : undefined,
+      };
+    }
+
+    const balanceBefore = await this.getBalanceIn(client, {
+      userId: input.userId,
+      asset,
+      walletId,
+    });
+    const heldBalance = balanceBefore.totalHeld - balanceBefore.totalReleased;
+
+    if (input.entryType === "release" && input.amount > heldBalance + Number.EPSILON) {
+      throw new LedgerError(
+        "INSUFFICIENT_LEDGER_BALANCE",
+        "Insufficient held ledger balance for this release.",
+      );
+    }
+
+    const availableAfter = balanceBefore.availableBalance + getAvailableBalanceEffect(input);
+    if (availableAfter < -Number.EPSILON) {
+      throw new LedgerError(
+        "INSUFFICIENT_LEDGER_BALANCE",
+        "Insufficient ledger-derived balance for this operation.",
+      );
+    }
+
+    const entry: LedgerEntry = {
+      id: randomUUID(),
+      userId: input.userId,
+      walletId,
+      asset,
+      entryType: input.entryType,
+      amount: input.amount,
+      reason: input.reason.trim(),
+      referenceType: input.referenceType?.trim() || null,
+      referenceId: input.referenceId?.trim() || null,
+      idempotencyKey,
+      metadata: input.metadata ?? {},
+      createdAt: input.createdAt ?? new Date().toISOString(),
+    };
+
+    await this.insertEntry(client, entry);
+
+    const result = {
+      entry,
+      balance: await this.getBalanceIn(client, {
+        userId: input.userId,
+        asset: entry.asset,
+        walletId: entry.walletId,
+      }),
+      idempotent: false,
+      audit: input.auditEvent
+        ? {
+            committed: true,
+          }
+        : undefined,
+    };
+
+    const auditEvent = resolveLedgerAuditEvent(input.auditEvent, result);
+    if (auditEvent) {
+      await this.insertAuditEventAtomically(client, auditEvent);
+    }
+
+    return result;
+  }
+
+  private async insertAuditEventAtomically(db: Queryable, event: AuditEvent) {
+    await db.query(
+      `insert into audit_logs (id, event_type, user_id, session_id, metadata, created_at)
+       values ($1, $2, $3, $4, $5::jsonb, $6)`,
+      [
+        event.id,
+        event.eventType,
+        event.userId,
+        event.sessionId,
+        JSON.stringify(event.metadata),
+        event.createdAt,
       ],
     );
   }
@@ -352,9 +471,14 @@ export class PostgresLedgerRepository implements LedgerRepository {
   }
 }
 
-export function buildLedgerService(repository: LedgerRepository) {
+export function buildLedgerService(
+  repository: LedgerRepository,
+  runtimePolicy?: LedgerRuntimePolicy,
+  auditRepository?: AuditLogRepository,
+) {
   async function createEntry(input: CreateLedgerEntryInput) {
     validateLedgerInput(input);
+    assertLedgerRuntimePolicyAllowsEntry(input, runtimePolicy);
 
     if (repository.createEntryAtomically) {
       return repository.createEntryAtomically(input);
@@ -416,7 +540,7 @@ export function buildLedgerService(repository: LedgerRepository) {
 
     await repository.createEntry(entry);
 
-    return {
+    const result = {
       entry,
       balance: await getBalance({
         userId: input.userId,
@@ -424,7 +548,19 @@ export function buildLedgerService(repository: LedgerRepository) {
         walletId: entry.walletId,
       }),
       idempotent: false,
+      audit: input.auditEvent
+        ? {
+            committed: Boolean(auditRepository),
+          }
+        : undefined,
     };
+
+    const auditEvent = resolveLedgerAuditEvent(input.auditEvent, result);
+    if (auditEvent && auditRepository) {
+      await auditRepository.record(auditEvent);
+    }
+
+    return result;
   }
 
   async function getBalance(input: {
@@ -507,6 +643,277 @@ function validateLedgerInput(input: CreateLedgerEntryInput) {
   if (input.createdAt && Number.isNaN(Date.parse(input.createdAt))) {
     throw new LedgerError("INVALID_LEDGER_DATE", "createdAt must be a valid ISO date string.");
   }
+}
+
+function resolveLedgerAuditEvent(
+  auditEvent: CreateLedgerEntryInput["auditEvent"],
+  result: CreateLedgerEntryResult,
+) {
+  return typeof auditEvent === "function" ? auditEvent(result) : auditEvent ?? null;
+}
+
+function assertLedgerRuntimePolicyAllowsEntry(
+  input: CreateLedgerEntryInput,
+  policy?: LedgerRuntimePolicy,
+) {
+  if (!policy) {
+    return;
+  }
+
+  const source = classifyLedgerPolicySource(input);
+  const capabilities = buildLedgerRuntimeCapabilities(policy);
+  const disabledReason = (() => {
+    switch (source) {
+      case "local_ledger_credit":
+        return capabilities.localLedgerCreditApiEnabled
+          ? null
+          : capabilities.localLedgerCreditApiBlockReason ?? "LOCAL_LEDGER_CREDIT_API_DISABLED";
+      case "local_deposit_webhook":
+        return capabilities.localDepositWebhookCreditEnabled
+          ? null
+          : "LOCAL_DEPOSIT_WEBHOOK_CREDIT_DISABLED";
+      case "admin_deposit_review":
+        return capabilities.adminManualDepositCreditEnabled
+          ? null
+          : "ADMIN_MANUAL_DEPOSIT_CREDIT_DISABLED";
+      case "admin_seed":
+        return capabilities.adminActivitySeedCreditEnabled
+          ? null
+          : "ADMIN_ACTIVITY_SEED_LEDGER_DISABLED";
+      case "local_simulated_trading":
+        return capabilities.localSimulatedTradingEnabled
+          ? null
+          : "LOCAL_SIMULATED_LEDGER_DISABLED";
+      case "real_trading_execution":
+        return capabilities.realTradingExecutionEnabled
+          ? null
+          : "REAL_TRADING_LEDGER_DISABLED";
+      case "real_withdrawal_transfer":
+        return capabilities.realWithdrawalTransferEnabled
+          ? null
+          : "REAL_WITHDRAWAL_LEDGER_DISABLED";
+      case "market_settlement":
+        return capabilities.marketSettlementCreditEnabled
+          ? null
+          : "MARKET_SETTLEMENT_LEDGER_DISABLED";
+      case "unknown_balance_credit":
+        return capabilities.unclassifiedProductionCreditsBlocked
+          ? "UNCLASSIFIED_PRODUCTION_CREDIT"
+          : null;
+      case "unrestricted":
+        return null;
+    }
+  })();
+
+  if (!disabledReason) {
+    return;
+  }
+
+  throw new LedgerError(
+    "LEDGER_ENTRY_POLICY_DISABLED",
+    `Ledger entry source is disabled by runtime policy: ${disabledReason}.`,
+    403,
+  );
+}
+
+function assertPersistentLedgerRuntimePolicy(policy?: LedgerRuntimePolicy) {
+  if (policy) {
+    return;
+  }
+
+  throw new LedgerError(
+    "LEDGER_RUNTIME_POLICY_REQUIRED",
+    "Persistent ledger writes require an explicit runtime policy.",
+    500,
+  );
+}
+
+export function buildLedgerRuntimeCapabilities(
+  policy: LedgerRuntimePolicy,
+): LedgerRuntimeCapabilities {
+  const localLedgerCreditApiBlockReason = getLocalLedgerCreditApiBlockReason(policy);
+
+  return {
+    localLedgerCreditApiConfigured: Boolean(policy.localLedgerCreditApiEnabled),
+    localLedgerCreditApiEnabled: localLedgerCreditApiBlockReason === null,
+    localLedgerCreditApiBlockReason,
+    localDepositWebhookCreditEnabled: isLocalRuntimeCreditSurfaceEnabled(
+      policy,
+      policy.localDepositWebhookCreditEnabled,
+    ),
+    adminManualDepositCreditEnabled: isLocalRuntimeCreditSurfaceEnabled(
+      policy,
+      policy.adminManualDepositCreditEnabled,
+    ),
+    adminActivitySeedCreditEnabled: isLocalRuntimeCreditSurfaceEnabled(
+      policy,
+      policy.adminActivitySeedApiEnabled,
+    ),
+    localSimulatedTradingEnabled: isLocalRuntimeCreditSurfaceEnabled(
+      policy,
+      policy.localSimulatedTradingEnabled,
+    ),
+    realTradingExecutionEnabled: Boolean(policy.realTradingExecutionEnabled),
+    realWithdrawalTransferEnabled: Boolean(policy.realWithdrawalTransferEnabled),
+    marketSettlementCreditEnabled: Boolean(policy.marketSettlementCreditEnabled),
+    unclassifiedProductionCreditsBlocked: isProductionRuntimePolicy(policy),
+  };
+}
+
+export function getLedgerRuntimeReadinessBlockerDetails(
+  capabilities: LedgerRuntimeCapabilities,
+): LedgerRuntimeReadinessBlocker[] {
+  const blockers: LedgerRuntimeReadinessBlocker[] = [];
+  const addBlocker = (code: LedgerRuntimeReadinessBlockerCode, message: string) => {
+    blockers.push({
+      source: "ledger",
+      code,
+      message,
+    });
+  };
+
+  if (capabilities.localLedgerCreditApiEnabled) {
+    addBlocker(
+      "LOCAL_LEDGER_CREDIT_API_ENABLED",
+      "Local ledger self-credit API must be disabled for real-money readiness.",
+    );
+  }
+  if (capabilities.localDepositWebhookCreditEnabled) {
+    addBlocker(
+      "LOCAL_DEPOSIT_WEBHOOK_CREDIT_ENABLED",
+      "Local deposit webhook ledger credits must be disabled for real-money readiness.",
+    );
+  }
+  if (capabilities.adminManualDepositCreditEnabled) {
+    addBlocker(
+      "ADMIN_MANUAL_DEPOSIT_CREDIT_ENABLED",
+      "Manual admin deposit ledger credits must be disabled for real-money readiness.",
+    );
+  }
+  if (capabilities.adminActivitySeedCreditEnabled) {
+    addBlocker(
+      "ADMIN_ACTIVITY_SEED_CREDIT_ENABLED",
+      "Admin seed ledger credits must be disabled for real-money readiness.",
+    );
+  }
+  if (capabilities.localSimulatedTradingEnabled) {
+    addBlocker(
+      "LOCAL_SIMULATED_LEDGER_ENABLED",
+      "Local simulated trading ledger credits must be disabled for real-money readiness.",
+    );
+  }
+  if (!capabilities.realTradingExecutionEnabled) {
+    addBlocker(
+      "REAL_TRADING_LEDGER_DISABLED",
+      "Real trading ledger entries are disabled; execution fills cannot be reflected in balances.",
+    );
+  }
+  if (!capabilities.realWithdrawalTransferEnabled) {
+    addBlocker(
+      "REAL_WITHDRAWAL_LEDGER_DISABLED",
+      "Real withdrawal ledger entries are disabled; provider broadcasts cannot be reflected in balances.",
+    );
+  }
+  if (!capabilities.marketSettlementCreditEnabled) {
+    addBlocker(
+      "MARKET_SETTLEMENT_LEDGER_DISABLED",
+      "Market settlement ledger credits are disabled; real-money settlement payouts cannot be posted.",
+    );
+  }
+  if (!capabilities.unclassifiedProductionCreditsBlocked) {
+    addBlocker(
+      "UNCLASSIFIED_PRODUCTION_CREDITS_NOT_BLOCKED",
+      "Unclassified production balance credits must be blocked for real-money readiness.",
+    );
+  }
+
+  return blockers;
+}
+
+function getLocalLedgerCreditApiBlockReason(policy: LedgerRuntimePolicy) {
+  if (!policy.localLedgerCreditApiEnabled) {
+    return "LOCAL_LEDGER_CREDIT_API_DISABLED";
+  }
+
+  if (isProductionRuntimePolicy(policy)) {
+    return "LOCAL_LEDGER_CREDIT_API_PRODUCTION_DISABLED";
+  }
+
+  if (policy.appMode !== "local") {
+    return "LOCAL_LEDGER_CREDIT_API_APP_MODE_DISABLED";
+  }
+
+  return null;
+}
+
+function isProductionRuntimePolicy(policy: LedgerRuntimePolicy) {
+  return Boolean(policy.productionDeployment) || policy.nodeEnv === "production";
+}
+
+function isLocalRuntimeCreditSurfaceEnabled(
+  policy: LedgerRuntimePolicy,
+  configured: boolean | undefined,
+) {
+  return Boolean(configured) && policy.appMode === "local" && !isProductionRuntimePolicy(policy);
+}
+
+function classifyLedgerPolicySource(input: CreateLedgerEntryInput): LedgerPolicySource {
+  const source =
+    input.metadata && typeof input.metadata.source === "string"
+      ? input.metadata.source
+      : null;
+  const reason = input.reason.trim();
+  const referenceType = input.referenceType?.trim() || null;
+
+  if (source === "ledger_credit" || reason === "ledger_credit" || referenceType === "ledger_credit") {
+    return "local_ledger_credit";
+  }
+
+  if (source === "local_deposit_webhook") {
+    return "local_deposit_webhook";
+  }
+
+  if (source === "admin_deposit_review") {
+    return "admin_deposit_review";
+  }
+
+  if (
+    source === "admin_seed" ||
+    reason.startsWith("admin_seed_") ||
+    referenceType === "admin_seed_payment"
+  ) {
+    return "admin_seed";
+  }
+
+  if (
+    referenceType === "local_init" ||
+    referenceType === "local_reset" ||
+    referenceType === "local_trade"
+  ) {
+    return "local_simulated_trading";
+  }
+
+  if (referenceType === "real_trade") {
+    return "real_trading_execution";
+  }
+
+  if (source === "real_withdrawal_broadcast" || referenceType === "real_withdrawal") {
+    return "real_withdrawal_transfer";
+  }
+
+  if (referenceType === "market_settlement") {
+    return "market_settlement";
+  }
+
+  return isBalanceCreditEntry(input) ? "unknown_balance_credit" : "unrestricted";
+}
+
+function isBalanceCreditEntry(input: CreateLedgerEntryInput) {
+  if (input.entryType === "credit" || input.entryType === "trade_credit") {
+    return true;
+  }
+
+  return input.entryType === "adjustment" && input.metadata?.adjustmentDirection !== "debit";
 }
 
 function getLedgerTotals(entries: LedgerEntry[]) {

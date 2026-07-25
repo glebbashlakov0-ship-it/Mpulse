@@ -5,3 +5,5 @@ dist-web/
 .DS_Store
 npm-debug.log*
 .tmp/
+.vercel/
+.env.local

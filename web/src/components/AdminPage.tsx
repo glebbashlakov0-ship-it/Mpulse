@@ -17,7 +17,7 @@ import {
   seedAdminMarketOddsHistory,
   unhideAdminMarket,
 } from "../lib/api";
-import { formatPercent, formatUsdt } from "../lib/format";
+import { formatCoinMicros, formatPercent } from "../lib/format";
 import type {
   AdminAuditPayload,
   AdminEventActivitySeedResult,
@@ -28,6 +28,7 @@ import type {
   AdminWithdrawalsPayload,
   HiddenMarketRule,
 } from "../lib/types";
+import { AdminMoneyPanel } from "./AdminMoneyPanel";
 
 const adminReasons = ["legal_risk", "compliance", "sensitive_topic", "manual_review"] as const;
 
@@ -479,6 +480,11 @@ export function AdminPage() {
         ))}
       </section>
 
+      <AdminMoneyPanel
+        canManageFinance={Boolean(canManageFinance)}
+        users={users?.users ?? []}
+      />
+
       <section className="mt-6 grid gap-6 xl:grid-cols-[1fr_1fr]">
         <Panel title="Odds & Charts">
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_96px_110px]">
@@ -912,9 +918,18 @@ export function AdminPage() {
               <strong className="text-[#dee3e7]">
                 {settlementResult.settlement.status} · {settlementResult.settlement.marketId}
               </strong>
-              <span>Total pool: {formatUsdt(settlementResult.settlement.totalPool)}</span>
-              <span>Platform fee: {formatUsdt(settlementResult.settlement.platformFee)}</span>
-              <span>Payout total: {formatUsdt(settlementResult.balancing.payoutTotal)}</span>
+              <span>
+                Total pool:{" "}
+                {formatCoinMicros(settlementResult.settlement.totalPoolCoinMicros)}
+              </span>
+              <span>
+                Platform fee:{" "}
+                {formatCoinMicros(settlementResult.settlement.platformFeeCoinMicros)}
+              </span>
+              <span>
+                Payout total:{" "}
+                {formatCoinMicros(settlementResult.balancing.payoutTotalCoinMicros)}
+              </span>
               <span>
                 Balancing check: {settlementResult.balancing.balanced ? "balanced" : "mismatch"}
               </span>

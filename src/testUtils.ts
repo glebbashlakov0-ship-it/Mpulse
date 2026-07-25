@@ -62,6 +62,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     databaseSsl: false,
     moneyOutboxWorkerEnabled: false,
     moneyOutboxDrainEndpointEnabled: false,
+    productionCoinCutoverEndpointEnabled: false,
     moneyOutboxDeliveryMode: "disabled",
     cronSecret: null,
     moneyOutboxPollIntervalMs: 1_000,

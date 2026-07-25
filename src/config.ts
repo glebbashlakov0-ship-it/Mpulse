@@ -57,6 +57,7 @@ export type AppConfig = {
   databaseSsl: boolean;
   moneyOutboxWorkerEnabled: boolean;
   moneyOutboxDrainEndpointEnabled: boolean;
+  productionCoinCutoverEndpointEnabled: boolean;
   moneyOutboxDeliveryMode: "disabled" | "structured_log";
   cronSecret: string | null;
   moneyOutboxPollIntervalMs: number;
@@ -201,9 +202,14 @@ export function getConfig(): AppConfig {
     "MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED",
     false,
   );
+  const productionCoinCutoverEndpointEnabled = booleanFromEnv(
+    "PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED",
+    false,
+  );
   const moneyOutboxDeliveryMode =
     stringFromEnv("MONEY_OUTBOX_DELIVERY_MODE") ?? "disabled";
   const cronSecret = stringFromEnv("CRON_SECRET");
+  const databaseSsl = booleanFromEnv("DATABASE_SSL", nodeEnv === "production");
   const moneyOutboxBatchSize = numberFromEnv("MONEY_OUTBOX_BATCH_SIZE", 50, {
     min: 1,
     integer: true,
@@ -282,6 +288,31 @@ export function getConfig(): AppConfig {
     throw new Error(
       "CRON_SECRET must contain at least 32 characters when MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED=true.",
     );
+  }
+  if (productionCoinCutoverEndpointEnabled) {
+    if (
+      nodeEnv !== "production" ||
+      process.env.VERCEL_ENV !== "production"
+    ) {
+      throw new Error(
+        "PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true is allowed only in a Vercel production runtime.",
+      );
+    }
+    if (!databaseUrl) {
+      throw new Error(
+        "DATABASE_URL is required when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true.",
+      );
+    }
+    if (!databaseSsl) {
+      throw new Error(
+        "DATABASE_SSL must be true when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true.",
+      );
+    }
+    if (!cronSecret || cronSecret.length < 32) {
+      throw new Error(
+        "CRON_SECRET must contain at least 32 characters when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true.",
+      );
+    }
   }
 
   const sessionCookieSecure = booleanFromEnv("SESSION_COOKIE_SECURE", nodeEnv === "production");
@@ -386,9 +417,10 @@ export function getConfig(): AppConfig {
     ),
     usdtTronContract,
     databaseUrl,
-    databaseSsl: booleanFromEnv("DATABASE_SSL", nodeEnv === "production"),
+    databaseSsl,
     moneyOutboxWorkerEnabled,
     moneyOutboxDrainEndpointEnabled,
+    productionCoinCutoverEndpointEnabled,
     moneyOutboxDeliveryMode: moneyOutboxDeliveryMode as "disabled" | "structured_log",
     cronSecret,
     moneyOutboxPollIntervalMs: numberFromEnv("MONEY_OUTBOX_POLL_INTERVAL_MS", 1_000, {

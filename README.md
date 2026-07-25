@@ -258,19 +258,28 @@ matching `DATABASE_URL`. It checks pending legacy operations and exact totals be
 fence.
 
 For the single authorized release,
-`releases/2026-07-25-coins-v1-production-cutover.json` gates a separate production command:
+`releases/2026-07-25-coins-v1-production-cutover.json` gates a separate post-deploy production
+operation:
 
 ```bash
 npm run coins:production-cutover
 ```
 
-`npm run vercel-build` invokes it before compilation. It is a no-op unless
-`VERCEL_ENV=production`; in production it requires the marked `mpulse.vercel.app` project, SSL,
-and exactly `DATABASE_URL`, and rejects `TEST_DATABASE_URL`. Under a global advisory lock it applies
-the schema plan, inspects legacy state, atomically stores an in-database per-user balance snapshot,
-applies the Coin migration, reconciles, and records immutable completion evidence. Pending or
-invalid legacy data and any reconciliation discrepancy fail the build. Repeating the same marked
-release verifies the evidence and performs no second migration.
+`npm run vercel-build` does **not** invoke that command. It runs a read-only environment preflight
+through `getConfig()` and then compiles, so a failed build cannot move the production money fence.
+After the new artifact is deployed, an operator may temporarily enable
+`PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true`. Authenticated
+`GET /api/ops/production-coin-cutover/identity` returns only the safe host/port/database/fingerprint
+needed to verify the target. After the marker is pinned and the reviewed artifact is redeployed,
+authenticated `POST /api/ops/production-coin-cutover` invokes the guarded wrapper. Both endpoints
+require the production Vercel runtime and `Authorization: Bearer <CRON_SECRET>`.
+
+The wrapper requires the marked `mpulse.vercel.app` project, SSL, and exactly `DATABASE_URL`, and
+rejects `TEST_DATABASE_URL`. Under a global advisory lock it applies the schema plan, inspects legacy
+state, atomically stores an in-database per-user balance snapshot, applies the Coin migration,
+reconciles, and records immutable completion evidence. Pending or invalid legacy data and any
+reconciliation discrepancy fail the operation. Repeating the same marked release verifies the
+evidence and performs no second migration.
 
 The detailed operator sequence, expected output, reconciliation categories, and incident handling
 are in [docs/RUNBOOK.md](docs/RUNBOOK.md).

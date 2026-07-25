@@ -2,6 +2,16 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist-web",
+  "functions": {
+    "api/ops/production-coin-cutover.ts": {
+      "includeFiles": "{migrations/**,releases/**}",
+      "maxDuration": "max"
+    },
+    "api/ops/production-coin-cutover/identity.ts": {
+      "includeFiles": "releases/**",
+      "maxDuration": 30
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/money-outbox",

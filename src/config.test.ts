@@ -26,6 +26,7 @@ const managedEnvKeys = [
   "ADMIN_PANEL_COOKIE_NAME",
   "ADMIN_PANEL_TTL_MS",
   "DATABASE_URL",
+  "DATABASE_SSL",
   "WALLET_DEPOSIT_WEBHOOK_ENABLED",
   "COIN_DEPOSIT_CREDITS_ENABLED",
   "COIN_WITHDRAWAL_REQUESTS_ENABLED",
@@ -35,6 +36,7 @@ const managedEnvKeys = [
   "USDT_TRON_CONTRACT",
   "MONEY_OUTBOX_WORKER_ENABLED",
   "MONEY_OUTBOX_DRAIN_ENDPOINT_ENABLED",
+  "PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED",
   "MONEY_OUTBOX_DELIVERY_MODE",
   "CRON_SECRET",
   "MONEY_OUTBOX_POLL_INTERVAL_MS",
@@ -47,6 +49,7 @@ const managedEnvKeys = [
   "MONEY_OUTBOX_BACKOFF_JITTER_RATIO",
   "APP_BASE_URL",
   "VERCEL_PROJECT_PRODUCTION_URL",
+  "VERCEL_ENV",
   "VERCEL_URL",
 ];
 
@@ -90,6 +93,7 @@ test("config defaults to local development mode", () => {
     assert.equal(config.coinInternalTradingEnabled, false);
     assert.equal(config.moneyOutboxWorkerEnabled, false);
     assert.equal(config.moneyOutboxDrainEndpointEnabled, false);
+    assert.equal(config.productionCoinCutoverEndpointEnabled, false);
   });
 });
 
@@ -113,6 +117,65 @@ test("money outbox runtimes fail closed without database and cron secret", () =>
     CRON_SECRET: "test-cron-secret-with-at-least-32-characters",
   }, () => {
     assert.equal(getConfig().moneyOutboxDrainEndpointEnabled, true);
+  });
+});
+
+test("production Coin cutover endpoint is production-only and requires SSL database plus secret", () => {
+  const endpointSecret = "cutover-cron-secret-with-at-least-32-characters";
+  const productionEnv = {
+    NODE_ENV: "production",
+    VERCEL_ENV: "production",
+    APP_MODE: "local",
+    SESSION_SECRET: "prod-session-secret-32-characters-long",
+    SESSION_COOKIE_SECURE: "true",
+    CORS_ALLOWED_ORIGINS: "https://mpulse.vercel.app",
+    DATABASE_URL:
+      "postgres://market:credential@db.example.com:5432/mpulse_prod",
+    DATABASE_SSL: "true",
+    ADMIN_PANEL_USERNAME: "ops",
+    ADMIN_PANEL_PASSWORD: "prod-admin-password-32-characters",
+    PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED: "true",
+    CRON_SECRET: endpointSecret,
+  };
+
+  withEnv(
+    {
+      DATABASE_URL: productionEnv.DATABASE_URL,
+      DATABASE_SSL: "true",
+      PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED: "true",
+      CRON_SECRET: endpointSecret,
+    },
+    () => {
+      assert.throws(
+        () => getConfig(),
+        /allowed only in a Vercel production runtime/,
+      );
+    },
+  );
+
+  withEnv({ ...productionEnv, DATABASE_URL: undefined }, () => {
+    assert.throws(
+      () => getConfig(),
+      /DATABASE_URL is required when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true/,
+    );
+  });
+
+  withEnv({ ...productionEnv, DATABASE_SSL: "false" }, () => {
+    assert.throws(
+      () => getConfig(),
+      /DATABASE_SSL must be true when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true/,
+    );
+  });
+
+  withEnv({ ...productionEnv, CRON_SECRET: "too-short" }, () => {
+    assert.throws(
+      () => getConfig(),
+      /CRON_SECRET must contain at least 32 characters when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true/,
+    );
+  });
+
+  withEnv(productionEnv, () => {
+    assert.equal(getConfig().productionCoinCutoverEndpointEnabled, true);
   });
 });
 

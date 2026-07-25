@@ -94,13 +94,36 @@ Migration `031` creates Coin accounts, immutable ledger entries, exchange-rate s
 events, crypto deposits, withdrawal quotes/requests, execution orders, outbox events, migration
 markers, cutover runs, reconciliation reports, and global write fences. It does not copy balances.
 The schema runner holds `market_pulse:schema_migrations` on one PostgreSQL session while applying
-the checked plan, so concurrent production builds serialize safely.
+the checked plan, so concurrent explicitly authorized cutover invocations serialize safely.
 
-## Authorized production build cutover
+## Authorized post-deploy production cutover
 
-The only production trigger is the committed marker
-`releases/2026-07-25-coins-v1-production-cutover.json`, invoked by `npm run vercel-build`. Do not
-run the test CLI against production and do not set `TEST_DATABASE_URL` in the production build.
+`npm run vercel-build` never connects to PostgreSQL or invokes the cutover. It runs
+`npm run runtime:preflight` to validate `getConfig()` and then compiles the artifact. A failed
+preflight blocks deployment before compilation without changing database state.
+
+The production cutover is available only after the new artifact is serving traffic and only while
+`PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true`. This flag defaults to false and is rejected unless
+`NODE_ENV=production`, `VERCEL_ENV=production`, `DATABASE_URL` is configured,
+`DATABASE_SSL=true`, and `CRON_SECRET` contains at least 32 characters. Keep `APP_MODE=local`.
+
+The operator sequence is:
+
+1. Deploy the new artifact with money feature gates disabled and the cutover endpoint temporarily
+   enabled.
+2. Send an authenticated `GET /api/ops/production-coin-cutover/identity`. The response contains only
+   the database hostname, port, database name, and credential-free fingerprint.
+3. Verify and pin that target in the committed release marker, then redeploy the same reviewed
+   release. The build remains non-mutating.
+4. Send one authenticated `POST /api/ops/production-coin-cutover` with no request body. This is the
+   only HTTP operation that invokes the cutover wrapper.
+5. Preserve the returned safe completion summary, verify readiness and balances, then disable the
+   endpoint flag and rotate the operational secret.
+
+Both ops endpoints require `Authorization: Bearer <CRON_SECRET>`, return `Cache-Control: no-store`,
+and never return the connection URL, database username/password, per-user migration rows, or detailed
+reconciliation payload. Do not run the test CLI against production and do not set
+`TEST_DATABASE_URL` in the production runtime.
 
 The wrapper runs only when all of these are true:
 
@@ -118,10 +141,10 @@ per-user legacy balance rows before moving the fence. Credentials are never stor
 contains only host/port/database, connected server identity, SSL state, and a credential-free
 fingerprint.
 
-After a passing reconciliation it records immutable completion evidence. A repeated build for the
-same marker/target checks the snapshot, migration run, and reconciliation but does not add a second
-balance credit, snapshot, or completion. A failed production build is an incident: preserve the
-reports and database, keep money movement disabled, and use a reviewed forward fix.
+After a passing reconciliation it records immutable completion evidence. A repeated authorized POST
+for the same marker/target checks the snapshot, migration run, and reconciliation but does not add a
+second balance credit, snapshot, or completion. A failed POST is an incident: preserve the reports
+and database, keep money movement disabled, and use a reviewed forward fix.
 
 ## Dedicated test database
 

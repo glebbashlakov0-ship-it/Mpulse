@@ -60,6 +60,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     appBaseUrl: "http://localhost:5173",
     databaseUrl: null,
     databaseSsl: false,
+    databaseSslCaPem: null,
     moneyOutboxWorkerEnabled: false,
     moneyOutboxDrainEndpointEnabled: false,
     productionCoinCutoverEndpointEnabled: false,

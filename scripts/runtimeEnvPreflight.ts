@@ -25,6 +25,7 @@ if (vercelEnvironment && vercelEnvironment !== "production") {
       productionDeployment: config.productionDeployment,
       databaseConfigured: Boolean(config.databaseUrl),
       databaseSsl: config.databaseSsl,
+      databaseSslCaConfigured: Boolean(config.databaseSslCaPem),
       moneyOutboxWorkerEnabled: config.moneyOutboxWorkerEnabled,
       moneyOutboxDrainEndpointEnabled:
         config.moneyOutboxDrainEndpointEnabled,

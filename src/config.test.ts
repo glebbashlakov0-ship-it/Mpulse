@@ -27,6 +27,7 @@ const managedEnvKeys = [
   "ADMIN_PANEL_TTL_MS",
   "DATABASE_URL",
   "DATABASE_SSL",
+  "DATABASE_SSL_CA_PEM",
   "WALLET_DEPOSIT_WEBHOOK_ENABLED",
   "COIN_DEPOSIT_CREDITS_ENABLED",
   "COIN_WITHDRAWAL_REQUESTS_ENABLED",
@@ -132,6 +133,8 @@ test("production Coin cutover endpoint is production-only and requires SSL datab
     DATABASE_URL:
       "postgres://market:credential@db.example.com:5432/mpulse_prod",
     DATABASE_SSL: "true",
+    DATABASE_SSL_CA_PEM:
+      "-----BEGIN CERTIFICATE-----\\ntest\\n-----END CERTIFICATE-----",
     ADMIN_PANEL_USERNAME: "ops",
     ADMIN_PANEL_PASSWORD: "prod-admin-password-32-characters",
     PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED: "true",
@@ -167,6 +170,13 @@ test("production Coin cutover endpoint is production-only and requires SSL datab
     );
   });
 
+  withEnv({ ...productionEnv, DATABASE_SSL_CA_PEM: undefined }, () => {
+    assert.throws(
+      () => getConfig(),
+      /DATABASE_SSL_CA_PEM is required when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true/,
+    );
+  });
+
   withEnv({ ...productionEnv, CRON_SECRET: "too-short" }, () => {
     assert.throws(
       () => getConfig(),
@@ -196,6 +206,13 @@ test("config rejects unsafe app mode and malformed env values", () => {
     assert.throws(
       () => getConfig(),
       /COIN_INTERNAL_TRADING_ENABLED must be a boolean value/,
+    );
+  });
+
+  withEnv({ DATABASE_SSL_CA_PEM: "not-a-certificate" }, () => {
+    assert.throws(
+      () => getConfig(),
+      /DATABASE_SSL_CA_PEM must contain a PEM-encoded CA certificate/,
     );
   });
 

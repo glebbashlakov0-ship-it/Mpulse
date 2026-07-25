@@ -108,7 +108,10 @@ preflight blocks deployment before compilation without changing database state.
 The production cutover is available only after the new artifact is serving traffic and only while
 `PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true`. This flag defaults to false and is rejected unless
 `NODE_ENV=production`, `VERCEL_ENV=production`, `DATABASE_URL` is configured,
-`DATABASE_SSL=true`, and `CRON_SECRET` contains at least 32 characters. Keep `APP_MODE=local`.
+`DATABASE_SSL=true`, `DATABASE_SSL_CA_PEM` contains the database provider's root CA, and
+`CRON_SECRET` contains at least 32 characters. Keep `APP_MODE=local`. For Supabase, download the
+Server root certificate from the project's Database Settings, preserve it as multiline PEM (or
+escaped `\n`), and never print it in logs.
 
 The operator sequence is:
 
@@ -134,6 +137,7 @@ The wrapper runs only when all of these are true:
 - `VERCEL_PROJECT_PRODUCTION_URL` resolves to the host recorded in the marker;
 - `DATABASE_URL` names one non-local, non-test PostgreSQL database;
 - `DATABASE_SSL=true`;
+- `DATABASE_SSL_CA_PEM` contains the reviewed provider root CA;
 - the principal-bound database fingerprint exactly matches the committed marker;
 - the connected database name exactly matches the database named by `DATABASE_URL`.
 

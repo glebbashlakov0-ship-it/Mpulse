@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { assertCoinFeatureGateConfiguration } from "./coinFeatureGates.js";
+import { normalizePostgresCaPem } from "./postgresTls.js";
 
 export type AppConfig = {
   host: string;
@@ -55,6 +56,7 @@ export type AppConfig = {
   usdtTronContract: string | null;
   databaseUrl: string | null;
   databaseSsl: boolean;
+  databaseSslCaPem: string | null;
   moneyOutboxWorkerEnabled: boolean;
   moneyOutboxDrainEndpointEnabled: boolean;
   productionCoinCutoverEndpointEnabled: boolean;
@@ -210,6 +212,9 @@ export function getConfig(): AppConfig {
     stringFromEnv("MONEY_OUTBOX_DELIVERY_MODE") ?? "disabled";
   const cronSecret = stringFromEnv("CRON_SECRET");
   const databaseSsl = booleanFromEnv("DATABASE_SSL", nodeEnv === "production");
+  const databaseSslCaPem = normalizePostgresCaPem(
+    stringFromEnv("DATABASE_SSL_CA_PEM"),
+  );
   const moneyOutboxBatchSize = numberFromEnv("MONEY_OUTBOX_BATCH_SIZE", 50, {
     min: 1,
     integer: true,
@@ -306,6 +311,11 @@ export function getConfig(): AppConfig {
     if (!databaseSsl) {
       throw new Error(
         "DATABASE_SSL must be true when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true.",
+      );
+    }
+    if (!databaseSslCaPem) {
+      throw new Error(
+        "DATABASE_SSL_CA_PEM is required when PRODUCTION_COIN_CUTOVER_ENDPOINT_ENABLED=true.",
       );
     }
     if (!cronSecret || cronSecret.length < 32) {
@@ -418,6 +428,7 @@ export function getConfig(): AppConfig {
     usdtTronContract,
     databaseUrl,
     databaseSsl,
+    databaseSslCaPem,
     moneyOutboxWorkerEnabled,
     moneyOutboxDrainEndpointEnabled,
     productionCoinCutoverEndpointEnabled,

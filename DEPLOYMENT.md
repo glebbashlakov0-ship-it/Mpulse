@@ -15,12 +15,15 @@ functions are separately production-gated and default fail-closed.
 ## Required Environment Variables
 
 Add these manually in the Vercel dashboard. Do not commit real secret values.
+Store `DATABASE_SSL_CA_PEM` as a sensitive multiline value containing the
+database provider's root CA; TLS remains hostname-verified.
 
 ```dotenv
 APP_MODE=local
 NODE_ENV=production
 DATABASE_URL=postgres://user:password@host:5432/database
 DATABASE_SSL=true
+DATABASE_SSL_CA_PEM=-----BEGIN CERTIFICATE-----...-----END CERTIFICATE-----
 SESSION_SECRET=replace-with-a-long-random-production-secret
 SESSION_COOKIE_SECURE=true
 CORS_ALLOWED_ORIGINS=https://your-domain.vercel.app

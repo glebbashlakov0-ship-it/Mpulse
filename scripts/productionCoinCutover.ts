@@ -20,7 +20,7 @@ import {
   guardProductionCoinCutover,
   type ProductionCoinCutoverReleaseMarker,
 } from "../src/productionCoinCutover.js";
-import { enforceVerifiedPostgresTls } from "../src/postgresTls.js";
+import { buildVerifiedPostgresTlsConfig } from "../src/postgresTls.js";
 import { runSchemaMigrations } from "../src/schemaMigrations.js";
 
 export const PRODUCTION_COIN_CUTOVER_LOCK =
@@ -62,8 +62,10 @@ export async function runProductionCoinCutover(
   }
 
   const pool = new Pool({
-    connectionString: enforceVerifiedPostgresTls(guard.databaseUrl),
-    ssl: { rejectUnauthorized: true },
+    ...buildVerifiedPostgresTlsConfig(
+      guard.databaseUrl,
+      env.DATABASE_SSL_CA_PEM?.trim() || null,
+    ),
     max: 1,
   });
   const client = await pool.connect();

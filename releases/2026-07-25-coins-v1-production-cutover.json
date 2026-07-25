@@ -5,5 +5,5 @@
   "vercelEnvironment": "production",
   "expectedVercelProductionHost": "mpulse.vercel.app",
   "databaseUrlEnvironment": "DATABASE_URL",
-  "expectedDatabaseTargetFingerprint": "a97b761e686d094dce66e32a3dcb5a717fe3e82d1059f40ca2fdf4978702a663"
+  "expectedDatabaseTargetFingerprint": "9edf993a3b77a47fd7771960557ea53bb921905ccc34d308d57e4acbae301e6c"
 }

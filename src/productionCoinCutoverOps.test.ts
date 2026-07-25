@@ -121,14 +121,19 @@ test("production cutover ops responses exclude credentials and detailed money re
 test("production cutover ops logs redact credentials and bearer tokens", () => {
   const safe = toSafeProductionCoinCutoverError(
     new Error(
-      "connect postgres://operator:secret@db.example.com/app with Bearer private-token",
+      "connect postgres://operator:secret@db.example.com/app with Bearer private-token; " +
+        "tenant/user postgres.project-reference not found",
     ),
   );
   assert.equal(safe.name, "Error");
   assert.equal(safe.code, null);
   assert.match(safe.message, /postgres:\/\/\[redacted\]@db\.example\.com/);
   assert.match(safe.message, /Bearer \[redacted\]/);
-  assert.doesNotMatch(safe.message, /operator|secret|private-token/);
+  assert.doesNotMatch(
+    safe.message,
+    /operator|secret|private-token|project-reference/,
+  );
+  assert.match(safe.message, /tenant\/user \[redacted\]/);
 });
 
 test("Vercel build runs only non-mutating preflight before compilation", async () => {

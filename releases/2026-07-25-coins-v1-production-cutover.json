@@ -1,8 +1,9 @@
 {
-  "enabled": true,
+  "enabled": false,
   "releaseMarker": "2026-07-25-coins-v1-legacy-usdt-parity",
   "migrationVersion": "coins-v1-legacy-usdt-parity",
   "vercelEnvironment": "production",
   "expectedVercelProductionHost": "mpulse.vercel.app",
-  "databaseUrlEnvironment": "DATABASE_URL"
+  "databaseUrlEnvironment": "DATABASE_URL",
+  "expectedDatabaseTargetFingerprint": "PENDING_SET_EXACT_PRODUCTION_DATABASE_TARGET_FINGERPRINT"
 }

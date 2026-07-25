@@ -9,7 +9,7 @@ if (!databaseUrl) {
 const pool = new Pool({
   connectionString: databaseUrl,
   ssl: booleanFromEnv("DATABASE_SSL")
-    ? { rejectUnauthorized: false }
+    ? { rejectUnauthorized: true }
     : false,
 });
 const client = await pool.connect();

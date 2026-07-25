@@ -72,6 +72,7 @@ export type CoinCutoverDatabaseTarget = {
   urlHostname: string;
   urlPort: number;
   urlDatabaseName: string;
+  databasePrincipalSha256: string;
   connectedDatabaseName: string;
   serverAddress: string | null;
   serverPort: number | null;
@@ -82,6 +83,24 @@ export type CoinCutoverDatabaseTarget = {
 export type CoinCutoverSnapshotOptions = {
   releaseMarker: string;
   databaseTarget: CoinCutoverDatabaseTarget;
+};
+
+export type VerifiedCoinCutoverSnapshot = {
+  inspectionReport: MigrationReport;
+  balanceSnapshotSha256: string;
+  legacyAccountCount: number;
+};
+
+type CoinCutoverBalanceSnapshotRow = {
+  userId: string;
+  legacyAvailableAmount: string;
+  legacyReservedAmount: string;
+  availableCoinMicros: string;
+  reservedCoinMicros: string;
+  pendingDepositAmount: string;
+  pendingWithdrawalAmount: string;
+  pendingDepositCount: string;
+  pendingWithdrawalCount: string;
 };
 
 export async function inspectMigration(
@@ -146,6 +165,19 @@ export async function applyMigration(
       unsafeProjectionRows,
     );
 
+    if (initialState === "coin") {
+      await assertCompletedCutoverRun(client);
+      if (snapshot) {
+        await verifyProductionSnapshotEvidence(client, snapshot);
+      }
+      await client.query("commit");
+      return {
+        ...preliminary,
+        afterCoinTotals: toPublicTotals(before),
+        noOp: true,
+      };
+    }
+
     if (pending.depositCount > 0n || pending.withdrawalCount > 0n) {
       throw new Error(
         `Migration blocked: legacy pending operations must be drained first ` +
@@ -164,18 +196,6 @@ export async function applyMigration(
       );
     }
 
-    if (initialState === "coin") {
-      await assertCompletedCutoverRun(client);
-      if (snapshot) {
-        await assertProductionSnapshot(client, snapshot);
-      }
-      await client.query("commit");
-      return {
-        ...preliminary,
-        afterCoinTotals: toPublicTotals(before),
-        noOp: true,
-      };
-    }
     if (initialState !== "legacy" && initialState !== "migrating") {
       throw new Error(`Migration blocked: unexpected cutover state ${initialState}.`);
     }
@@ -276,27 +296,90 @@ async function assertCompletedCutoverRun(client: PoolClient) {
   }
 }
 
-async function assertProductionSnapshot(
+export async function verifyProductionSnapshotEvidence(
   client: PoolClient,
   snapshot: CoinCutoverSnapshotOptions,
-) {
-  const existing = await client.query<{ matches: boolean }>(
-    `select
-       migration_version = $2
-       and database_target = $3::jsonb as matches
+  options: { lockHeader?: boolean } = {},
+): Promise<VerifiedCoinCutoverSnapshot> {
+  const existing = await client.query<{
+    migration_version: string;
+    database_target: unknown;
+    balance_snapshot_sha256: string;
+    legacy_account_count: number;
+    inspection_report: MigrationReport;
+  }>(
+    `select migration_version, database_target, balance_snapshot_sha256,
+            legacy_account_count, inspection_report
      from coin_cutover_snapshots
-     where release_marker = $1`,
-    [
-      snapshot.releaseMarker,
-      COIN_MIGRATION_VERSION,
-      JSON.stringify(snapshot.databaseTarget),
-    ],
+     where release_marker = $1
+     ${options.lockHeader ? "for update" : ""}`,
+    [snapshot.releaseMarker],
   );
-  if (existing.rows[0]?.matches !== true) {
+  const header = existing.rows[0];
+  if (
+    !header ||
+    header.migration_version !== COIN_MIGRATION_VERSION ||
+    !stableCoinCutoverDatabaseTargetsMatch(
+      header.database_target,
+      snapshot.databaseTarget,
+    )
+  ) {
     throw new Error(
       "Migration blocked: completed Coin state lacks matching pre-cutover production snapshot evidence.",
     );
   }
+
+  const storedRows = await client.query<{
+    user_id: string;
+    legacy_available_amount: string;
+    legacy_reserved_amount: string;
+    available_coin_micros: string;
+    reserved_coin_micros: string;
+    pending_deposit_amount: string;
+    pending_withdrawal_amount: string;
+    pending_deposit_count: string;
+    pending_withdrawal_count: string;
+  }>(
+    `select
+       user_id::text, legacy_available_amount::text,
+       legacy_reserved_amount::text, available_coin_micros::text,
+       reserved_coin_micros::text, pending_deposit_amount::text,
+       pending_withdrawal_amount::text, pending_deposit_count::text,
+       pending_withdrawal_count::text
+     from coin_cutover_balance_snapshots
+     where release_marker = $1
+     order by user_id`,
+    [snapshot.releaseMarker],
+  );
+  const canonicalRows = storedRows.rows.map((row) => ({
+    userId: row.user_id,
+    legacyAvailableAmount: normalizeSnapshotAmount(row.legacy_available_amount),
+    legacyReservedAmount: normalizeSnapshotAmount(row.legacy_reserved_amount),
+    availableCoinMicros: row.available_coin_micros,
+    reservedCoinMicros: row.reserved_coin_micros,
+    pendingDepositAmount: normalizeSnapshotAmount(row.pending_deposit_amount),
+    pendingWithdrawalAmount: normalizeSnapshotAmount(
+      row.pending_withdrawal_amount,
+    ),
+    pendingDepositCount: row.pending_deposit_count,
+    pendingWithdrawalCount: row.pending_withdrawal_count,
+  }));
+  const recomputedSha256 =
+    computeCoinCutoverBalanceSnapshotSha256(canonicalRows);
+  if (
+    storedRows.rows.length !== header.legacy_account_count ||
+    recomputedSha256 !== header.balance_snapshot_sha256
+  ) {
+    throw new Error(
+      "Migration blocked: production snapshot row count or digest does not match its sealed header.",
+    );
+  }
+
+  return {
+    inspectionReport: header.inspection_report,
+    balanceSnapshotSha256: header.balance_snapshot_sha256,
+    legacyAccountCount: header.legacy_account_count,
+  };
 }
 
 async function persistProductionSnapshot(
@@ -317,20 +400,21 @@ async function persistProductionSnapshot(
     );
   }
 
-  const snapshotRows = rows.map((row) => ({
+  const snapshotRows: CoinCutoverBalanceSnapshotRow[] = rows.map((row) => ({
     userId: row.user_id,
-    legacyAvailableAmount: row.available_amount,
-    legacyReservedAmount: row.reserved_amount,
+    legacyAvailableAmount: normalizeSnapshotAmount(row.available_amount),
+    legacyReservedAmount: normalizeSnapshotAmount(row.reserved_amount),
     availableCoinMicros: row.available_coin_micros,
     reservedCoinMicros: row.reserved_coin_micros,
-    pendingDepositAmount: row.pending_deposit_amount,
-    pendingWithdrawalAmount: row.pending_withdrawal_amount,
+    pendingDepositAmount: normalizeSnapshotAmount(row.pending_deposit_amount),
+    pendingWithdrawalAmount: normalizeSnapshotAmount(
+      row.pending_withdrawal_amount,
+    ),
     pendingDepositCount: row.pending_deposit_count,
     pendingWithdrawalCount: row.pending_withdrawal_count,
   }));
-  const balanceSnapshotSha256 = createHash("sha256")
-    .update(JSON.stringify(snapshotRows))
-    .digest("hex");
+  const balanceSnapshotSha256 =
+    computeCoinCutoverBalanceSnapshotSha256(snapshotRows);
 
   await client.query(
     `insert into coin_cutover_snapshots (
@@ -381,6 +465,52 @@ async function persistProductionSnapshot(
       ],
     );
   }
+}
+
+export function stableCoinCutoverDatabaseTargetsMatch(
+  recorded: unknown,
+  expected: CoinCutoverDatabaseTarget,
+) {
+  if (!isUnknownRecord(recorded)) {
+    return false;
+  }
+  return (
+    recorded.urlHostname === expected.urlHostname &&
+    recorded.urlPort === expected.urlPort &&
+    recorded.urlDatabaseName === expected.urlDatabaseName &&
+    recorded.databasePrincipalSha256 === expected.databasePrincipalSha256 &&
+    recorded.connectedDatabaseName === expected.connectedDatabaseName &&
+    recorded.ssl === expected.ssl &&
+    recorded.fingerprint === expected.fingerprint
+  );
+}
+
+export function computeCoinCutoverBalanceSnapshotSha256(
+  rows: readonly CoinCutoverBalanceSnapshotRow[],
+) {
+  const ordered = [...rows].sort((left, right) =>
+    left.userId < right.userId ? -1 : left.userId > right.userId ? 1 : 0,
+  );
+  return createHash("sha256")
+    .update(JSON.stringify(ordered))
+    .digest("hex");
+}
+
+function normalizeSnapshotAmount(value: string) {
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value);
+  if (!match || (match[3]?.length ?? 0) > 10) {
+    throw new Error(
+      "Migration blocked: snapshot amount cannot be represented exactly at numeric(30,10).",
+    );
+  }
+  const sign = match[1] === "-" && !/^0*$/.test(`${match[2]}${match[3] ?? ""}`)
+    ? "-"
+    : "";
+  return `${sign}${match[2]}.${(match[3] ?? "").padEnd(10, "0")}`;
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function loadLegacyBalances(client: PoolClient) {

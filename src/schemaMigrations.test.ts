@@ -6,7 +6,7 @@ import {
   runSchemaMigrations,
 } from "./schemaMigrations.js";
 
-test("schema migrations hold one global advisory lock and skip applied files", async () => {
+test("schema migrations use transaction locks, force public, and skip applied files", async () => {
   const queries: Array<{ text: string; values?: readonly unknown[] }> = [];
   let migrationLookup = 0;
   const db: Queryable = {
@@ -34,20 +34,41 @@ test("schema migrations hold one global advisory lock and skip applied files", a
     applied: ["001_new.sql"],
     skipped: ["002_already.sql"],
   });
-  assert.match(queries[0]?.text ?? "", /pg_advisory_lock/);
-  assert.deepEqual(queries[0]?.values, [SCHEMA_MIGRATION_LOCK]);
-  assert.match(queries.at(-1)?.text ?? "", /pg_advisory_unlock/);
+  assert.equal(queries[0]?.text, "begin");
+  const locks = queries.filter((query) =>
+    query.text.includes("pg_advisory_xact_lock"),
+  );
+  assert.equal(locks.length, 3);
+  assert.ok(
+    locks.every(
+      (query) => query.values?.[0] === SCHEMA_MIGRATION_LOCK,
+    ),
+  );
+  assert.equal(
+    queries.filter((query) => query.text === "set local search_path to public")
+      .length,
+    3,
+  );
+  assert.equal(
+    queries.some((query) => query.text.includes("pg_advisory_unlock")),
+    false,
+  );
   assert.equal(
     queries.filter((query) => query.text === "begin").length,
-    2,
+    3,
   );
   assert.equal(
     queries.filter((query) => query.text === "commit").length,
-    2,
+    3,
+  );
+  assert.ok(
+    queries.some((query) =>
+      query.text.includes("insert into public.schema_migrations"),
+    ),
   );
 });
 
-test("schema migration failure rolls back before releasing the global lock", async () => {
+test("schema migration failure rolls back its transaction-scoped lock", async () => {
   const queries: string[] = [];
   const db: Queryable = {
     async query<T>(text: string) {
@@ -68,6 +89,9 @@ test("schema migration failure rolls back before releasing the global lock", asy
       }),
     /migration failed/,
   );
-  assert.equal(queries.at(-2), "rollback");
-  assert.match(queries.at(-1) ?? "", /pg_advisory_unlock/);
+  assert.equal(queries.at(-1), "rollback");
+  assert.equal(
+    queries.some((query) => query.includes("pg_advisory_unlock")),
+    false,
+  );
 });

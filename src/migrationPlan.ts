@@ -27,6 +27,7 @@ export const migrations = [
   "031_coins_ledger_cutover.sql",
   "032_money_outbox_worker.sql",
   "033_production_coin_cutover_evidence.sql",
+  "034_seal_production_coin_cutover_snapshot.sql",
 ] as const;
 
 export type MigrationReadinessReport = {

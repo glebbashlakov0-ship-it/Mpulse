@@ -743,11 +743,16 @@ const checks: ReconciliationCheck[] = [
 export async function runCoinReconciliation(
   db: Queryable,
   now = new Date(),
+  options: { excludedCategories?: readonly string[] } = {},
 ): Promise<CoinReconciliationReport> {
   const discrepancies: ReconciliationDiscrepancy[] = [];
   const categoryCounts: Record<string, number> = {};
+  const excludedCategories = new Set(options.excludedCategories ?? []);
 
   for (const check of checks) {
+    if (excludedCategories.has(check.category)) {
+      continue;
+    }
     const result = await db.query<ReconciliationRow>(check.sql, check.values);
     categoryCounts[check.category] = result.rows.length;
     for (const row of result.rows) {
@@ -813,33 +818,45 @@ export async function persistCoinReconciliationReport(
 ) {
   await client.query("begin");
   try {
-    const run = await client.query<{ id: string }>(
-      `insert into money_reconciliation_runs (
-         status, dry_run, discrepancy_count, report, completed_at
-       ) values ($1, true, $2, $3::jsonb, now())
-       returning id`,
-      [report.status, report.discrepancyCount, JSON.stringify(report)],
-    );
-    await client.query(
-      `insert into audit_logs (
-         id, event_type, user_id, session_id, metadata, created_at, updated_at
-       ) values ($1, $2, null, null, $3::jsonb, now(), now())`,
-      [
-        randomUUID(),
-        `money.reconciliation.${report.status}`,
-        JSON.stringify({
-          reconciliationRunId: run.rows[0]?.id ?? null,
-          discrepancyCount: report.discrepancyCount,
-          dryRun: true,
-        }),
-      ],
+    const runId = await persistCoinReconciliationReportInTransaction(
+      client,
+      report,
     );
     await client.query("commit");
-    return run.rows[0]?.id ?? null;
+    return runId;
   } catch (error) {
     await client.query("rollback");
     throw error;
   }
+}
+
+export async function persistCoinReconciliationReportInTransaction(
+  client: PoolClient,
+  report: CoinReconciliationReport,
+) {
+  const run = await client.query<{ id: string }>(
+    `insert into money_reconciliation_runs (
+       status, dry_run, discrepancy_count, report, completed_at
+     ) values ($1, true, $2, $3::jsonb, now())
+     returning id`,
+    [report.status, report.discrepancyCount, JSON.stringify(report)],
+  );
+  const runId = run.rows[0]?.id ?? null;
+  await client.query(
+    `insert into audit_logs (
+       id, event_type, user_id, session_id, metadata, created_at, updated_at
+     ) values ($1, $2, null, null, $3::jsonb, now(), now())`,
+    [
+      randomUUID(),
+      `money.reconciliation.${report.status}`,
+      JSON.stringify({
+        reconciliationRunId: runId,
+        discrepancyCount: report.discrepancyCount,
+        dryRun: true,
+      }),
+    ],
+  );
+  return runId;
 }
 
 async function main() {

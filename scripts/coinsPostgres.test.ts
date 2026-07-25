@@ -42,6 +42,7 @@ import type { RealMoneyExecutionVenueRuntime } from "../src/realMoneyAdapterRunt
 import { buildRealMoneyLaunchApprovalCapabilities } from "../src/realMoneyLaunchApproval.js";
 import {
   applyMigration,
+  COIN_MIGRATION_VERSION,
   inspectMigration,
 } from "./coinsMigration.js";
 import {
@@ -50,9 +51,14 @@ import {
   OUTBOX_PROCESSING_STALE_AFTER_MS,
   runCoinReconciliation,
 } from "./reconcileCoins.js";
+import {
+  finalizeProductionCutover,
+  tryCompletedCutoverFastPath,
+} from "./productionCoinCutover.js";
 import { migrations } from "../src/migrationPlan.js";
 import { auditPostgresTestDatabaseSafety } from "../src/postgresTestDatabaseSafety.js";
 import { PostgresMoneyOutboxRepository } from "../src/moneyOutbox.js";
+import type { ProductionCoinCutoverReleaseMarker } from "../src/productionCoinCutover.js";
 
 const { Pool } = pg;
 const VALID_TRON_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -373,7 +379,7 @@ test(
   "legacy cutover snapshots under a fence, preserves totals, is a second-run no-op, and reconciles",
   { skip: skipReason },
   async () => {
-    await withIsolatedCoinSchema(async (client) => {
+    await withIsolatedCoinSchema(async (client, schemaName, pool) => {
       const userId = randomUUID();
       const walletId = randomUUID();
       await insertTestUser(client, userId, `coin-migration-${userId}@example.com`);
@@ -639,6 +645,7 @@ test(
           urlHostname: "postgres-test.example",
           urlPort: 5432,
           urlDatabaseName: "mpulse_coins_test",
+          databasePrincipalSha256: "c".repeat(64),
           connectedDatabaseName: "mpulse_coins_test",
           serverAddress: "127.0.0.1",
           serverPort: 5432,
@@ -712,7 +719,14 @@ test(
         postCutoverUserId,
         `coin-post-cutover-${postCutoverUserId}@example.com`,
       );
-      const secondRun = await applyMigration(client, snapshotOptions);
+      const secondRun = await applyMigration(client, {
+        ...snapshotOptions,
+        databaseTarget: {
+          ...snapshotOptions.databaseTarget,
+          serverAddress: "203.0.113.42",
+          serverPort: 6432,
+        },
+      });
       assert.equal(secondRun.noOp, true);
       assert.deepEqual(secondRun.afterCoinTotals, applied.afterCoinTotals);
       const repeatedEvidence = await client.query<{
@@ -891,7 +905,7 @@ test(
              status, available_at, created_at
            ) values (
              'postgres_test', $1, 'postgres_test.stale', $2,
-             'pending', now() - interval '1 hour', now() - interval '1 hour'
+             'pending', now() - interval '27 hours', now() - interval '27 hours'
            )`,
           [
             malformedSellOrderId,
@@ -912,6 +926,116 @@ test(
       const reconciliation = await runCoinReconciliation(client);
       assert.equal(reconciliation.status, "passed");
       assert.equal(reconciliation.discrepancyCount, 0);
+
+      const productionMarker: ProductionCoinCutoverReleaseMarker = {
+        enabled: true,
+        releaseMarker: snapshotOptions.releaseMarker,
+        migrationVersion: COIN_MIGRATION_VERSION,
+        vercelEnvironment: "production",
+        expectedVercelProductionHost: "mpulse.vercel.app",
+        databaseUrlEnvironment: "DATABASE_URL",
+        expectedDatabaseTargetFingerprint:
+          snapshotOptions.databaseTarget.fingerprint,
+      };
+      const finalizeClients = await Promise.all([
+        pool.connect(),
+        pool.connect(),
+      ]);
+      try {
+        await Promise.all(
+          finalizeClients.map((finalizeClient) =>
+            setSearchPath(finalizeClient, schemaName),
+          ),
+        );
+        const finalized = await Promise.all([
+          finalizeProductionCutover(
+            finalizeClients[0]!,
+            productionMarker,
+            snapshotOptions.databaseTarget,
+          ),
+          finalizeProductionCutover(
+            finalizeClients[1]!,
+            productionMarker,
+            {
+              ...snapshotOptions.databaseTarget,
+              serverAddress: "203.0.113.99",
+              serverPort: 7432,
+            },
+          ),
+        ]);
+        assert.deepEqual(
+          finalized
+            .map((result) => result.completionAlreadyExists)
+            .sort(),
+          [false, true],
+        );
+        assert.ok(
+          finalized.every(
+            (result) => result.reconciliation.status === "passed",
+          ),
+        );
+      } finally {
+        for (const finalizeClient of finalizeClients) {
+          finalizeClient.release();
+        }
+      }
+
+      const staleOutboxId = randomUUID();
+      await client.query(
+        `insert into money_outbox_events (
+           aggregate_type, aggregate_id, event_type, idempotency_key,
+           status, available_at, created_at
+         ) values (
+           'postgres_test', $1, 'postgres_test.stale', $2,
+           'pending', now() - interval '27 hours', now() - interval '27 hours'
+         )`,
+        [staleOutboxId, `stale-repeat-outbox-${staleOutboxId}`],
+      );
+      const operationallyBlocked = await runCoinReconciliation(client);
+      assert.equal(operationallyBlocked.status, "failed");
+      assert.ok(operationallyBlocked.categoryCounts.outbox_delivery > 0);
+      const repeatVerification = await runCoinReconciliation(
+        client,
+        new Date(),
+        { excludedCategories: ["outbox_delivery"] },
+      );
+      assert.equal(repeatVerification.status, "passed");
+      assert.equal(
+        Object.hasOwn(repeatVerification.categoryCounts, "outbox_delivery"),
+        false,
+      );
+      const fastPath = await tryCompletedCutoverFastPath(
+        client,
+        productionMarker,
+        {
+          ...snapshotOptions.databaseTarget,
+          serverAddress: "203.0.113.100",
+          serverPort: 8432,
+        },
+      );
+      assert.ok(fastPath);
+      assert.equal(fastPath.migration.noOp, true);
+      assert.equal(
+        Object.hasOwn(
+          fastPath.reconciliation.categoryCounts,
+          "outbox_delivery",
+        ),
+        false,
+      );
+      await assert.rejects(
+        () =>
+          client.query(
+            `insert into coin_cutover_balance_snapshots (
+               release_marker, user_id, legacy_available_amount,
+               legacy_reserved_amount, available_coin_micros,
+               reserved_coin_micros, pending_deposit_amount,
+               pending_withdrawal_amount, pending_deposit_count,
+               pending_withdrawal_count
+             ) values ($1, $2, 0, 0, 0, 0, 0, 0, 0, 0)`,
+            [snapshotOptions.releaseMarker, postCutoverUserId],
+          ),
+        /Completed Coin cutover snapshot is immutable/,
+      );
     });
   },
 );

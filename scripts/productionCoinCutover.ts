@@ -6,11 +6,13 @@ import {
   COIN_MIGRATION_VERSION,
   applyMigration,
   inspectMigration,
+  stableCoinCutoverDatabaseTargetsMatch,
   type CoinCutoverDatabaseTarget,
   type MigrationReport,
+  verifyProductionSnapshotEvidence,
 } from "./coinsMigration.js";
 import {
-  persistCoinReconciliationReport,
+  persistCoinReconciliationReportInTransaction,
   runCoinReconciliation,
   type CoinReconciliationReport,
 } from "./reconcileCoins.js";
@@ -59,27 +61,34 @@ export async function runProductionCoinCutover(
 
   const pool = new Pool({
     connectionString: guard.databaseUrl,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized: true },
     max: 1,
   });
   const client = await pool.connect();
-  let lockAcquired = false;
   try {
-    await client.query("select pg_advisory_lock(hashtext($1))", [
-      `${PRODUCTION_COIN_CUTOVER_LOCK}:${marker.releaseMarker}`,
-    ]);
-    lockAcquired = true;
-
     const databaseTarget = await verifyConnectedDatabaseTarget(
       client,
       guard.target,
     );
     const schema = await runSchemaMigrations(client);
-    const completionAlreadyExists = await hasMatchingCompletion(
+    const completed = await tryCompletedCutoverFastPath(
       client,
       marker,
       databaseTarget,
     );
+    if (completed) {
+      return {
+        skipped: false,
+        releaseMarker: marker.releaseMarker,
+        databaseTargetFingerprint: databaseTarget.fingerprint,
+        schemaMigrationsApplied: schema.applied,
+        schemaMigrationsSkipped: schema.skipped,
+        inspection: completed.inspection,
+        migration: completed.migration,
+        reconciliation: completed.reconciliation,
+        noOp: true,
+      };
+    }
 
     const inspection = await inspectMigration(client);
     assertSafeInspection(inspection);
@@ -87,33 +96,14 @@ export async function runProductionCoinCutover(
       releaseMarker: marker.releaseMarker,
       databaseTarget,
     });
-    const reconciliation = await runCoinReconciliation(client);
-
-    if (reconciliation.status !== "passed") {
-      if (!completionAlreadyExists) {
-        await persistCoinReconciliationReport(client, reconciliation);
-      }
+    const finalized = await finalizeProductionCutover(
+      client,
+      marker,
+      databaseTarget,
+    );
+    if (finalized.reconciliation.status !== "passed") {
       throw new Error(
-        `Production Coin cutover reconciliation failed with ${reconciliation.discrepancyCount} discrepancies.`,
-      );
-    }
-
-    if (!completionAlreadyExists) {
-      const reconciliationRunId = await persistCoinReconciliationReport(
-        client,
-        reconciliation,
-      );
-      if (!reconciliationRunId) {
-        throw new Error(
-          "Production Coin cutover blocked: reconciliation evidence was not persisted.",
-        );
-      }
-      await persistCompletion(
-        client,
-        marker,
-        databaseTarget,
-        reconciliationRunId,
-        reconciliation,
+        `Production Coin cutover reconciliation failed with ${finalized.reconciliation.discrepancyCount} discrepancies.`,
       );
     }
 
@@ -125,15 +115,10 @@ export async function runProductionCoinCutover(
       schemaMigrationsSkipped: schema.skipped,
       inspection,
       migration,
-      reconciliation,
-      noOp: completionAlreadyExists && migration.noOp,
+      reconciliation: finalized.reconciliation,
+      noOp: finalized.completionAlreadyExists && migration.noOp,
     };
   } finally {
-    if (lockAcquired) {
-      await client.query("select pg_advisory_unlock(hashtext($1))", [
-        `${PRODUCTION_COIN_CUTOVER_LOCK}:${marker.releaseMarker}`,
-      ]);
-    }
     client.release();
     await pool.end();
   }
@@ -150,6 +135,7 @@ async function verifyConnectedDatabaseTarget(
     hostname: string;
     port: number;
     databaseName: string;
+    databasePrincipalSha256: string;
     fingerprint: string;
   },
 ): Promise<CoinCutoverDatabaseTarget> {
@@ -184,6 +170,7 @@ async function verifyConnectedDatabaseTarget(
     urlHostname: expected.hostname,
     urlPort: expected.port,
     urlDatabaseName: expected.databaseName,
+    databasePrincipalSha256: expected.databasePrincipalSha256,
     connectedDatabaseName: connected.database_name,
     serverAddress: connected.server_address,
     serverPort: connected.server_port,
@@ -217,61 +204,260 @@ function assertSafeInspection(report: MigrationReport) {
   }
 }
 
-async function hasMatchingCompletion(
+type CompletionEvidence = {
+  migration_version: string;
+  database_target: unknown;
+  reconciliation_report: CoinReconciliationReport;
+  reconciliation_status: string;
+  reconciliation_dry_run: boolean;
+  reconciliation_discrepancy_count: number;
+  reconciliation_report_matches: boolean;
+};
+
+async function loadCompletionEvidence(
   client: PoolClient,
   marker: ProductionCoinCutoverReleaseMarker,
-  databaseTarget: CoinCutoverDatabaseTarget,
-) {
-  const completion = await client.query<{ matches: boolean }>(
+): Promise<CompletionEvidence | null> {
+  const completion = await client.query<CompletionEvidence>(
     `select
-       migration_version = $2
-       and database_target = $3::jsonb as matches
-     from coin_production_cutover_completions
-     where release_marker = $1`,
-    [
-      marker.releaseMarker,
-      marker.migrationVersion,
-      JSON.stringify(databaseTarget),
-    ],
+       completions.migration_version,
+       completions.database_target,
+       completions.reconciliation_report,
+       runs.status as reconciliation_status,
+       runs.dry_run as reconciliation_dry_run,
+       runs.discrepancy_count as reconciliation_discrepancy_count,
+       completions.reconciliation_report = runs.report
+         as reconciliation_report_matches
+     from coin_production_cutover_completions completions
+     join money_reconciliation_runs runs
+       on runs.id = completions.reconciliation_run_id
+     where completions.release_marker = $1`,
+    [marker.releaseMarker],
   );
-  if (
-    completion.rows.length > 0 &&
-    completion.rows[0]?.matches !== true
-  ) {
-    throw new Error(
-      "Production Coin cutover blocked: release marker completion belongs to another database target or migration.",
-    );
-  }
-  return completion.rows[0]?.matches === true;
+  return completion.rows[0] ?? null;
 }
 
-async function persistCompletion(
+async function assertCoinStateAndCutoverRun(
+  client: PoolClient,
+  marker: ProductionCoinCutoverReleaseMarker,
+) {
+  const state = await client.query<{
+    active_system: string;
+    legacy_writes_enabled: boolean;
+    migration_version: string | null;
+    cutover_completed_at: Date | null;
+    completed_run_exists: boolean;
+  }>(
+    `select
+       state.active_system,
+       state.legacy_writes_enabled,
+       state.migration_version,
+       state.cutover_completed_at,
+       exists (
+         select 1
+         from coin_cutover_runs runs
+         where runs.migration_version = $1
+           and runs.status = 'completed'
+           and runs.completed_at is not null
+       ) as completed_run_exists
+     from money_system_state state
+     where state.singleton = true`,
+    [marker.migrationVersion],
+  );
+  const current = state.rows[0];
+  if (
+    !current ||
+    current.active_system !== "coin" ||
+    current.legacy_writes_enabled !== false ||
+    current.migration_version !== marker.migrationVersion ||
+    current.cutover_completed_at === null ||
+    current.completed_run_exists !== true
+  ) {
+    throw new Error(
+      "Production Coin cutover blocked: completion evidence does not match the active sealed Coin state and migration run.",
+    );
+  }
+}
+
+async function assertCompletedCutoverEvidence(
   client: PoolClient,
   marker: ProductionCoinCutoverReleaseMarker,
   databaseTarget: CoinCutoverDatabaseTarget,
-  reconciliationRunId: string,
-  reconciliation: CoinReconciliationReport,
+  completion: CompletionEvidence,
+  options: { lockSnapshotHeader?: boolean } = {},
 ) {
-  await client.query("begin");
-  try {
-    await client.query(
-      `insert into coin_production_cutover_completions (
-         release_marker, migration_version, database_target,
-         reconciliation_run_id, reconciliation_report
-       ) values ($1, $2, $3::jsonb, $4, $5::jsonb)`,
-      [
-        marker.releaseMarker,
-        marker.migrationVersion,
-        JSON.stringify(databaseTarget),
-        reconciliationRunId,
-        JSON.stringify(reconciliation),
-      ],
+  if (
+    completion.migration_version !== marker.migrationVersion ||
+    !stableCoinCutoverDatabaseTargetsMatch(
+      completion.database_target,
+      databaseTarget,
+    ) ||
+    completion.reconciliation_status !== "passed" ||
+    completion.reconciliation_dry_run !== true ||
+    completion.reconciliation_discrepancy_count !== 0 ||
+    completion.reconciliation_report.status !== "passed" ||
+    completion.reconciliation_report.discrepancyCount !== 0 ||
+    completion.reconciliation_report_matches !== true
+  ) {
+    throw new Error(
+      "Production Coin cutover blocked: release marker completion evidence is inconsistent or belongs to another database target.",
     );
+  }
+  await assertCoinStateAndCutoverRun(client, marker);
+  return verifyProductionSnapshotEvidence(
+    client,
+    {
+      releaseMarker: marker.releaseMarker,
+      databaseTarget,
+    },
+    { lockHeader: options.lockSnapshotHeader },
+  );
+}
+
+export async function tryCompletedCutoverFastPath(
+  client: PoolClient,
+  marker: ProductionCoinCutoverReleaseMarker,
+  databaseTarget: CoinCutoverDatabaseTarget,
+) {
+  await client.query("begin isolation level repeatable read read only");
+  try {
+    const completion = await loadCompletionEvidence(client, marker);
+    if (!completion) {
+      await client.query("rollback");
+      return null;
+    }
+    const snapshot = await assertCompletedCutoverEvidence(
+      client,
+      marker,
+      databaseTarget,
+      completion,
+    );
+    const reconciliation = await runCoinReconciliation(client, new Date(), {
+      excludedCategories: ["outbox_delivery"],
+    });
+    if (reconciliation.status !== "passed") {
+      throw new Error(
+        `Production Coin cutover repeat verification failed with ${reconciliation.discrepancyCount} financial discrepancies.`,
+      );
+    }
     await client.query("commit");
+    const inspection = snapshot.inspectionReport;
+    return {
+      inspection,
+      migration: buildVerifiedNoOpMigrationReport(
+        inspection,
+        reconciliation,
+      ),
+      reconciliation,
+    };
   } catch (error) {
     await client.query("rollback");
     throw error;
   }
+}
+
+export async function finalizeProductionCutover(
+  client: PoolClient,
+  marker: ProductionCoinCutoverReleaseMarker,
+  databaseTarget: CoinCutoverDatabaseTarget,
+) {
+  // READ COMMITTED is intentional: a concurrent caller may commit completion
+  // while this transaction is waiting for the xact advisory lock. The first
+  // post-lock read must observe that commit instead of retaining a pre-wait
+  // REPEATABLE READ snapshot and racing the unique release marker.
+  await client.query("begin");
+  try {
+    await client.query("select pg_advisory_xact_lock(hashtext($1))", [
+      `${PRODUCTION_COIN_CUTOVER_LOCK}:${marker.releaseMarker}`,
+    ]);
+    const completion = await loadCompletionEvidence(client, marker);
+    if (completion) {
+      await assertCompletedCutoverEvidence(
+        client,
+        marker,
+        databaseTarget,
+        completion,
+        { lockSnapshotHeader: true },
+      );
+      const reconciliation = await runCoinReconciliation(client, new Date(), {
+        excludedCategories: ["outbox_delivery"],
+      });
+      if (reconciliation.status !== "passed") {
+        throw new Error(
+          `Production Coin cutover repeat verification failed with ${reconciliation.discrepancyCount} financial discrepancies.`,
+        );
+      }
+      await client.query("commit");
+      return { completionAlreadyExists: true, reconciliation };
+    }
+
+    await assertCoinStateAndCutoverRun(client, marker);
+    await verifyProductionSnapshotEvidence(
+      client,
+      {
+        releaseMarker: marker.releaseMarker,
+        databaseTarget,
+      },
+      { lockHeader: true },
+    );
+    const reconciliation = await runCoinReconciliation(client);
+    const reconciliationRunId =
+      await persistCoinReconciliationReportInTransaction(
+        client,
+        reconciliation,
+      );
+    if (!reconciliationRunId) {
+      throw new Error(
+        "Production Coin cutover blocked: reconciliation evidence was not persisted.",
+      );
+    }
+    if (reconciliation.status === "passed") {
+      await client.query(
+        `insert into coin_production_cutover_completions (
+           release_marker, migration_version, database_target,
+           reconciliation_run_id, reconciliation_report
+         ) values ($1, $2, $3::jsonb, $4, $5::jsonb)`,
+        [
+          marker.releaseMarker,
+          marker.migrationVersion,
+          JSON.stringify(databaseTarget),
+          reconciliationRunId,
+          JSON.stringify(reconciliation),
+        ],
+      );
+    }
+    await client.query("commit");
+    return { completionAlreadyExists: false, reconciliation };
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
+function buildVerifiedNoOpMigrationReport(
+  inspection: MigrationReport,
+  reconciliation: CoinReconciliationReport,
+): MigrationReport {
+  const availableCoinMicros =
+    reconciliation.totals.availableCoinMicros ?? "0";
+  const reservedCoinMicros = reconciliation.totals.reservedCoinMicros ?? "0";
+  const totals = {
+    accounts: reconciliation.totals.accountCount ?? "0",
+    availableCoinMicros,
+    reservedCoinMicros,
+    totalCoinMicros: (
+      BigInt(availableCoinMicros) + BigInt(reservedCoinMicros)
+    ).toString(),
+  };
+  return {
+    ...inspection,
+    mode: "apply",
+    cutoverState: "coin",
+    beforeCoinTotals: totals,
+    expectedAfterCoinTotals: totals,
+    afterCoinTotals: totals,
+    noOp: true,
+  };
 }
 
 async function main() {

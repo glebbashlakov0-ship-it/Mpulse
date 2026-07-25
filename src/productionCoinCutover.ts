@@ -1,18 +1,20 @@
 import { createHash } from "node:crypto";
 
 export type ProductionCoinCutoverReleaseMarker = {
-  enabled: true;
+  enabled: boolean;
   releaseMarker: string;
   migrationVersion: string;
   vercelEnvironment: "production";
   expectedVercelProductionHost: string;
   databaseUrlEnvironment: "DATABASE_URL";
+  expectedDatabaseTargetFingerprint: string;
 };
 
 export type ProductionDatabaseUrlTarget = {
   hostname: string;
   port: number;
   databaseName: string;
+  databasePrincipalSha256: string;
   fingerprint: string;
 };
 
@@ -62,6 +64,27 @@ export function guardProductionCoinCutover(
     );
   }
 
+  const resolved = resolveProductionDatabaseTarget(env);
+  if (
+    !/^[a-f0-9]{64}$/.test(marker.expectedDatabaseTargetFingerprint) ||
+    marker.expectedDatabaseTargetFingerprint !== resolved.target.fingerprint
+  ) {
+    throw new Error(
+      "Production Coin cutover blocked: DATABASE_URL target fingerprint does not match the committed release marker.",
+    );
+  }
+
+  return {
+    shouldRun: true,
+    ...resolved,
+  };
+}
+
+export function resolveProductionDatabaseTarget(env: NodeJS.ProcessEnv): {
+  databaseUrl: string;
+  databaseSsl: true;
+  target: ProductionDatabaseUrlTarget;
+} {
   const databaseUrl = env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     throw new Error(
@@ -73,7 +96,22 @@ export function guardProductionCoinCutover(
       "Production Coin cutover blocked: DATABASE_SSL must be true.",
     );
   }
+  return {
+    databaseUrl,
+    databaseSsl: true,
+    target: deriveProductionDatabaseUrlTarget(databaseUrl),
+  };
+}
 
+/**
+ * Produces a stable, non-secret database identity. The database username is
+ * hashed separately because Supabase transaction-pooler hosts and database
+ * names are shared across projects. Neither this result nor guard errors expose
+ * the username or password.
+ */
+export function deriveProductionDatabaseUrlTarget(
+  databaseUrl: string,
+): ProductionDatabaseUrlTarget {
   let parsed: URL;
   try {
     parsed = new URL(databaseUrl);
@@ -88,19 +126,30 @@ export function guardProductionCoinCutover(
     );
   }
 
+  let databaseName: string;
+  let databasePrincipal: string;
+  try {
+    databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+    databasePrincipal = decodeURIComponent(parsed.username);
+  } catch {
+    throw new Error(
+      "Production Coin cutover blocked: DATABASE_URL contains invalid percent encoding.",
+    );
+  }
+
   const hostname = parsed.hostname.trim().toLowerCase();
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
   const port = parsed.port ? Number(parsed.port) : 5432;
   if (
     !hostname ||
     !databaseName ||
+    !databasePrincipal ||
     databaseName.includes("/") ||
     !Number.isSafeInteger(port) ||
     port < 1 ||
     port > 65_535
   ) {
     throw new Error(
-      "Production Coin cutover blocked: DATABASE_URL must identify one exact host, port, and database.",
+      "Production Coin cutover blocked: DATABASE_URL must identify one exact host, port, database, and database principal.",
     );
   }
   if (
@@ -117,20 +166,26 @@ export function guardProductionCoinCutover(
     );
   }
 
+  const databasePrincipalSha256 = createHash("sha256")
+    .update(databasePrincipal)
+    .digest("hex");
   const fingerprint = createHash("sha256")
-    .update(`${hostname}:${port}/${databaseName}`)
+    .update(
+      JSON.stringify({
+        hostname,
+        port,
+        databaseName,
+        databasePrincipalSha256,
+      }),
+    )
     .digest("hex");
 
   return {
-    shouldRun: true,
-    databaseUrl,
-    databaseSsl: true,
-    target: {
-      hostname,
-      port,
-      databaseName,
-      fingerprint,
-    },
+    hostname,
+    port,
+    databaseName,
+    databasePrincipalSha256,
+    fingerprint,
   };
 }
 
